@@ -30,17 +30,17 @@ def train_pred(model,
     #                                   write_graph=True,
     #                                   write_images=True,
     #                                   update_freq='epoch'))
-    # callbacks.append(cb.TensorBoard(log_dir=save_dir,
-    #                                   write_graph=False,
-    #                                   write_images=False,
-    #                                   update_freq='epoch'))    
-    # callbacks.append(cb.ModelCheckpoint(save_dir + '/weights.last.h5',
-    #                                     monitor='val_loss', # val_ssim
-    #                                     verbose=1,
-    #                                     save_best_only=True,
-    #                                     save_weights_only=True,
-    #                                     mode='auto',
-    #                                     save_freq=1))
+    callbacks.append(cb.TensorBoard(log_dir=save_dir,
+                                      write_graph=True,
+                                      write_images=True,
+                                      update_freq='epoch'))
+    callbacks.append(cb.ModelCheckpoint(save_dir + '/weights.last.h5',
+                                        monitor='val_binary_accuracy', # val_ssim
+                                        verbose=1,
+                                        save_best_only=True,
+                                        save_weights_only=True,
+                                        mode='auto',
+                                        save_freq="epoch"))
 
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)

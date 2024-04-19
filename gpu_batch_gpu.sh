@@ -14,6 +14,6 @@ conda activate tfGPU215
 export TF_XLA_FLAGS=--tf_xla_cpu_global_jit
 export HDF5_USE_FILE_LOCKING=FALSE 
 
-srun /mnt/hpc/slurm/uranc/anacond/envs/tfGPU214/bin/python /mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/$1/pred.py --mode train --model $1
+srun /mnt/hpc/slurm/uranc/anacond/envs/tfGPU215/bin/python /mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/$1/pred.py --mode train --model $1
 
 exit 0

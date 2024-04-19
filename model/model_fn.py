@@ -1,9 +1,10 @@
 from tensorflow.keras import applications
-from tensorflow.keras.layers import Conv2D, ELU, Input, LSTM, Dense, Dropout, BatchNormalization
+from tensorflow.keras.layers import Conv2D, ELU, Input, LSTM, Dense, Dropout, BatchNormalization, Activation, Flatten
 from tensorflow.keras.models import Model
 from tensorflow.keras.initializers import GlorotUniform, Orthogonal
 import tensorflow.keras.backend as keras_backend
 import tensorflow as tf
+import pdb
 
 def get_vgg(nrows, ncols, out_layer=None, is_trainable=False, inc_top=False):
     vgg_model = applications.VGG16(
@@ -58,9 +59,97 @@ def build_DBI_CNN(mode, params):
         print('load model')
         model.load_weights(params['WEIGHT_DIR'])
 
-    model.compile(optimizer=optimizers.AdamW(lr=params['LEARNING_RATE']),
+    model.compile(optimizer=tf.keras.optimizers.AdamW(lr=params['LEARNING_RATE']),
                 loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                 metrics=['sparse_categorical_accuracy'])
+    return model
+
+def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
+    from tcn import TCN
+
+    # load labels
+    inputs = Input(shape=(input_timepoints, input_chans))
+    # nets = inputs
+
+    # get TCN
+    nets = TCN(nb_filters=64,
+                kernel_size=3,
+                nb_stacks=1,
+                # dilations=[2 ** i for i in range(9)],
+                dilations=(1, 2, 4, 8, 16), #, 32
+                padding='causal',
+                use_skip_connections=True,
+                dropout_rate=0.0,
+                return_sequences=True,
+                activation=ELU(alpha=0),
+                kernel_initializer='he_normal',
+                use_batch_norm=False,
+                use_layer_norm=True,
+                use_weight_norm=False,
+                go_backwards=False,
+                return_state=False)(inputs)
+    # pdb.set_trace()
+    # nets = Dense(1, kernel_initializer=GlorotUniform(), use_bias=True)(nets)
+    nets = Dense(1, activation='sigmoid',kernel_initializer=GlorotUniform())(nets)
+    # nets = Activation('sigmoid')(nets)
+    nets = Flatten()(nets)
+
+    # get outputs
+    outputs = nets
+    model = Model(inputs=[inputs], outputs=[outputs])
+    if params['WEIGHT_FILE']:
+        print('load model')
+        model.load_weights(params['WEIGHT_FILE'])
+
+    # def loss_fn(y_true, y_pred):
+    #     # reshape in case it's in shape (num_samples, 1) instead of (num_samples,)
+    #     if K.ndim(y_true) == K.ndim(y_pred):
+    #         y_true = K.squeeze(y_true, -1)
+    #     # convert dense predictions to labels
+    #     y_pred_labels = K.argmax(y_pred, axis=-1)
+    #     y_pred_labels = K.cast(y_pred_labels, K.floatx())
+    #     return K.cast(K.equal(y_true, y_pred_labels), K.floatx())
+    # pdb.set_trace()
+    
+    def frame_wise_binary_focal_crossentropy(y_true, y_pred):
+        gamma = 2.0
+        alpha = 0.25
+
+        # Compute the binary cross entropy loss
+        bce_loss = tf.keras.losses.binary_crossentropy(y_true, y_pred, from_logits=False)
+
+        # Compute the focal loss
+        pt = tf.where(tf.equal(y_true, 1), y_pred, 1 - y_pred)
+        focal_loss = -alpha * (1 - pt) ** gamma * tf.math.log(pt + tf.keras.backend.epsilon())
+
+        # Compute the frame-wise loss
+        frame_wise_loss = tf.reduce_mean(focal_loss, axis=-1)
+
+        # # Compute the weighted frame-wise loss
+        # anchor_point = tf.argmax(tf.where(tf.equal(y_true[:-1], 0) & tf.equal(y_true[1:], 1)))
+        # anchor_weights = tf.linspace(1.0, 0.0, tf.shape(frame_wise_loss)[0])
+        # anchor_weights = tf.reverse(anchor_weights, axis=[0])  # Reverse the sequence
+        # weighted_frame_wise_loss = frame_wise_loss * anchor_weights
+
+        # # Combine the losses
+        # total_loss = weighted_frame_wise_loss + anchor_loss
+        # # Create a sequence of numbers from 1 to 0 with the same length as the remaining elements in frame_wise_loss
+        # decay_weights = tf.linspace(1.0, 0.0, tf.shape(frame_wise_loss)[0] - anchor_point)
+        # # Apply the decay to the frame_wise_loss elements after the anchor point
+        # frame_wise_loss = tf.concat([frame_wise_loss[:anchor_point], frame_wise_loss[anchor_point:] * decay_weights], axis=0)
+        # # Combine the losses
+        # total_loss = weighted_frame_wise_loss + anchor_loss
+        total_loss = frame_wise_loss
+        return total_loss
+    
+    model.trainable = True
+    model.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=params['LEARNING_RATE']),
+                    loss=tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True), 
+                    # loss='mse',
+                    metrics=[tf.keras.metrics.BinaryCrossentropy(), tf.keras.metrics.BinaryAccuracy()]) # , sample_weight=[1-params['RIPPLE_RATIO'], params['RIPPLE_RATIO']])
+                    #   metrics='sparse_categorical_crossentropy') 'binary_focal_crossentropy'
+                    # loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
+                    # metrics=['sparse_categorical_accuracy'])
     return model
 
 def build_Prida_LSTM(input_shape,n_layers=3,layer_size=20):

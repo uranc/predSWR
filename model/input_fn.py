@@ -55,7 +55,7 @@ def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=3000
     return retrain_LFP, retrain_GT , norm_val_GT, val_GTs
 
 
-def rippleAI_load_dataset(params):
+def rippleAI_load_dataset(params, mode='train'):
     """
     Loads the dataset for the Ripple AI model.
 
@@ -73,7 +73,7 @@ def rippleAI_load_dataset(params):
     LFP,GT=load_lab_data(path)
     train_LFPs.append(LFP)
     train_GTs.append(GT)
-
+    
     # Som2
     path=os.path.join('/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/','Downloaded_data','Som2','figshare_16856137')
     LFP,GT=load_lab_data(path)
@@ -98,35 +98,51 @@ def rippleAI_load_dataset(params):
     
     train_data, train_labels_vec, val_data, val_labels_vec = rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs)
     
+    if mode == 'test':
+        return val_data, val_labels_vec
+    
     test_examples, events_test, train_examples, events_train = split_data(train_data, train_labels_vec, split=0.7)
 
+    # pdb.set_trace()
     # fix labels
     sf = 1250
     y = np.zeros(shape=len(train_examples))
     for event in events_train:
         y[int(sf*event[0]):int(sf*event[1])] = 1
     train_labels = y
+    label_ratio = np.sum(train_labels)/len(train_labels)
     
     y = np.zeros(shape=len(test_examples))
     for event in events_test:
         y[int(sf*event[0]):int(sf*event[1])] = 1
     test_labels = y
-
+    
+    # y_train=np.zeros(shape=[x_train.shape[0],1])
+    # for i in range(y_train_aux.shape[0]):
+    #     y_train[i]=1  if any (y_train_aux[i]==1) else 0
+    # print("Train Input and Output dimension", x_train.shape,y_train.shape)
+    
+    # y_test=np.zeros(shape=[x_test.shape[0],1])
+    # for i in range(y_test_aux.shape[0]):
+    #     y_test[i]=1  if any (y_test_aux[i]==1) else 0
     # y = np.zeros(shape=len(val_data))
     # for event in val_labels_vec:
     #     y[int(sf*event[0]):int(sf*event[1])] = 1
     # val_labels = y
-    train_examples = train_examples[:len(train_examples)-len(train_examples)%params["LSTM_TIMEPOINTS"], :].reshape(-1,params["LSTM_TIMEPOINTS"],params["LSTM_CHANNELS"])
-    test_examples = test_examples[:len(test_examples)-len(test_examples)%params["LSTM_TIMEPOINTS"], :].reshape(-1,params["LSTM_TIMEPOINTS"],params["LSTM_CHANNELS"])
-    train_labels = train_labels[:len(train_labels)-len(train_labels)%params["LSTM_TIMEPOINTS"]].reshape(-1,params["LSTM_TIMEPOINTS"])
-    test_labels = test_labels[:len(test_labels)-len(test_labels)%params["LSTM_TIMEPOINTS"]].reshape(-1,params["LSTM_TIMEPOINTS"])
+    train_examples = train_examples[:len(train_examples)-len(train_examples)%params["NO_TIMEPOINTS"], :].reshape(-1,params["NO_TIMEPOINTS"],params["NO_CHANNELS"])
+    test_examples = test_examples[:len(test_examples)-len(test_examples)%params["NO_TIMEPOINTS"], :].reshape(-1,params["NO_TIMEPOINTS"],params["NO_CHANNELS"])
+    train_labels = train_labels[:len(train_labels)-len(train_labels)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"])
+    test_labels = test_labels[:len(test_labels)-len(test_labels)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"])
     
-    # make datasets
+    # train_labels = train_labels.max(axis=1)
+    # test_labels = test_labels.max(axis=1)
+    
     # pdb.set_trace()
+    # make datasets
     train_dataset = tf.data.Dataset.from_tensor_slices((train_examples, train_labels))
     test_dataset = tf.data.Dataset.from_tensor_slices((test_examples, test_labels))
     # val_dataset = tf.data.Dataset.from_tensor_slices((val_data, val_labels))
     train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"]).batch(params["BATCH_SIZE"])
     # train_dataset = train_dataset.map(lambda x: tf.reshape(x,axis=[-1,40,8]))
     test_dataset = test_dataset.batch(params["BATCH_SIZE"])
-    return train_dataset, test_dataset#, val_dataset
+    return train_dataset, test_dataset, label_ratio#, val_dataset

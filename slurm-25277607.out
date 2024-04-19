@@ -1,0 +1,84 @@
+
+EnvironmentNameNotFound: Could not find conda environment: predSWR_TCN_Test
+You can list all discoverable environments with `conda info --envs`.
+
+
+2024-04-16 13:21:52.498169: E external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:9261] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+2024-04-16 13:21:52.498279: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:607] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+2024-04-16 13:21:52.504144: E external/local_xla/xla/stream_executor/cuda/cuda_blas.cc:1515] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+2024-04-16 13:21:52.589591: I tensorflow/core/platform/cpu_feature_guard.cc:182] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+2024-04-16 13:21:58.771482: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+2024-04-16 13:22:30.019915: I tensorflow/core/common_runtime/gpu/gpu_device.cc:1929] Created device /job:localhost/replica:0/task:0/device:GPU:0 with 46689 MB memory:  -> device: 0, name: NVIDIA RTX A6000, pci bus id: 0000:01:00.0, compute capability: 8.6
+/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/Downloaded_data/Amigo2/figshare_16847521/hippo_2019-07-11_11-57-07_1150um_shank3.dat
+fileStart  0
+fileStop  1151451136
+nSamples  575725568
+nSamplesPerChannel  71965696
+nSamplesPerChunk  10000
+size data  71965696
+/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/Downloaded_data/Som2/figshare_16856137/hippo_2019-07-24_12-01-49_1530um_shank3.dat
+fileStart  0
+fileStop  497401856
+nSamples  248700928
+nSamplesPerChannel  31087616
+nSamplesPerChunk  10000
+size data  31087616
+/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/Downloaded_data/Dlx1/figshare_14959449/lfp_Dlx1-2021-02-12_12-46-54.dat
+fileStart  0
+fileStop  490242048
+nSamples  245121024
+nSamplesPerChannel  30640128
+nSamplesPerChunk  10000
+size data  30640128
+/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/Downloaded_data/Thy7/figshare_14960085/lfp_Thy7-2020-11-11_16-05-00.dat
+fileStart  0
+fileStop  357220352
+nSamples  178610176
+nSamplesPerChannel  22326272
+nSamplesPerChunk  10000
+size data  22326272
+Original training data shape:  (71965696, 8)
+Downsampling data at 1250 Hz...
+Shape of downsampled data: (2998571, 8)
+Normalizing data...
+Original training data shape:  (31087616, 8)
+Downsampling data at 1250 Hz...
+Shape of downsampled data: (1295317, 8)
+Normalizing data...
+Original validation data shape:  (30640128, 8)
+Downsampling data at 1250 Hz...
+Shape of downsampled data: (1276672, 8)
+Normalizing data...
+Original validation data shape:  (22326272, 8)
+Downsampling data at 1250 Hz...
+Shape of downsampled data: (930261, 8)
+Normalizing data...
+Model: "model"
+_________________________________________________________________
+ Layer (type)                Output Shape              Param #   
+=================================================================
+ input_1 (InputLayer)        [(None, 32, 8)]           0         
+                                                                 
+ tcn (TCN)                   (None, 32, 64)            212160    
+                                                                 
+ dense (Dense)               (None, 32, 1)             65        
+                                                                 
+ activation (Activation)     (None, 32, 1)             0         
+                                                                 
+ flatten (Flatten)           (None, 32)                0         
+                                                                 
+=================================================================
+Total params: 212225 (829.00 KB)
+Trainable params: 212225 (829.00 KB)
+Non-trainable params: 0 (0.00 Byte)
+_________________________________________________________________
+Traceback (most recent call last):
+  File "/cs/projects/MWNaturalPredict/DL/predSWR/experiments/predSWR_TCN_Test/pred.py", line 62, in <module>
+    hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
+  File "/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/predSWR_TCN_Test/model/training.py", line 46, in train_pred
+    os.makedirs(save_dir)
+  File "/mnt/hpc/slurm/uranc/anacond/envs/tfGPU215/lib/python3.9/os.py", line 225, in makedirs
+    mkdir(name, mode)
+FileExistsError: [Errno 17] File exists: '/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/predSWR_TCN_Test'
+srun: error: esi-svhpc107: task 0: Exited with exit code 1

@@ -13,7 +13,7 @@ source /mnt/hpc/slurm/uranc/anacond/bin/activate
 conda activate tfGPU214
 export TF_XLA_FLAGS=--tf_xla_cpu_global_jit
 export HDF5_USE_FILE_LOCKING=FALSE 
-srun /mnt/hpc/slurm/uranc/anacond/envs/tfGPU214/bin/python /mnt/hpc/projects/MWNaturalPredict/DL/pconv_fft_v2_tf2/experiments/$1/pred.py --mode train --model $1 
+srun /mnt/hpc/slurm/uranc/anacond/envs/tfGPU215/bin/python /mnt/hpc/projects/MWNaturalPredict/DL/pconv_fft_v2_tf2/experiments/$1/pred.py --mode train --model $1 
 
 exit 0
 
