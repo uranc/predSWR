@@ -1,2 +1,4 @@
 experiments/
 model/__pycache__
+*.out
+*.pyc
