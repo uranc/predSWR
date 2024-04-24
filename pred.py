@@ -74,6 +74,11 @@ elif mode == 'predict':
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
     
+    
+    # pdb.set_trace()
+    # noise = np.random.rand(1024,8).reshape(int(1024/32),32,8)
+    # probs = model.predict(noise)
+    
     # get inputs
     # a_input = importlib.import_module('experiments.{0}.model.input_fn'.format(model))
     # rippleAI_load_dataset = getattr(a_input, 'rippleAI_load_dataset')
@@ -118,7 +123,8 @@ elif mode == 'predict':
     for pred in best_preds:
         rip_begin = int(pred[0]*1250)
         plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :])
-        plt.plot(pred_vec[rip_begin-128:rip_begin+128], 'r')
+        plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'k')
+        plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'r')
         plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k')
         plt.show()
     
