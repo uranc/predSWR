@@ -1,8 +1,10 @@
 from tensorflow.keras import applications
-from tensorflow.keras.layers import Conv2D, ELU, Input, LSTM, Dense, Dropout, BatchNormalization, Activation, Flatten
+from tensorflow.keras.layers import Conv1D, Conv2D, ELU, Input, LSTM, Dense, Dropout, BatchNormalization, Activation, Flatten
 from tensorflow.keras.models import Model
 from tensorflow.keras.initializers import GlorotUniform, Orthogonal
-import tensorflow.keras.backend as keras_backend
+from tensorflow_addons.layers import WeightNormalization
+from tensorflow.keras import backend as K
+import tensorflow_addons as tfa
 import tensorflow as tf
 import pdb
 
@@ -72,27 +74,106 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     # nets = inputs
 
     # get TCN
-    nets = TCN(nb_filters=64,
-                kernel_size=3,
-                nb_stacks=1,
-                # dilations=[2 ** i for i in range(9)],
-                dilations=(1, 2, 4, 8, 16), #, 32
-                padding='causal',
-                use_skip_connections=True,
-                dropout_rate=0.0,
-                return_sequences=True,
-                activation=ELU(alpha=0),
-                kernel_initializer='he_normal',
-                use_batch_norm=False,
-                use_layer_norm=True,
-                use_weight_norm=False,
-                go_backwards=False,
-                return_state=False)(inputs)
-    # pdb.set_trace()
-    # nets = Dense(1, kernel_initializer=GlorotUniform(), use_bias=True)(nets)
-    nets = Dense(1, activation='sigmoid',kernel_initializer=GlorotUniform())(nets)
-    # nets = Activation('sigmoid')(nets)
-    nets = Flatten()(nets)
+    baseTCN = False
+    if baseTCN:
+        nets = TCN(nb_filters=64,
+                    kernel_size=5,
+                    nb_stacks=1,
+                    # dilations=[2 ** i for i in range(9)],
+                    dilations=(1, 2, 4, 8), #, 32
+                    padding='causal',
+                    use_skip_connections=True,
+                    dropout_rate=0.0,
+                    return_sequences=True,
+                    activation='relu',
+                    kernel_initializer='glorot_uniform',
+                    # kernel_initializer='he_normal',
+                    use_depthwise=False,
+                    use_batch_norm=False,
+                    use_layer_norm=False,
+                    use_weight_norm=True,
+                    go_backwards=False,
+                    return_state=False)(inputs)
+        # pdb.set_trace()
+        # nets = Dense(1, kernel_initializer=GlorotUniform(), use_bias=True)(nets)
+        nets = Dense(1, activation='sigmoid', kernel_initializer=GlorotUniform())(nets)
+        # nets = Activation('sigmoid')(nets)
+        nets = Flatten()(nets)
+    else:
+        dropout_rate = 0.0
+        nets = inputs
+        all_nets = []
+        for i_dilate in range(5):
+            nets = WeightNormalization(Conv1D(filters=128,
+                        kernel_size=3,
+                        dilation_rate=2**(i_dilate),
+                        groups=input_chans,
+                        padding='causal',
+                        # activation='relu',
+                        activation=ELU(alpha=0),
+                        name='dconv1_{0}'.format(i_dilate),
+                        kernel_initializer='glorot_uniform'))(nets)
+            all_nets.append(nets)
+            if dropout_rate:
+                nets = Dropout(dropout_rate)(nets)
+            # wrap it. WeightNormalization API is different than BatchNormalization or LayerNormalization.
+            # nets = WeightNormalization(nets)(nets)
+            # with K.name_scope('norm_{}'.format(i_dilate)):
+                # nets = WeightNormalization(nets)
+            # nets = Conv1D(filters=64,
+            #             kernel_size=2,
+            #             dilation_rate=2**(i_dilate),
+            #             groups=input_chans,
+            #             padding='causal',
+            #             activation='relu',
+            #             # activation=ELU(alpha=0),
+            #             name='dconv2_{0}'.format(i_dilate),
+            #             kernel_initializer='glorot_uniform')(nets)
+        
+        tt = tf.reduce_sum(tf.stack(all_nets, axis=-1))
+        pdb.set_trace()
+        # reduce dilation
+        nets = WeightNormalization(Conv1D(filters=128,
+                    kernel_size=3,
+                    dilation_rate=1,
+                    groups=input_chans,
+                    padding='causal',
+                    # activation='relu',
+                    activation=ELU(alpha=0),
+                    name='de_dconv1_{0}'.format(0),
+                    kernel_initializer='glorot_uniform'))(nets)
+        if dropout_rate:
+            nets = Dropout(dropout_rate)(nets)
+            
+        nets = WeightNormalization(Conv1D(filters=128,
+                    kernel_size=3,
+                    dilation_rate=1,
+                    groups=input_chans,
+                    padding='causal',
+                    # activation='relu',
+                    activation=ELU(alpha=0),
+                    name='de_dconv1_{0}'.format(1),
+                    kernel_initializer='glorot_uniform'))(nets)
+        if dropout_rate:
+            nets = Dropout(dropout_rate)(nets)            
+        # with K.name_scope('norm_{}'.format(10)):
+        # nets = WeightNormalization()(nets)
+        # nets = Conv1D(filters=64,
+        #             kernel_size=2,
+        #             dilation_rate=1,
+        #             groups=input_chans,
+        #             padding='causal',
+        #             activation='relu',
+        #             # activation=ELU(alpha=0),
+        #             name='de_dconv2_{0}'.format(0),
+        #             kernel_initializer='glorot_uniform')(nets)
+        
+        # reduce mean and get output
+        nets = tf.reduce_mean(nets, axis=-1, keepdims=True)
+        nets = Dense(1, activation='sigmoid', kernel_initializer=GlorotUniform())(nets)
+        nets = Flatten()(nets)
+        # pdb.set_trace()
+        
 
     # get outputs
     outputs = nets
@@ -111,42 +192,43 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     #     return K.cast(K.equal(y_true, y_pred_labels), K.floatx())
     # pdb.set_trace()
     
-    def frame_wise_binary_focal_crossentropy(y_true, y_pred):
-        gamma = 2.0
-        alpha = 0.25
+    # def frame_wise_binary_focal_crossentropy(y_true, y_pred):
+    #     gamma = 2.0
+    #     alpha = 0.25
 
-        # Compute the binary cross entropy loss
-        bce_loss = tf.keras.losses.binary_crossentropy(y_true, y_pred, from_logits=False)
+    #     # Compute the binary cross entropy loss
+    #     bce_loss = tf.keras.losses.binary_crossentropy(y_true, y_pred, from_logits=False)
 
-        # Compute the focal loss
-        pt = tf.where(tf.equal(y_true, 1), y_pred, 1 - y_pred)
-        focal_loss = -alpha * (1 - pt) ** gamma * tf.math.log(pt + tf.keras.backend.epsilon())
+    #     # Compute the focal loss
+    #     pt = tf.where(tf.equal(y_true, 1), y_pred, 1 - y_pred)
+    #     focal_loss = -alpha * (1 - pt) ** gamma * tf.math.log(pt + tf.keras.backend.epsilon())
 
-        # Compute the frame-wise loss
-        frame_wise_loss = tf.reduce_mean(focal_loss, axis=-1)
-
-        # # Compute the weighted frame-wise loss
-        # anchor_point = tf.argmax(tf.where(tf.equal(y_true[:-1], 0) & tf.equal(y_true[1:], 1)))
-        # anchor_weights = tf.linspace(1.0, 0.0, tf.shape(frame_wise_loss)[0])
-        # anchor_weights = tf.reverse(anchor_weights, axis=[0])  # Reverse the sequence
-        # weighted_frame_wise_loss = frame_wise_loss * anchor_weights
-
-        # # Combine the losses
-        # total_loss = weighted_frame_wise_loss + anchor_loss
-        # # Create a sequence of numbers from 1 to 0 with the same length as the remaining elements in frame_wise_loss
-        # decay_weights = tf.linspace(1.0, 0.0, tf.shape(frame_wise_loss)[0] - anchor_point)
-        # # Apply the decay to the frame_wise_loss elements after the anchor point
-        # frame_wise_loss = tf.concat([frame_wise_loss[:anchor_point], frame_wise_loss[anchor_point:] * decay_weights], axis=0)
-        # # Combine the losses
-        # total_loss = weighted_frame_wise_loss + anchor_loss
-        total_loss = frame_wise_loss
-        return total_loss
+    #     # Compute the frame-wise loss
+    #     # frame_wise_loss = tf.reduce_mean(focal_loss, axis=-1)
+    #     frame_wise_loss = focal_loss
+        
+    #     # Compute the weighted frame-wise loss
+    #     if anchor_point is not None:
+    #         anchor_point = tf.argmax(tf.where(tf.equal(y_true[:-1], 0) & tf.equal(y_true[1:], 1)))
+    #         decay_weights = tf.linspace(1.0, 0.1, tf.shape(frame_wise_loss)[1] - anchor_point, dtype=tf.float32)
+    #         decay_weights = tf.concat([tf.ones([tf.shape(frame_wise_loss)[0], anchor_point]), decay_weights], axis=1)
+    #         decay_weights = tf.concat([decay_weights, tf.reverse(decay_weights[:, :-1], axis=[1])], axis=1)
+    #         weighted_frame_wise_loss = frame_wise_loss * decay_weights
+    #     else:
+    #         weighted_frame_wise_loss = frame_wise_loss
+    #     total_loss = weighted_frame_wise_loss
+        
+        # pdb.set_trace()
+        # return total_loss
     
-    model.trainable = True
     model.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=params['LEARNING_RATE']),
+                    # loss = frame_wise_binary_focal_crossentropy,
                     loss=tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True), 
-                    # loss='mse',
-                    metrics=[tf.keras.metrics.BinaryCrossentropy(), tf.keras.metrics.BinaryAccuracy()]) # , sample_weight=[1-params['RIPPLE_RATIO'], params['RIPPLE_RATIO']])
+                    metrics=[tf.keras.metrics.BinaryCrossentropy(), 
+                             tf.keras.metrics.BinaryAccuracy()])
+    model.trainable = True
+                    # tfa.metrics.F1Score(num_classes=2, threshold=0.5)
+                    # , sample_weight=[1-params['RIPPLE_RATIO'], params['RIPPLE_RATIO']])
                     #   metrics='sparse_categorical_crossentropy') 'binary_focal_crossentropy'
                     # loss=tf.keras.losses.SparseCategoricalCrossentropy(from_logits=True),
                     # metrics=['sparse_categorical_accuracy'])
@@ -165,7 +247,7 @@ def build_Prida_LSTM(input_shape,n_layers=3,layer_size=20):
     Output: 
         model: LSTM keras model
     '''
-    keras_backend.clear_session()
+    K.clear_session()
     dropout_rate=0.2            # Hard fix to a standard value
     # input layer
     inputs = Input(shape=input_shape)

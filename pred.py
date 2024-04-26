@@ -29,8 +29,8 @@ model_name = args.model[0]
 
 # Parameters
 params = {'BATCH_SIZE': 64, 'SHUFFLE_BUFFER_SIZE': 4096, 
-          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-4, 'NO_EPOCHS': 250,
-          'NO_TIMEPOINTS': 32, 'NO_CHANNELS': 8,
+          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-4, 'NO_EPOCHS': 500,
+          'NO_TIMEPOINTS': 40, 'NO_CHANNELS': 8,
           'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
           }
 
@@ -63,12 +63,12 @@ elif mode == 'predict':
     # modelname
     model = args.model[0]
     model_name = model
-    # import importlib
+    import importlib
     
     # # get model
-    # a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
-    # build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
-    from model.model_fn import build_DBI_TCN
+    a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+    build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+    # from model.model_fn import build_DBI_TCN
     
     params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
@@ -109,7 +109,7 @@ elif mode == 'predict':
         all_pred_events.append(tmp_pred)
     
     # pick model
-    best_preds = all_pred_events[0][15]
+    best_preds = all_pred_events[0][5]
     pred_vec = np.zeros(val_datasets[0].shape[0])
     label_vec = np.zeros(val_datasets[0].shape[0])
         

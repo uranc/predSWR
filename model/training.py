@@ -38,7 +38,7 @@ def train_pred(model,
                                         monitor='val_binary_accuracy', # val_ssim
                                         verbose=1,
                                         save_best_only=True,
-                                        save_weights_only=True,
+                                        save_weights_only=False,
                                         mode='auto',
                                         save_freq="epoch"))
 

@@ -7,7 +7,23 @@ import time
 import copy 
 import numpy as np
 
-model_lib = ['predSWR_TCN_TestDilNorm']
+# model_lib = ['predSWR_TCN_BaseModel']
+# model_lib = ['predSWR_TCN_BaseModel_k2']
+# model_lib = ['predSWR_TCN_BaseModel_k3_t40']
+# model_lib = ['predSWR_TCN_BaseModel_k3_t40_d8']
+# model_lib = ['predSWR_TCN_BaseModel_k5_t40_d8']
+# model_lib = ['predSWR_TCN_BaseModel_k5_t40_d8_n256']
+# model_lib = ['predSWR_TCN_BaseModel_k5_t40_d8_n64_customFocalLoss']
+# model_lib = ['predSWR_TCN_BaseModel_k5_t40_d8_n64_drop']
+# model_lib = ['predSWR_TCN_BaseModel_k5_t40_d8_n64_glorot']
+# model_lib = ['predSWR_TCN_BaseModel_k5_t40_d8_dilated_elu00']
+# model_lib = ['predSWR_TCN_BaseModel_k5_t40_d8_dilated_relu']
+# model_lib = ['predSWR_TCN_BaseModel_k5_t40_d8_dilated_elu00_dedilated']
+# model_lib = ['predSWR_TCN_BaseModel_k2_t40_d8_dilated_elu00_dedilated']
+# model_lib = ['predSWR_TCN_BaseModel_k2_t40_d8_dilated_elu00_dedilated']
+# model_lib = ['predSWR_TCNGroup_k2_t40_d32_n128_e500_relu_dedilated_weightNorm_drop']
+model_lib = ['predSWR_TCNGroup_k3_t40_d16_n128_e500_ELU_dedilated_weightNorm']
+
 
 for model_name in model_lib:
     exp_dir = 'experiments/' + model_name
