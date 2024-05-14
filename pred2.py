@@ -28,7 +28,6 @@ parser.add_argument('--comparison', type=str, nargs=1,
                     help='True/False', default='True')
 parser.add_argument('--rippAI_arch', type=str, nargs=1,
                     help='CNN1D, CNN2D, LSTM, SVM or XGBOOST', default='CNN1D')
-
 args = parser.parse_args()
 mode = args.mode[0]
 model_name = args.model[0]
@@ -42,7 +41,6 @@ params = {'BATCH_SIZE': 64, 'SHUFFLE_BUFFER_SIZE': 4096,
           'NO_TIMEPOINTS': 40, 'NO_CHANNELS': 8,
           'EXP_DIR': '/cs/projects/OWVinckSWR/DL/predSWR/experiments/' + model_name,
           }
-
 if mode == 'train':
 
     # input
@@ -84,14 +82,6 @@ elif mode == 'predict':
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
     
-    
-    # pdb.set_trace()
-    # noise = np.random.rand(1024,8).reshape(int(1024/32),32,8)
-    # probs = model.predict(noise)
-    
-    # get inputs
-    # a_input = importlib.import_module('experiments.{0}.model.input_fn'.format(model))
-    # rippleAI_load_dataset = getattr(a_input, 'rippleAI_load_dataset')
     from model.input_fn import rippleAI_load_dataset
     val_datasets, val_labels = rippleAI_load_dataset(params, mode='test')
     
@@ -127,7 +117,7 @@ elif mode == 'predict':
         pred_vec[int(pred[0]*fs):int(pred[1]*1250)] = 1
         
     for lab in val_labels[0]:
-        label_vec[int(lab[0]*fs):int(lab[1]*1250)] = 1 #0.9
+        label_vec[int(lab[0]*fs):int(lab[1]*1250)] = 1 
 
     # Saving images   
     directory =  '/cs/projects/OWVinckSWR/DL/predSWR/experiments/images/{0}'.format(model_name)   
@@ -135,18 +125,19 @@ elif mode == 'predict':
         os.makedirs(directory)
 
     # # Prediction centered in the detected ripple
-    
-    # for pred in best_preds:
-    #     rip_begin = int(pred[0]*fs)
-    #     plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]) #LFP
-    #     plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'k') #Probabilities
-    #     plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'r') #Bigger than threshold 
-    #     plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k',  linewidth=2, label = 'GT') #Labels of DS
-    #     plot_filename = os.path.join(directory, f'plot_{rip_begin}.png')
-    #     plt.legend()
-    #     plt.savefig(plot_filename)
-    #     plt.show()
-    #     plt.close()
+    for pred in best_preds:
+        rip_begin = int(pred[0]*fs)
+        plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]) #LFP
+        plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k',  linewidth=2, label = 'GT') #Labels of DS
+        plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'red', label = 'prob') #Probabilities
+        plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'aqua', label = 'thr' ) #Bigger than threshold 
+        plot_filename = os.path.join(directory, f'plot_{rip_begin}.png')
+        plt.legend()
+        plt.xlabel('Frequency samples')
+        plt.title(f'{model_name}')
+        plt.savefig(plot_filename)
+        plt.show()
+        plt.close()
     
     if comparison == 'True' :
         #####
@@ -223,19 +214,22 @@ elif mode == 'predict':
         #     plt.legend()
         #     plt.savefig(plot_filename)
         #     plt.close()
+        # PROBLEM with dimensions and plotting
 
         ############
     #### RIPPL_AI_1D ####
         ############
         # path to the optimized models: /mnt/hpc/projects/OWVinckSWR/Carmen/DBI2/rippl-AI/optimized_models/
+        # this was changed in prediction_parser
         from model.cnn_ripple_utils import prediction_parser
         tf.keras.backend.clear_session()
-        n_channels = 8
-        n_timesteps = 32
-        timesteps = 16
+        # n_channels = 8
+        # n_timesteps = 32
+        # timesteps = 16
         val_pred_rippAI = []
         for LFP in val_datasets:
-            val_pred_rippAI.append(prediction_parser(LFP,arch = arch, n_channels = 8, n_timesteps = 16))
+            val_pred_rippAI.append(prediction_parser(LFP,arch = arch))
+            #val_pred_rippAI.append(prediction_parser(LFP, n_channels = 8, n_timesteps = 16))
         # Getting intervals with different thresholds
         all_pred_events_rippAI = []
         for j,pred in enumerate(val_pred_rippAI):
@@ -245,13 +239,11 @@ elif mode == 'predict':
                 _,_,F1_val[j,i],_,_,_=get_performance(pred_val_events_ripplAI,val_labels[j],verbose=False)
                 tmp_pred_rippAI.append(pred_val_events_ripplAI)
             all_pred_events_rippAI.append(tmp_pred_rippAI)
-        #pdb.set_trace()
+        
         best_preds_rippAI = all_pred_events_rippAI[0][14]
         
         print('Rippl_AI',best_preds_rippAI.shape)
-        #pdb.set_trace()
 
-        #auxiliar_fs.append(best_preds_rippAI)
         pred_vec_rippAI = np.zeros(val_datasets[0].shape[0])
             
         for pred in best_preds_rippAI:
@@ -261,16 +253,18 @@ elif mode == 'predict':
         if not os.path.exists(directory):
             os.makedirs(directory)
             
-        # for pred in best_preds_rippAI:
-        #     rip_begin = int(pred[0]*fs)
-        #     plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]) #LFP
-        #     plt.plot(val_pred_rippAI[0][rip_begin-128:rip_begin+128], 'red') #Probabilities
-        #     plt.plot(pred_vec_rippAI[rip_begin-128:rip_begin+128], 'b',  linewidth=2, label = 'rippAI') # Predicted by rippAI bigger than thr
-        #     plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k',  linewidth=2, label = 'GT') # Labels of DS
-        #     plot_filename = os.path.join(directory, f'plot_{rip_begin}.png')
-        #     plt.legend()
-        #     plt.savefig(plot_filename)
-        #     plt.close()
+        for pred in best_preds_rippAI:
+            rip_begin = int(pred[0]*fs)
+            plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]) #LFP
+            plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k',  linewidth=2, label = 'GT') # Labels of DS
+            plt.plot(val_pred_rippAI[0][rip_begin-128:rip_begin+128], 'red', label = 'prob') #Probabilities
+            plt.plot(pred_vec_rippAI[rip_begin-128:rip_begin+128], 'aqua',  linewidth=2, label = 'thr') # Predicted by rippAI bigger than thr
+            plot_filename = os.path.join(directory, f'plot_{rip_begin}.png')
+            plt.xlabel('Frequency samples')
+            plt.title(f'Ripp AI {arch}')
+            plt.legend()
+            plt.savefig(plot_filename)
+            plt.close()
 
             #################
         #### ALL PREDICTIONS ####
@@ -279,18 +273,18 @@ elif mode == 'predict':
         directory =  '/cs/projects/OWVinckSWR/DL/predSWR/experiments/images/all_predictions'   
         if not os.path.exists(directory):
             os.makedirs(directory)
-        pdb.set_trace()    
-        for pred in label_vec:
+            
+        for pred in val_labels[0]:
             rip_begin = np.int32(pred[0]*fs)
             plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]) #LFP
-            plt.plot(val_pred_rippAI[0][rip_begin-128:rip_begin+128], 'aqua') #Probabilities rippAI
-            plt.plot(pred_vec_rippAI[rip_begin-128:rip_begin+128], 'b',  linewidth=2, label = 'rippAI') # Predicted by rippAI bigger than thr
-            plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'k') #Probabilities
-            plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'r') #Bigger than threshold 
             plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k',  linewidth=2, label = 'GT') # Labels of DS
-            ##plt.plot(val_pred_cnn[0][rip_begin-128:rip_begin+128], 'k') #Probabilities
-            ##plt.plot(val_pred_cnn[0][rip_begin-128:rip_begin+128]*pred_vec_cnn[rip_begin-128:rip_begin+128], 'r') #Bigger than threshold 
+            plt.plot(val_pred_rippAI[0][rip_begin-128:rip_begin+128], 'aqua', label = 'rippAI') # Probabilities rippAI
+            #plt.plot(pred_vec_rippAI[rip_begin-128:rip_begin+128], 'b',  linewidth=2, label = 'rippAI') # Predicted by rippAI bigger than threshold
+            plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'red', label = 'TCN') # Probabilities TCN
+            #plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'r') # Predicted by TCN bigger than threshold
             plot_filename = os.path.join(directory, f'plot_{rip_begin}.png')
+            plt.xlabel('Frequency samples')
+            plt.title(f'Ripp AI {arch} and {model_name}')
             plt.legend()
             plt.savefig(plot_filename)
             plt.close()
