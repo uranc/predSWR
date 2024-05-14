@@ -364,17 +364,17 @@ def prediction_parser(LFP,arch='CNN1D',model_number=1,new_model=None,n_channels=
    
 	# If no new_model is passed:
     # Looks for the name of the selected model
-    if new_model==None:
-        for filename in os.listdir('optimized_models'):
-            if f'{arch}_{model_number}' in filename:
-                break
-        print(filename)
-        sp=filename.split('_')
-        n_channels=int(sp[2][2])
-        timesteps=int(sp[4][2:])
-    else: # Manually set n_channels and timesteps to match the retrained model parameters
-        n_channels=n_channels
-        timesteps=n_timesteps
+    # if new_model==None:
+    #     for filename in os.listdir('optimized_models'):
+    #         if f'{arch}_{model_number}' in filename:
+    #             break
+    #     print(filename)
+    #     sp=filename.split('_')
+    #     n_channels=int(sp[2][2])
+    #     timesteps=int(sp[4][2:])
+    # else: # Manually set n_channels and timesteps to match the retrained model parameters
+    n_channels=n_channels
+    timesteps=n_timesteps
 	
 	#print(f'Validating arquitecture {arch} using {n_channels} channels and {timesteps} timesteps')
 	# Input shape: number of channels
@@ -421,7 +421,7 @@ def prediction_parser(LFP,arch='CNN1D',model_number=1,new_model=None,n_channels=
         LFP=LFP[:len(LFP)-len(LFP)%timesteps,:].reshape(-1,timesteps,n_channels)
         optimizer = keras.optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=False)
         if new_model==None:
-            model = keras.models.load_model(os.path.join('optimized_models',filename), compile=False)
+            model = keras.models.load_model("/cs/projects/OWVinckSWR/DL/predSWR/experiments/rippl_AI_1D/CNN1D_1_Ch8_W60_Ts16_OGmodel12", compile=False)
         else:
             model=new_model
         model.compile(loss="binary_crossentropy", optimizer=optimizer)
@@ -476,6 +476,21 @@ def get_predictions_index(predictions,threshold=0.5):
 	pred_indexes[:,1]=end_indexes
 
 	return pred_indexes
+
+def get_predictions_indexes(data, predictions, window_size, stride, fs=1250, threshold=0.5):
+	window_pts = window_size * fs
+	stride_pts = stride * fs
+	pred_indexes = []
+
+	for i_pred, pred in enumerate(predictions.flatten()):
+		if (pred >= threshold):
+			ini = i_pred * stride_pts
+			end = ini + window_pts - 1
+
+			pred_indexes.append(np.array([ini, end]))
+
+
+	return np.array(pred_indexes)
 
 def middle_stamps(pred_ind):
     ''' [mids]=middle_stamps(pred_ind) returns the middle stamps of the events passed in pred_ind
@@ -1087,3 +1102,22 @@ def build_CNN1D(n_channels,timesteps,conf):
 	opt = keras.optimizers.Adam(learning_rate=0.001)  # Hard fixed
 	model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['mse'])
 	return model
+def real_ripple_times(times):
+    # Real ripple times for CNN ripple
+    if times.size == 0: 
+        times_masked = np.array([0., 0.]) 
+    else: 
+        onset, offset = np.moveaxis(times, 1, 0)
+        mask_onset = []
+        mask_offset = []
+        
+        for i in range(len(times)-1): 
+            if (times[i][1] >= times[i+1][0] and times[i][1] <= times[i+1][1]): 
+                mask_offset.append(i)
+                mask_onset.append(i+1)
+                
+        times_new_onset = np.delete(onset, mask_onset)  
+        times_new_offset = np.delete(offset, mask_offset)
+        
+        times_masked = np.column_stack((times_new_onset, times_new_offset))
+    return times_masked
