@@ -70,11 +70,12 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     from tcn import TCN
 
     # load labels
-    inputs = Input(shape=(input_timepoints, input_chans))
+    inputs = Input(shape=(None, input_chans))    
+    # inputs = Input(shape=(input_timepoints, input_chans))
     # nets = inputs
 
     # get TCN
-    baseTCN = False
+    baseTCN = True
     if baseTCN:
         nets = TCN(nb_filters=64,
                     kernel_size=5,
