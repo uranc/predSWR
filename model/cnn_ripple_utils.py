@@ -422,6 +422,7 @@ def prediction_parser(LFP,arch='CNN1D',model_number=1,new_model=None,n_channels=
         optimizer = keras.optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=False)
         if new_model==None:
             model = keras.models.load_model(os.path.join('/mnt/hpc/projects/OWVinckSWR/Carmen/DBI2/rippl-AI/optimized_models',filename), compile=False)
+        else:
             model=new_model
         model.compile(loss="binary_crossentropy", optimizer=optimizer)
 
