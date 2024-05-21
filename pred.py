@@ -13,7 +13,8 @@ from os import path
 import shutil
 from scipy.stats import pearsonr 
 from scipy.io import loadmat
-
+# from tensorflow.python.framework.ops import disable_eager_execution
+# disable_eager_execution()
 
 parser = argparse.ArgumentParser(
     description='Example 3 - Local and Parallel Execution.')
@@ -28,14 +29,19 @@ mode = args.mode[0]
 model_name = args.model[0]
 
 # Parameters
-params = {'BATCH_SIZE': 64, 'SHUFFLE_BUFFER_SIZE': 4096, 
+params = {'BATCH_SIZE': 16, 'SHUFFLE_BUFFER_SIZE': 4096, 
           'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-4, 'NO_EPOCHS': 500,
-          'NO_TIMEPOINTS': 40, 'NO_CHANNELS': 8,
+          'NO_TIMEPOINTS': 200, 'NO_CHANNELS': 8,
           'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
           }
 
 if mode == 'train':
 
+    from model.model_fn import build_DBI_TCN
+    # pdb.set_trace()
+    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    model.summary()
+    
     # input
     from model.input_fn import rippleAI_load_dataset
     train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params)
@@ -45,12 +51,10 @@ if mode == 'train':
     # model
     # from model.model_fn import build_Prida_LSTM
     # model = build_Prida_LSTM([params["NO_TIMEPOINTS"],params["NO_CHANNELS"]])
-    from model.model_fn import build_DBI_TCN
-    # pdb.set_trace()
-    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-    model.summary()
+  
     
     # [traces, labels] = next(iter(train_dataset))
+    # pdb.set_trace()
     # # for traces, labels in next(iter(train_dataset)):
     
     # train 
@@ -93,8 +97,9 @@ elif mode == 'predict':
     timesteps = params['NO_TIMEPOINTS']
     for LFP in val_datasets:
         LFP=LFP[:len(LFP)-len(LFP)%timesteps,:].reshape(-1,timesteps,n_channels)
-        windowed_signal = model.predict(LFP,verbose=1)
+        windowed_signal = np.squeeze(model.predict(LFP,verbose=1))
         probs = np.hstack(windowed_signal)
+        # pdb.set_trace()
         val_pred.append(probs)
 
     # Validation plot in the second ax
@@ -103,13 +108,18 @@ elif mode == 'predict':
     for j,pred in enumerate(val_pred):
         tmp_pred = []
         for i,th in enumerate(th_arr):
+            # pdb.set_trace()
             pred_val_events=get_predictions_index(pred,th)/1250
             _,_,F1_val[j,i],_,_,_=get_performance(pred_val_events,val_labels[j],verbose=False)
             tmp_pred.append(pred_val_events)
         all_pred_events.append(tmp_pred)
     
     # pick model
-    best_preds = all_pred_events[0][5]
+    print(F1_val[0])
+    # pdb.set_trace()
+    mind = np.argmax(F1_val[0])
+    # print(all_pred_events[0][mind])
+    best_preds = all_pred_events[0][mind]
     pred_vec = np.zeros(val_datasets[0].shape[0])
     label_vec = np.zeros(val_datasets[0].shape[0])
         
