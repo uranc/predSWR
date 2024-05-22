@@ -117,6 +117,24 @@ def rippleAI_load_dataset(params, mode='train'):
         y[int(sf*event[0]):int(sf*event[1])] = 1
     test_labels = y
     
+    from scipy import signal
+    M = 51
+    onsets = np.diff(train_labels)==1
+    # onsets = np.hstack((np.diff(train_labels), 0))==1
+    weights = signal.convolve(onsets, signal.exponential(M, 0, 5, False))+0.1
+    # weights = signal.convolve(onsets, signal.exponential(M, 0, 10, False))+0.1
+    weights /= np.max(weights)
+    weights = np.hstack((0, weights))
+    # pdb.set_trace()
+    onset_indices = np.where(onsets)[0]
+    for onset in onset_indices:
+        weights[onset-50:onset+1] = 0
+        # weights[onset-50:onset+1] = 1e-3
+    # import matplotlib.pyplot as plt
+    # plt.plot(weights)
+    # plt.plot(train_labels)
+    # plt.show()
+    # pdb.set_trace()
     # y_train=np.zeros(shape=[x_train.shape[0],1])
     # for i in range(y_train_aux.shape[0]):
     #     y_train[i]=1  if any (y_train_aux[i]==1) else 0
@@ -129,17 +147,25 @@ def rippleAI_load_dataset(params, mode='train'):
     # for event in val_labels_vec:
     #     y[int(sf*event[0]):int(sf*event[1])] = 1
     # val_labels = y
+    n_cut = params["NO_TIMEPOINTS"]*params["NO_CHANNELS"]
     train_examples = train_examples[:len(train_examples)-len(train_examples)%params["NO_TIMEPOINTS"], :].reshape(-1,params["NO_TIMEPOINTS"],params["NO_CHANNELS"])
     test_examples = test_examples[:len(test_examples)-len(test_examples)%params["NO_TIMEPOINTS"], :].reshape(-1,params["NO_TIMEPOINTS"],params["NO_CHANNELS"])
-    train_labels = train_labels[:len(train_labels)-len(train_labels)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"])
-    test_labels = test_labels[:len(test_labels)-len(test_labels)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"])
-    
+    train_labels = train_labels[:len(train_labels)-len(train_labels)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"], 1)
+    test_labels = test_labels[:len(test_labels)-len(test_labels)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"], 1)
+    train_weights = weights[:len(weights)-len(weights)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"], 1)
     # train_labels = train_labels.max(axis=1)
     # test_labels = test_labels.max(axis=1)
     
     # pdb.set_trace()
-    # make datasets
-    train_dataset = tf.data.Dataset.from_tensor_slices((train_examples, train_labels))
+    # make datasetstrain_weights, 
+    # inputs = tf.data.Dataset.from_tensor_slices(train_examples)
+    # weights = tf.data.Dataset.from_tensor_slices(train_weights)
+    # X = tf.data.Dataset.zip((inputs, weights)).map(lambda x1, x2: {'inputs': x1, 'weights': x2})
+    # train_labels = tf.data.Dataset.from_tensor_slices(train_labels)
+    # train_dataset = tf.data.Dataset.zip((X, train_labels))
+    # pdb.set_trace()
+    train_dataset = tf.data.Dataset.from_tensor_slices((train_examples, train_labels, train_weights))
+    # train_dataset = tf.data.Dataset.from_tensor_slices((train_examples, train_labels))
     test_dataset = tf.data.Dataset.from_tensor_slices((test_examples, test_labels))
     # val_dataset = tf.data.Dataset.from_tensor_slices((val_data, val_labels))
     train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"]).batch(params["BATCH_SIZE"])

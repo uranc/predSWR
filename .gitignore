@@ -5,3 +5,4 @@ allen_dataset/
 /__pycache__/
 *.out
 *.pyc
+*.png
