@@ -178,22 +178,11 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
 
     # get outputs
     outputs = nets
-    # model = Model(inputs=[inputs]+[weights], outputs=[outputs])
-    # model = Model(inputs=[inputs,weights], outputs=outputs)
     model = Model(inputs=[inputs], outputs=[outputs])
     if params['WEIGHT_FILE']:
         print('load model')
         model.load_weights(params['WEIGHT_FILE'])
 
-    # def loss_fn(y_true, y_pred):
-    #     # reshape in case it's in shape (num_samples, 1) instead of (num_samples,)
-    #     if K.ndim(y_true) == K.ndim(y_pred):
-    #         y_true = K.squeeze(y_true, -1)
-    #     # convert dense predictions to labels
-    #     y_pred_labels = K.argmax(y_pred, axis=-1)
-    #     y_pred_labels = K.cast(y_pred_labels, K.floatx())
-    #     return K.cast(K.equal(y_true, y_pred_labels), K.floatx())
-    
     
     def custom_fbfce(weights=None):#y_true, y_pred
         """Loss function"""
@@ -222,46 +211,6 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
             return weighted_loss
             # return tf.keras.losses.binary_focal_crossentropy(y_true, y_pred)#, apply_class_balancing=True
         return loss_fn
-        # return loss_fn#(y_true, y_pred, params=None)
-
-    #     gamma = 2.0
-    #     alpha = 0.25
-
-    #     # Compute the binary cross entropy loss
-    #     bce_loss = tf.keras.losses.binary_crossentropy(y_true, y_pred, from_logits=False)
-
-    #     # Compute the focal loss
-    #     pt = tf.where(tf.equal(y_true, 1), y_pred, 1 - y_pred)
-    #     focal_loss = -alpha * (1 - pt) ** gamma * tf.math.log(pt + tf.keras.backend.epsilon())
-    #     # Compute the frame-wise loss
-    #     # frame_wise_loss = tf.reduce_mean(focal_loss, axis=-1)
-    #     frame_wise_loss = focal_loss
-    #     # Compute the weighted frame-wise loss
-    #     anchor_point = 1
-    #     if anchor_point is not None:
-    #         anchor_point = tf.argmax(tf.where(tf.equal(y_t,[:-1],tf.equal 0) & tf.eq,(y_true[1:], 1)))
-    #         decay_weights = tf.linspace(1.0, 0.0, tf.shape(tf.shape(frame_loss)[1] - anchor_point, dttfe=tf.float32)
-    #         # anchor_point = np.where((y_true[:-1] == 0) & (y_true[1:] == 1))[0]
-    #         # decay_weights = np.linspace(1.0, 0.0, y_true.shape[1] - anchor_point, dtype=np.float32)
-    #         pdb.set_trace()
-    #         from scipy import signal
-    #         M = 51
-    #         # tau2 = -(M-1) / np.log(0.01)
-    #         tau2 = 3
-    #         window2 = signal.exponential(M, 0, tau2, False)
-    #         decay_weights = tf.abs(decay_weights)
-    #         # decay_weights = tf.concat([tf.ones([tf.shape(frame_wise_loss)[0], anchor_point]), decay_weights], axis=1)
-    #         # decay_weights = tf.concat([decay_weights, tf.reverse(decay_weights[:, :-1], axis=[1])], axis=1)
-    #         weighted_frame_wise_loss = frame_wise_loss * decay_weights
-    #     else:
-    #         weighted_frame_wise_loss = frame_wise_loss
-    #     total_loss = weighted_frame_wise_loss        
-        # pdb.set_trace()
-        # return total_loss
-    # fce = tf.keras.losses.BinaryFocalCrossentropy()
-    #     cce(y_true, y_pred, )
-    # import numpy as np
-
     
     # pdb.set_trace()
     # model.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=params['LEARNING_RATE']),

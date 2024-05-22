@@ -94,7 +94,7 @@ elif mode == 'predict':
     timesteps = params['NO_TIMEPOINTS']
     for LFP in val_datasets:
         LFP=LFP[:len(LFP)-len(LFP)%timesteps,:].reshape(-1,timesteps,n_channels)
-        windowed_signal = model.predict(LFP,verbose=1)
+        windowed_signal = np.squeeze(model.predict(LFP,verbose=1))
         probs = np.hstack(windowed_signal)
         val_pred.append(probs)
 
@@ -110,7 +110,8 @@ elif mode == 'predict':
         all_pred_events.append(tmp_pred)
     
     # pick model
-    best_preds = all_pred_events[0][5]
+    max_ind = np.argmax(F1_val[0,:])
+    best_preds = all_pred_events[0][max_ind]
     pred_vec = np.zeros(val_datasets[0].shape[0])
     label_vec = np.zeros(val_datasets[0].shape[0])
         
@@ -195,9 +196,10 @@ elif mode == 'predict':
                 tmp_pred_cnn.append(pred_val_events)
             all_pred_events_cnn.append(tmp_pred_cnn)
 
-        print((all_pred_events_cnn[0][14]).shape)
+        max_ind = np.argmax(F1_val[0,:])
+        print((all_pred_events_cnn[0][max_ind]).shape)
         # real_ripple_times
-        best_preds_cnn = real_ripple_times(all_pred_events_cnn[0][14])
+        best_preds_cnn = real_ripple_times(all_pred_events_cnn[0][max_ind])
         print('CNN predictions',best_preds_cnn.shape)
         #auxiliar_fs.append(best_preds_cnn)
         #pdb.set_trace()
@@ -261,7 +263,8 @@ elif mode == 'predict':
                 tmp_pred_rippAI.append(pred_val_events_ripplAI)
             all_pred_events_rippAI.append(tmp_pred_rippAI)
         
-        best_preds_rippAI = all_pred_events_rippAI[0][14]
+        max_ind = np.argmax(F1_val[0,:])
+        best_preds_rippAI = all_pred_events_rippAI[0][max_ind]
         
         print('Rippl_AI',best_preds_rippAI.shape)
 

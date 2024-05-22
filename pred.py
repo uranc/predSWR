@@ -30,7 +30,7 @@ model_name = args.model[0]
 
 # Parameters
 params = {'BATCH_SIZE': 16, 'SHUFFLE_BUFFER_SIZE': 4096, 
-          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-4, 'NO_EPOCHS': 500,
+          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-4, 'NO_EPOCHS': 300,
           'NO_TIMEPOINTS': 200, 'NO_CHANNELS': 8,
           'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
           }
@@ -97,6 +97,7 @@ elif mode == 'predict':
     timesteps = params['NO_TIMEPOINTS']
     for LFP in val_datasets:
         LFP=LFP[:len(LFP)-len(LFP)%timesteps,:].reshape(-1,timesteps,n_channels)
+        pdb.set_trace()
         windowed_signal = np.squeeze(model.predict(LFP,verbose=1))
         probs = np.hstack(windowed_signal)
         # pdb.set_trace()
@@ -138,4 +139,40 @@ elif mode == 'predict':
         plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k')
         plt.show()
     
+elif mode == 'predictSynth':
+
+    # modelname
+    model = args.model[0]
+    model_name = model
+    import importlib
     
+    # # get model
+    a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+    build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+    # from model.model_fn import build_DBI_TCN
+    
+    params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    model.summary()
+    
+    synth = np.load('/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/synth_stim.npy')
+    synth = np.tile(synth, (1,8))
+    
+    # get predictions
+    n_channels = params['NO_CHANNELS']
+    timesteps = params['NO_TIMEPOINTS']
+    synth=synth[:len(synth)-len(synth)%timesteps,:].reshape(-1,timesteps,n_channels)
+    windowed_signal = np.squeeze(model.predict(synth,verbose=1))
+    probs = np.hstack(windowed_signal)
+    
+    from scipy.signal import decimate
+    import matplotlib.pyplot as plt
+    synth = np.load('/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/synth_stim.npy')
+    synth = (synth-np.min(synth))/(np.max(synth)-np.min(synth))
+    tt = np.arange(synth.shape[0])/1250
+    # pdb.set_trace()
+    plt.plot(decimate(tt, 2), decimate(synth[:, 0], 2))
+    tt = np.arange(probs.shape[0])/1250
+    plt.plot(decimate(tt, 2), decimate(probs, 2))
+    plt.show()
+    pdb.set_trace()
