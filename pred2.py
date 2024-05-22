@@ -1,3 +1,4 @@
+# Compare TCN vs rippl_AI
 import os
 import pdb
 import tensorflow as tf
@@ -110,16 +111,17 @@ elif mode == 'predict':
         all_pred_events.append(tmp_pred)
     
     # pick model
-    max_ind = np.argmax(F1_val[0,:])
-    best_preds = all_pred_events[0][max_ind]
+    # chosen_thr = 14 # 0.72
+    chosen_thr = np.argmax(F1_val[0])
+    best_preds = all_pred_events[0][chosen_thr]
     pred_vec = np.zeros(val_datasets[0].shape[0])
     label_vec = np.zeros(val_datasets[0].shape[0])
         
     for pred in best_preds:
-        pred_vec[int(pred[0]*fs):int(pred[1]*1250)] = 1
+        pred_vec[int(pred[0]*fs):int(pred[1]*fs)] = 1
         
     for lab in val_labels[0]:
-        label_vec[int(lab[0]*fs):int(lab[1]*1250)] = 1 
+        label_vec[int(lab[0]*fs):int(lab[1]*fs)] = 1 
             
     if save_prob == 'True' :
         # Saving the probabilities
@@ -129,26 +131,39 @@ elif mode == 'predict':
         # Saving the probabilities in a .npy
         for i, array in enumerate(val_pred):
             np.save(directory + 'prob_{0}_{1}.npy'.format(model_name, i), np.array(array))
+    
+    if save_prob == 'True' : # Saving Labels
+        # Saving the probabilities
+        directory =  '/cs/projects/OWVinckSWR/DL/predSWR/experiments/probabilities/' 
+        if not os.path.exists(directory):
+            os.makedirs(directory)
+
+        # Saving the probabilities in a .npy
+        np.save(directory + 'val_labels_0.npy', np.array(label_vec))
+        label_vec_1 = np.zeros(val_datasets[1].shape[0])
+
+        for lab in val_labels[1]:
+            label_vec_1[int(lab[0]*fs):int(lab[1]*fs)] = 1 
+
+        np.save(directory + 'val_labels_1.npy', np.array(label_vec))    
 
     # Saving images   
-    directory =  '/cs/projects/OWVinckSWR/DL/predSWR/experiments/images/{0}'.format(model_name)   
+    directory =  '/cs/projects/OWVinckSWR/DL/predSWR/experiments/images/TCN/{0}/'.format(model_name)   
     if not os.path.exists(directory):
         os.makedirs(directory)
-
     # # Prediction centered in the detected ripple
-    # for pred in best_preds:
-    #     rip_begin = int(pred[0]*fs)
-    #     plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]) #LFP
-    #     plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k',  linewidth=2, label = 'GT') #Labels of DS
-    #     plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'red', label = 'prob') #Probabilities
-    #     plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'aqua', label = 'thr' ) #Bigger than threshold 
-    #     plot_filename = os.path.join(directory, f'plot_{rip_begin}.png')
-    #     plt.legend()
-    #     plt.xlabel('Frequency samples')
-    #     plt.title(f'{model_name}')
-    #     plt.savefig(plot_filename)
-    #     plt.show()
-    #     plt.close()
+    for pred in best_preds:
+        rip_begin = int(pred[0]*fs)
+        plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]) #LFP
+        plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k',  linewidth=2, label = 'GT') #Labels of DS
+        plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'red', label = 'prob') #Probabilities
+        plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'aqua', label = 'thr' ) #Bigger than threshold 
+        plot_filename = os.path.join(directory, f'plot_{rip_begin}.png')
+        plt.legend()
+        plt.xlabel('Frequency samples')
+        plt.title(f'{model_name}, thr={round(th_arr[chosen_thr],2)}',fontsize=7)
+        plt.savefig(plot_filename)
+        plt.close()
 
 
     
@@ -156,66 +171,65 @@ elif mode == 'predict':
         #####
     #### CNN ####
         #####
-        tf.keras.backend.clear_session()
-        # Preprocessing of the data: downsample, z-norm and overlapping windows 
-        from model.cnn_ripple_utils import z_score_normalization, downsample_data
-        from model.cnn_ripple_utils import generate_overlapping_windows, get_predictions_indexes, real_ripple_times
-        overlapping = True
-        window_size = 0.0128
-        val_pred_cnn = []
-        for LFP in val_datasets:
-            if overlapping:
-                stride = 0.0064
-                # Separate the data into 12.8ms windows with 6.4ms overlapping
-                X = generate_overlapping_windows(LFP, window_size, stride, fs)
-            else:
-                stride = window_size
-                X = np.expand_dims(LFP, 0)
+        # tf.keras.backend.clear_session()
+        # # Preprocessing of the data: downsample, z-norm and overlapping windows 
+        # from model.cnn_ripple_utils import z_score_normalization, downsample_data
+        # from model.cnn_ripple_utils import generate_overlapping_windows, get_predictions_indexes, real_ripple_times
+        # overlapping = True
+        # window_size = 0.0128
+        # val_pred_cnn = []
+        # for LFP in val_datasets:
+        #     if overlapping:
+        #         stride = 0.0064
+        #         # Separate the data into 12.8ms windows with 6.4ms overlapping
+        #         X = generate_overlapping_windows(LFP, window_size, stride, fs)
+        #     else:
+        #         stride = window_size
+        #         X = np.expand_dims(LFP, 0)
 
-        # Loading the model 
-            optimizer = kr.optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=False)
-            model = kr.models.load_model("/cs/projects/OWVinckSWR/DL/predSWR/experiments/cnn/cnn_model", compile=False)
-            model.compile(loss="binary_crossentropy", optimizer=optimizer)
+        # # Loading the model 
+        #     optimizer = kr.optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=False)
+        #     model = kr.models.load_model("/cs/projects/OWVinckSWR/DL/predSWR/experiments/cnn/cnn_model", compile=False)
+        #     model.compile(loss="binary_crossentropy", optimizer=optimizer)
 
-        # Predictions 
-            predictions = model.predict(X, verbose=True)
-            probs_aux = np.hstack(predictions)
-            probs = np.hstack(probs_aux)
-            val_pred_cnn.append(predictions)
-            #pdb.set_trace()
-        # Thresholding the predictions
-        th_arr=np.linspace(0.1,0.9,19)
-        all_pred_events_cnn = []
-        #pdb.set_trace()
-        ###for j,(pred,LFP) in enumerate(zip(val_pred_cnn, val_datasets)):
-        for j,pred in enumerate(val_pred_cnn):
-            tmp_pred_cnn = []
-            for i,th in enumerate(th_arr):
-                ###pred_val_events = get_predictions_indexes(LFP, pred, window_size=window_size, stride=stride, fs=downsampled_fs, threshold=th)/downsampled_fs
-                pred_val_events = get_predictions_indexes(val_datasets[j], pred, window_size=window_size, stride=stride, fs=fs, threshold=th)/fs
-                tmp_pred_cnn.append(pred_val_events)
-            all_pred_events_cnn.append(tmp_pred_cnn)
+        # # Predictions 
+        #     predictions = model.predict(X, verbose=True)
+        #     probs_aux = np.hstack(predictions)
+        #     probs = np.hstack(probs_aux)
+        #     val_pred_cnn.append(predictions)
+        #     #pdb.set_trace()
+        # # Thresholding the predictions
+        # th_arr=np.linspace(0.1,0.9,19)
+        # all_pred_events_cnn = []
+        # #pdb.set_trace()
+        # ###for j,(pred,LFP) in enumerate(zip(val_pred_cnn, val_datasets)):
+        # for j,pred in enumerate(val_pred_cnn):
+        #     tmp_pred_cnn = []
+        #     for i,th in enumerate(th_arr):
+        #         ###pred_val_events = get_predictions_indexes(LFP, pred, window_size=window_size, stride=stride, fs=downsampled_fs, threshold=th)/downsampled_fs
+        #         pred_val_events = get_predictions_indexes(val_datasets[j], pred, window_size=window_size, stride=stride, fs=fs, threshold=th)/fs
+        #         tmp_pred_cnn.append(pred_val_events)
+        #     all_pred_events_cnn.append(tmp_pred_cnn)
 
-        max_ind = np.argmax(F1_val[0,:])
-        print((all_pred_events_cnn[0][max_ind]).shape)
-        # real_ripple_times
-        best_preds_cnn = real_ripple_times(all_pred_events_cnn[0][max_ind])
-        print('CNN predictions',best_preds_cnn.shape)
-        #auxiliar_fs.append(best_preds_cnn)
-        #pdb.set_trace()
-        pred_vec_cnn = np.zeros(val_datasets[0].shape[0])
+        # print((all_pred_events_cnn[0][14]).shape)
+        # # real_ripple_times
+        # best_preds_cnn = real_ripple_times(all_pred_events_cnn[0][14])
+        # print('CNN predictions',best_preds_cnn.shape)
+        # #auxiliar_fs.append(best_preds_cnn)
+        # #pdb.set_trace()
+        # pred_vec_cnn = np.zeros(val_datasets[0].shape[0])
         
-        for pred in best_preds_cnn:
-            pred_vec_cnn[int(pred[0]*1250):int(pred[1]*1250)] = 1
+        # for pred in best_preds_cnn:
+        #     pred_vec_cnn[int(pred[0]*1250):int(pred[1]*1250)] = 1
 
-        if save_prob == 'True' :
-            # Saving the probabilities
-            directory =  '/cs/projects/OWVinckSWR/DL/predSWR/experiments/probabilities/' 
-            if not os.path.exists(directory):
-                os.makedirs(directory)
-            # Saving the probabilities in a .npy
-            for i, array in enumerate(val_pred_cnn):
-                np.save(directory + 'prob_cnn_{0}.npy'.format(i), np.array(array))
+        # if save_prob == 'True' :
+        #     # Saving the probabilities
+        #     directory =  '/cs/projects/OWVinckSWR/DL/predSWR/experiments/probabilities/' 
+        #     if not os.path.exists(directory):
+        #         os.makedirs(directory)
+        #     # Saving the probabilities in a .npy
+        #     for i, array in enumerate(val_pred_cnn):
+        #         np.save(directory + 'prob_cnn_{0}.npy'.format(i), np.array(array))
             
         # #pdb.set_trace()    
 
@@ -282,42 +296,43 @@ elif mode == 'predict':
             for i, array in enumerate(val_pred_rippAI):
                 np.save(directory + 'prob_rippAI_{0}_{1}.npy'.format(arch, i), np.array(array))
 
-        directory =  '/cs/projects/OWVinckSWR/DL/predSWR/experiments/images/imagesrippAI'   
+        directory =  '/cs/projects/OWVinckSWR/DL/predSWR/experiments/images/imagesrippAI/{0}/'.format(arch)   
         if not os.path.exists(directory):
             os.makedirs(directory)
             
-        # for pred in best_preds_rippAI:
-        #     rip_begin = int(pred[0]*fs)
-        #     plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]) #LFP
-        #     plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k',  linewidth=2, label = 'GT') # Labels of DS
-        #     plt.plot(val_pred_rippAI[0][rip_begin-128:rip_begin+128], 'red', label = 'prob') #Probabilities
-        #     plt.plot(pred_vec_rippAI[rip_begin-128:rip_begin+128], 'aqua',  linewidth=2, label = 'thr') # Predicted by rippAI bigger than thr
-        #     plot_filename = os.path.join(directory, f'plot_{rip_begin}.png')
-        #     plt.xlabel('Frequency samples')
-        #     plt.title(f'Ripp AI {arch}')
-        #     plt.legend()
-        #     plt.savefig(plot_filename)
-        #     plt.close()
+        for pred in best_preds_rippAI:
+            rip_begin = int(pred[0]*fs)
+            plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]) #LFP
+            plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k',  linewidth=2, label = 'GT') # Labels of DS
+            plt.plot(val_pred_rippAI[0][rip_begin-128:rip_begin+128], 'red', label = 'prob') #Probabilities
+            plt.plot(val_pred_rippAI[0][rip_begin-128:rip_begin+128]*pred_vec_rippAI[rip_begin-128:rip_begin+128], 'aqua',  linewidth=2, label = 'thr') # Predicted by rippAI bigger than thr
+            plot_filename = os.path.join(directory, f'plot_{rip_begin}.png')
+            plt.xlabel('Frequency samples')
+            plt.title(f'Ripp AI {arch}, thr={round(th_arr[14],2)}')
+            plt.legend()
+            plt.savefig(plot_filename)
+            plt.close()
 
             #################
         #### ALL PREDICTIONS ####
             #################
         #Ground-truth centered
-        directory =  '/cs/projects/OWVinckSWR/DL/predSWR/experiments/images/all_predictions'   
+        directory =  '/cs/projects/OWVinckSWR/DL/predSWR/experiments/images/all_predictions/{0}_{1}/'.format(arch, model_name )   
+        
         if not os.path.exists(directory):
             os.makedirs(directory)
             
-        # for pred in val_labels[0]:
-        #     rip_begin = np.int32(pred[0]*fs)
-        #     plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]) #LFP
-        #     plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k',  linewidth=2, label = 'GT') # Labels of DS
-        #     plt.plot(val_pred_rippAI[0][rip_begin-128:rip_begin+128], 'aqua', label = 'rippAI') # Probabilities rippAI
-        #     #plt.plot(pred_vec_rippAI[rip_begin-128:rip_begin+128], 'b',  linewidth=2, label = 'rippAI') # Predicted by rippAI bigger than threshold
-        #     plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'red', label = 'TCN') # Probabilities TCN
-        #     #plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'r') # Predicted by TCN bigger than threshold
-        #     plot_filename = os.path.join(directory, f'plot_{rip_begin}.png')
-        #     plt.xlabel('Frequency samples')
-        #     plt.title(f'Ripp AI {arch} and {model_name}')
-        #     plt.legend()
-        #     plt.savefig(plot_filename)
-        #     plt.close()
+        for pred in val_labels[0]:
+            rip_begin = np.int32(pred[0]*fs)
+            plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]) #LFP
+            plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k',  linewidth=2, label = 'GT') # Labels of DS
+            plt.plot(val_pred_rippAI[0][rip_begin-128:rip_begin+128], 'aqua', label = 'rippAI') # Probabilities rippAI
+            #plt.plot(pred_vec_rippAI[rip_begin-128:rip_begin+128], 'b',  linewidth=2, label = 'rippAI') # Predicted by rippAI bigger than threshold
+            plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'red', label = 'TCN') # Probabilities TCN
+            #plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'r') # Predicted by TCN bigger than threshold
+            plot_filename = os.path.join(directory, f'plot_{rip_begin}.png')
+            plt.xlabel('Frequency samples')
+            plt.title(f'Ripp AI {arch} and {model_name}',fontsize=7)
+            plt.legend()
+            plt.savefig(plot_filename)
+            plt.close()

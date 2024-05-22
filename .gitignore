@@ -1,4 +1,8 @@
 experiments/
-model/__pycache__
+TCN_comparison/
+allen_dataset/
+**/__pycache__/
+/__pycache__/
 *.out
 *.pyc
+*.png

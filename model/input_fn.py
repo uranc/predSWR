@@ -172,3 +172,12 @@ def rippleAI_load_dataset(params, mode='train'):
     # train_dataset = train_dataset.map(lambda x: tf.reshape(x,axis=[-1,40,8]))
     test_dataset = test_dataset.batch(params["BATCH_SIZE"])
     return train_dataset, test_dataset, label_ratio#, val_dataset
+
+
+def load_allen(indeces= np.int32(np.linspace(49,62,8))):
+    loaded_data_raw = np.load('/cs/projects/OWVinckSWR/Carmen/LFP_extracted/sanity_check/raw_lfp_fc.npy')
+    indeces[::-1].sort()
+    LFP = loaded_data_raw[:,indeces]
+    # Process LFP
+    data = process_LFP(LFP, sf = 1250, channels=np.arange(0,8))
+    return data

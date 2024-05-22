@@ -13,8 +13,7 @@ from os import path
 import shutil
 from scipy.stats import pearsonr 
 from scipy.io import loadmat
-# from tensorflow.python.framework.ops import disable_eager_execution
-# disable_eager_execution()
+
 
 parser = argparse.ArgumentParser(
     description='Example 3 - Local and Parallel Execution.')
@@ -100,7 +99,6 @@ elif mode == 'predict':
         pdb.set_trace()
         windowed_signal = np.squeeze(model.predict(LFP,verbose=1))
         probs = np.hstack(windowed_signal)
-        # pdb.set_trace()
         val_pred.append(probs)
 
     # Validation plot in the second ax
