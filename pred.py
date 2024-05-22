@@ -138,7 +138,7 @@ elif mode == 'predict':
         plt.show()
     
 elif mode == 'predictSynth':
-
+    
     # modelname
     model = args.model[0]
     model_name = model
