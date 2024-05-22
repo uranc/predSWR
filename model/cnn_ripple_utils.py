@@ -12,7 +12,7 @@ from keras import layers, optimizers
 from keras.initializers import GlorotUniform, Orthogonal
 from xgboost import XGBClassifier
 from imblearn.under_sampling import RandomUnderSampler
-
+import pdb
 
 def fcn_save_pickle(name,x):
 	'''
@@ -470,7 +470,7 @@ def get_predictions_index(predictions,threshold=0.5):
 		begin_indexes=begin_indexes[:-1]
 	elif len(begin_indexes)<len(end_indexes):
 		end_indexes=end_indexes[1:]
-
+	#pdb.set_trace()	
 	pred_indexes=np.empty(shape=(len(begin_indexes),2))
 	pred_indexes[:,0]=begin_indexes
 	pred_indexes[:,1]=end_indexes
