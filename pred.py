@@ -153,7 +153,7 @@ elif mode == 'predictSynth':
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
     
-    synth = np.load('/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/synth_stim.npy')
+    synth = np.load('/cs/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
     synth = np.tile(synth, (1,8))
     
     # get predictions
@@ -165,7 +165,7 @@ elif mode == 'predictSynth':
     
     from scipy.signal import decimate
     import matplotlib.pyplot as plt
-    synth = np.load('/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/synth_stim.npy')
+    synth = np.load('/cs/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
     synth = (synth-np.min(synth))/(np.max(synth)-np.min(synth))
     tt = np.arange(synth.shape[0])/1250
     # pdb.set_trace()
