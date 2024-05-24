@@ -28,9 +28,9 @@ mode = args.mode[0]
 model_name = args.model[0]
 
 # Parameters
-params = {'BATCH_SIZE': 16, 'SHUFFLE_BUFFER_SIZE': 4096, 
-          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-4, 'NO_EPOCHS': 300,
-          'NO_TIMEPOINTS': 200, 'NO_CHANNELS': 8,
+params = {'BATCH_SIZE': 64, 'SHUFFLE_BUFFER_SIZE': 4096, 
+          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 200,
+          'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8,
           'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
           }
 
@@ -68,7 +68,7 @@ elif mode == 'predict':
     model_name = model
     import importlib
     
-    # # get model
+    # get model
     a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
     build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
     # from model.model_fn import build_DBI_TCN
@@ -76,7 +76,12 @@ elif mode == 'predict':
     params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
-    
+        
+    # from model.model_fn import build_DBI_TCN
+    # # pdb.set_trace()
+    # model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    # model.summary()
+
     
     # pdb.set_trace()
     # noise = np.random.rand(1024,8).reshape(int(1024/32),32,8)
@@ -91,28 +96,40 @@ elif mode == 'predict':
     from model.cnn_ripple_utils import get_predictions_index, get_performance
     # get predictions
     val_pred = []
-    th_arr=np.linspace(0.1,0.9,19)
+    th_arr=np.linspace(0.1,0.9,10)
     n_channels = params['NO_CHANNELS']
     timesteps = params['NO_TIMEPOINTS']
-    for LFP in val_datasets:
-        LFP=LFP[:len(LFP)-len(LFP)%timesteps,:].reshape(-1,timesteps,n_channels)
-        pdb.set_trace()
-        windowed_signal = np.squeeze(model.predict(LFP,verbose=1))
+    # val_datasets[0] = val_datasets[0][89500:90500-500,:]
+    # val_datasets[1] = val_datasets[1][:100,:]
+    val_datasets = [val_datasets[0]]
+    test_end = val_datasets[0].shape[0]
+    val_batches = []
+    for i in range(0, test_end - timesteps, 1):
+        val_batches.append(val_datasets[0][np.arange(i, i + timesteps), :])
+    val_batches = np.array(val_batches)
+    for LFP in [val_datasets[0]]:
+        # test_end = LFP.shape[0]
+        # LFP=LFP[:len(LFP)-len(LFP)%timesteps,:].reshape(-1,timesteps,n_channels)
+        # aa = []
+        # for i in range(0, test_end - timesteps, 1):
+        windowed_signal = np.squeeze(model.predict(val_batches, verbose=1))
+            # aa.append(windowed_signal)
+        # probs = np.hstack(aa)
         probs = np.hstack(windowed_signal)
         val_pred.append(probs)
 
+    pdb.set_trace()
     # Validation plot in the second ax
     all_pred_events = []
     F1_val=np.zeros(shape=(len(val_datasets),len(th_arr)))
     for j,pred in enumerate(val_pred):
         tmp_pred = []
         for i,th in enumerate(th_arr):
-            # pdb.set_trace()
             pred_val_events=get_predictions_index(pred,th)/1250
             _,_,F1_val[j,i],_,_,_=get_performance(pred_val_events,val_labels[j],verbose=False)
             tmp_pred.append(pred_val_events)
         all_pred_events.append(tmp_pred)
-    
+
     # pick model
     print(F1_val[0])
     # pdb.set_trace()
@@ -153,24 +170,34 @@ elif mode == 'predictSynth':
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
     
-    synth = np.load('/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/synth_stim.npy')
+    synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
     synth = np.tile(synth, (1,8))
     
+    train_end = synth.shape[0]
+    timesteps = 50
+    synth_batches = []
+    for i in range(0, train_end - timesteps, 1):
+        synth_batches.append(synth[np.arange(i, i + timesteps), :])
+    synth_batches = np.array(synth_batches)
     # get predictions
     n_channels = params['NO_CHANNELS']
     timesteps = params['NO_TIMEPOINTS']
-    synth=synth[:len(synth)-len(synth)%timesteps,:].reshape(-1,timesteps,n_channels)
-    windowed_signal = np.squeeze(model.predict(synth,verbose=1))
+    # synth=synth[:len(synth)-len(synth)%timesteps,:].reshape(-1,timesteps,n_channels)
+    # pdb.set_trace()
+    # synth=np.expand_dims(synth, axis=0)
+    windowed_signal = np.squeeze(model.predict(synth_batches,verbose=1))
     probs = np.hstack(windowed_signal)
-    
+    # pdb.set_trace()
     from scipy.signal import decimate
     import matplotlib.pyplot as plt
-    synth = np.load('/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/synth_stim.npy')
+    synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
     synth = (synth-np.min(synth))/(np.max(synth)-np.min(synth))
     tt = np.arange(synth.shape[0])/1250
     # pdb.set_trace()
-    plt.plot(decimate(tt, 2), decimate(synth[:, 0], 2))
+    # plt.plot(decimate(tt, 4), decimate(synth[:, 0], 4))
+    plt.plot(tt, synth[:, 0])
     tt = np.arange(probs.shape[0])/1250
-    plt.plot(decimate(tt, 2), decimate(probs, 2))
+    # plt.plot(decimate(tt,4), decimate(probs, 4))
+    plt.plot(tt, probs)
     plt.show()
     pdb.set_trace()

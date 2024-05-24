@@ -5,6 +5,7 @@
 #SBATCH --gpus=rtxa6000:1
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-cpu=6000
+#SBATCH --time=0-20:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cem.uran@esi-frankfurt.de
 
