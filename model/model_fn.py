@@ -1,9 +1,12 @@
-from tensorflow.keras import applications
-from tensorflow.keras.layers import Conv1D, Conv2D, ELU, Input, LSTM, Dense, Dropout, BatchNormalization, Activation, Flatten
-from tensorflow.keras.models import Model
+from tensorflow.keras.layers import Conv1D, Conv2D, ELU, Input, LSTM, Dense, Dropout
+from tensorflow.keras.layers import BatchNormalization, Activation, Flatten, Concatenate, Lambda
 from tensorflow.keras.initializers import GlorotUniform, Orthogonal
 from tensorflow_addons.layers import WeightNormalization
+from tensorflow.keras.initializers import Constant
+from tensorflow.keras.regularizers import l1, l2
 from tensorflow.keras import backend as K
+from tensorflow.keras.models import Model
+from tensorflow.keras import applications
 import tensorflow_addons as tfa
 import tensorflow as tf
 import pdb
@@ -69,25 +72,31 @@ def build_DBI_CNN(mode, params):
 def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     from tcn import TCN
 
+    use_batch_norm = False
+    use_weight_norm = False
+    use_l1_norm = False
+    n_filters = 16
+    n_kernels = 4
+    n_dilations = 5
     # load labels
     # inputs = Input(shape=(None, input_chans))    
-    inputs = Input(shape=(None, input_chans), name='inputs')
-    # inputs = Input(shape=(input_timepoints, input_chans), name='inputs')
-    # weights = Input(shape=(input_timepoints), name='weights')
+    # inputs = Input(shape=(None, input_chans), name='inputs')
+    inputs = Input(shape=(input_timepoints, input_chans), name='inputs')
+    # weights = Input(shape=(), name='weights')
     # nets = inputs
 
     # get TCN
-    baseTCN = True
+    baseTCN = False
     if baseTCN:
-        nets = TCN(nb_filters=64,
-                    kernel_size=2,
+        nets = TCN(nb_filters=n_filters,
+                    kernel_size=n_kernels,
                     nb_stacks=1,
-                    # dilations=[2 ** i for i in range(9)],
-                    dilations=(1, 2, 4, 8, 16, 32, 64, 128), #, 32
+                    dilations=[2 ** i for i in range(n_dilations)],
+                    # dilations=(1, 2, 4, 8, 16), #, 32
                     padding='causal',
                     use_skip_connections=True,
                     dropout_rate=0.0,
-                    return_sequences=True,
+                    return_sequences=False,
                     activation='relu',
                     kernel_initializer='glorot_uniform',
                     use_batch_norm=False,
@@ -101,81 +110,126 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
         # nets = Activation('sigmoid')(nets)
         # nets = Flatten()(nets)
     else:
-        dropout_rate = 0.0
-        nets = inputs
-        all_nets = []
-        for i_dilate in range(6):
-            nets = WeightNormalization(Conv1D(filters=64,
-                        kernel_size=4,
-                        dilation_rate=2**(i_dilate),
-                        groups=input_chans,
-                        padding='causal',
-                        activation='relu',
-                        # activation=ELU(alpha=0),
-                        name='dconv1_{0}'.format(i_dilate),
-                        kernel_initializer='glorot_uniform'))(nets)
-            all_nets.append(nets)
-            if dropout_rate:
-                nets = Dropout(dropout_rate)(nets)
-            # wrap it. WeightNormalization API is different than BatchNormalization or LayerNormalization.
-            # nets = WeightNormalization(nets)(nets)
-            # with K.name_scope('norm_{}'.format(i_dilate)):
-                # nets = WeightNormalization(nets)
-            # nets = Conv1D(filters=64,
-            #             kernel_size=2,
-            #             dilation_rate=2**(i_dilate),
-            #             groups=input_chans,
-            #             padding='causal',
-            #             activation='relu',
-            #             # activation=ELU(alpha=0),
-            #             name='dconv2_{0}'.format(i_dilate),
-            #             kernel_initializer='glorot_uniform')(nets)
-        
-        tt = tf.reduce_sum(tf.stack(all_nets, axis=-1))
+        nets = []
+        for i_ch in range(8):
+            nets_in = Lambda(lambda tt: tt[:, :, i_ch], name='Slice_Input_{}'.format(i_ch))(inputs)
+            nets.append(tf.expand_dims(nets_in, axis=-1))
+
         # pdb.set_trace()
-        # reduce dilation
-        nets = WeightNormalization(Conv1D(filters=64,
-                    kernel_size=4,
-                    dilation_rate=1,
-                    groups=input_chans,
-                    padding='causal',
-                    activation='relu',
-                    # activation=ELU(alpha=0),
-                    name='de_dconv1_{0}'.format(0),
-                    kernel_initializer='glorot_uniform'))(nets)
-        if dropout_rate:
-            nets = Dropout(dropout_rate)(nets)
-            
-        nets = WeightNormalization(Conv1D(filters=64,
-                    kernel_size=4,
-                    dilation_rate=1,
-                    groups=input_chans,
-                    padding='causal',
-                    activation='relu',
-                    # activation=ELU(alpha=0),
-                    name='de_dconv1_{0}'.format(1),
-                    kernel_initializer='glorot_uniform'))(nets)
-        if dropout_rate:
-            nets = Dropout(dropout_rate)(nets)            
-        # with K.name_scope('norm_{}'.format(10)):
-        # nets = WeightNormalization()(nets)
-        # nets = Conv1D(filters=64,
-        #             kernel_size=2,
-        #             dilation_rate=1,
-        #             groups=input_chans,
-        #             padding='causal',
-        #             activation='relu',
-        #             # activation=ELU(alpha=0),
-        #             name='de_dconv2_{0}'.format(0),
-        #             kernel_initializer='glorot_uniform')(nets)
+        dropout_rate = 0
+        all_nets = []
+        for i_dilate in range(n_dilations):
+            wconv = Conv1D(filters=n_filters,
+                            kernel_size=n_kernels,
+                            dilation_rate=2**(i_dilate),
+                            # groups=input_chans,
+                            padding='causal',
+                            # activation='relu',
+                            use_bias = True,
+                            bias_initializer='zeros',
+                            kernel_regularizer=l1(0.001),
+                            activation=ELU(alpha=0),
+                            name='dconv1_{0}'.format(i_dilate),
+                            # kernel_initializer='glorot_uniform'
+                            kernel_initializer='he_normal'
+                            )
+            if use_weight_norm:
+                wconv = WeightNormalization(wconv)
+                
+            if i_dilate == 0:
+                all_chs = []
+                for i_ch in range(8):
+                    if use_batch_norm:
+                        tmp = wconv(nets[i_ch])
+                        tmp = BatchNormalization()(tmp)
+                        all_chs.append(tmp)
+                    else:
+                        all_chs.append(wconv(nets[i_ch]))
+            else:
+                tmp_chs = []
+                for i_ch in range(8):
+                    if use_batch_norm:
+                        tmp = wconv(all_chs[i_ch])
+                        tmp = BatchNormalization()(tmp)
+                        tmp_chs.append(tmp)
+                    else:
+                        tmp_chs.append(wconv(all_chs[i_ch]))
+                all_chs = tmp_chs
         
+        # reduce dilation
+        wconv = Conv1D(filters=n_filters/2,
+                        kernel_size=n_kernels,
+                        dilation_rate=1,
+                        # groups=input_chans,
+                        padding='causal',
+                        use_bias = True,
+                        bias_initializer='zeros',
+                        # activation='relu',
+                        kernel_regularizer=l1(0.001),
+                        activation=ELU(alpha=0),
+                        name='de_dconv1_{0}'.format(0),
+                        kernel_initializer='he_normal'
+                        # kernel_initializer='glorot_uniform'
+                        )
+        if use_weight_norm:
+            wconv = WeightNormalization(wconv)
+        if use_batch_norm:
+            wconv = BatchNormalization()(wconv)
+                    
+        tmp_chs = []
+        for i_ch in range(8):
+            if use_batch_norm:
+                tmp = wconv(all_chs[i_ch])
+                tmp = BatchNormalization()(tmp)
+                tmp_chs.append(tmp)
+            else:
+                tmp_chs.append(wconv(all_chs[i_ch]))
+        all_chs = tmp_chs
+        
+        # reduce dilation
+        wconv = Conv1D(filters=n_filters/4,
+                        kernel_size=n_kernels,
+                        dilation_rate=1,
+                        # groups=input_chans,
+                        padding='causal',
+                        use_bias = True,
+                        bias_initializer='zeros',
+                        activation='relu',
+                        # kernel_regularizer=l1(0.001),
+                        activation=ELU(alpha=0),
+                        name='de_dconv1_{0}'.format(1),
+                        # kernel_initializer='glorot_uniform'
+                        kernel_initializer='he_normal'
+                        )
+        if use_weight_norm:
+            wconv = WeightNormalization(wconv)
+        if use_batch_norm:
+            wconv = BatchNormalization()(wconv)            
+                    
+        tmp_chs = []
+        for i_ch in range(8):
+            if use_batch_norm:
+                tmp = wconv(all_chs[i_ch])
+                tmp = BatchNormalization()(tmp)
+                tmp_chs.append(tmp)
+            else:
+                tmp_chs.append(wconv(all_chs[i_ch]))
+        all_chs = tmp_chs      
+        
+        # concat
+        nets = Concatenate(axis=-1)(all_chs)
+        nets = Lambda(lambda tt: tt[:, -1, :], name='Slice_Output')(nets)
+        nets = tf.expand_dims(nets, axis=1)
+
         # reduce mean and get output
         nets = tf.reduce_mean(nets, axis=-1, keepdims=True)
-        nets = Dense(1, activation='sigmoid', kernel_initializer=GlorotUniform())(nets)
-        # nets = Flatten()(nets)
-        # pdb.set_trace()
         
-
+        nets = Dense(1, use_bias = True,
+                        # bias_initializer=Constant(value=-5.0),
+                        bias_initializer='zeros',
+                        activation='sigmoid', 
+                        kernel_initializer=GlorotUniform())(nets)
+    # pdb.set_trace()
     # get outputs
     outputs = nets
     model = Model(inputs=[inputs], outputs=[outputs])

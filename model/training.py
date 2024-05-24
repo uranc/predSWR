@@ -49,4 +49,4 @@ def train_pred(model,
                      epochs=n_epoch,
                      validation_data=valid_inputs,
                      callbacks=callbacks,
-                     verbose=1)    
+                     verbose=1)                     #  steps_per_epoch=100, # batch=256,

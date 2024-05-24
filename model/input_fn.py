@@ -119,20 +119,31 @@ def rippleAI_load_dataset(params, mode='train'):
     
     from scipy import signal
     M = 51
-    onsets = np.diff(train_labels)==1
-    # onsets = np.hstack((np.diff(train_labels), 0))==1
+    # onsets = np.diff(train_labels)==1
+    onsets = np.hstack((0, np.diff(train_labels)))==1
+    assert(np.unique(train_labels[np.where(onsets)[0]])==1)
+    assert(np.unique(train_labels[np.where(onsets)[0]]-1)==0)
     weights = signal.convolve(onsets, signal.exponential(M, 0, 5, False))+0.1
-    # weights = signal.convolve(onsets, signal.exponential(M, 0, 10, False))+0.1
+    # weights = signal.convolve(onsets, signal.exponential(M, 0, 10, False))+0.5
     weights /= np.max(weights)
-    weights = np.hstack((0, weights))
+    # weights = np.hstack((0, weights))
     # pdb.set_trace()
     onset_indices = np.where(onsets)[0]
     for onset in onset_indices:
-        weights[onset-50:onset+1] = 0
-        # weights[onset-50:onset+1] = 1e-3
+        if np.any(train_labels[onset-40:onset]==1):
+            weights[onset-40:onset] *= train_labels[onset-40:onset]
+    weights = weights[:train_labels.shape[0]]
+    
+    # assert(np.unique(train_labels[np.where(onsets)[0]+1])==1)
+    
+    # print(np.unique(weights[np.where(onsets)[0]]))
+    assert(np.unique(weights[np.where(onsets)[0]])==1)
+    assert(np.unique(weights[np.where(onsets)[0]]-1)==0)
+    
     # import matplotlib.pyplot as plt
-    # plt.plot(weights)
     # plt.plot(train_labels)
+    # plt.plot(weights)
+    
     # plt.show()
     # pdb.set_trace()
     # y_train=np.zeros(shape=[x_train.shape[0],1])
@@ -147,14 +158,40 @@ def rippleAI_load_dataset(params, mode='train'):
     # for event in val_labels_vec:
     #     y[int(sf*event[0]):int(sf*event[1])] = 1
     # val_labels = y
-    n_cut = params["NO_TIMEPOINTS"]*params["NO_CHANNELS"]
-    train_examples = train_examples[:len(train_examples)-len(train_examples)%params["NO_TIMEPOINTS"], :].reshape(-1,params["NO_TIMEPOINTS"],params["NO_CHANNELS"])
-    test_examples = test_examples[:len(test_examples)-len(test_examples)%params["NO_TIMEPOINTS"], :].reshape(-1,params["NO_TIMEPOINTS"],params["NO_CHANNELS"])
-    train_labels = train_labels[:len(train_labels)-len(train_labels)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"], 1)
-    test_labels = test_labels[:len(test_labels)-len(test_labels)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"], 1)
-    train_weights = weights[:len(weights)-len(weights)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"], 1)
+    # n_cut = params["NO_TIMEPOINTS"]*params["NO_CHANNELS"]
+    # train_examples = train_examples[:len(train_examples)-len(train_examples)%params["NO_TIMEPOINTS"], :].reshape(-1,params["NO_TIMEPOINTS"],params["NO_CHANNELS"])
+    # test_examples = test_examples[:len(test_examples)-len(test_examples)%params["NO_TIMEPOINTS"], :].reshape(-1,params["NO_TIMEPOINTS"],params["NO_CHANNELS"])
+    # train_labels = train_labels[:len(train_labels)-len(train_labels)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"], 1)
+    # test_labels = test_labels[:len(test_labels)-len(test_labels)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"], 1)
+    # train_weights = weights[:len(weights)-len(weights)%params["NO_TIMEPOINTS"]].reshape(-1,params["NO_TIMEPOINTS"], 1)
+    # pdb.set_trace()
+    # aa = np.arange(0,1000)
+    # bb = np.arange(0,1000)
+    # train_end = 200#aa.shape[0]
+    train_end = train_examples.shape[0]
+    timesteps = params['NO_TIMEPOINTS']
+    train_x, train_y, train_w = [], [], []
+    for i in range(0, train_end - timesteps, 10):
+        # print(aa[np.arange(i, i + timesteps)])
+        # print(bb[i+timesteps-1])
+        train_x.append(train_examples[np.arange(i, i + timesteps), :])
+        train_y.append(train_labels[i+timesteps-1].reshape(-1,1,1))
+        train_w.append(weights[i+timesteps-1].reshape(-1,1,1))
+        # print(np.arange(i, i + timesteps))
+        # print(i + timesteps)
+        # train_x.append(df[i:i + timesteps])
+        # train_y.append(df[i + timesteps])
+    # pdb.set_trace()
+    train_x = np.array(train_x)
+    train_y = np.array(train_y)
+    train_w = np.array(train_w)
     # train_labels = train_labels.max(axis=1)
     # test_labels = test_labels.max(axis=1)
+    test_end = test_examples.shape[0]
+    test_x, test_y = [], []
+    for i in range(0, test_end - timesteps, 10):
+        test_x.append(test_examples[np.arange(i, i + timesteps), :])
+        test_y.append(test_labels[i+timesteps-1].reshape(-1,1,1))    
     
     # pdb.set_trace()
     # make datasetstrain_weights, 
@@ -164,11 +201,13 @@ def rippleAI_load_dataset(params, mode='train'):
     # train_labels = tf.data.Dataset.from_tensor_slices(train_labels)
     # train_dataset = tf.data.Dataset.zip((X, train_labels))
     # pdb.set_trace()
-    train_dataset = tf.data.Dataset.from_tensor_slices((train_examples, train_labels, train_weights))
+    train_dataset = tf.data.Dataset.from_tensor_slices((train_x, train_y, train_w))
+    # train_dataset = tf.data.Dataset.from_tensor_slices((train_x, train_y, train_w))
     # train_dataset = tf.data.Dataset.from_tensor_slices((train_examples, train_labels))
-    test_dataset = tf.data.Dataset.from_tensor_slices((test_examples, test_labels))
+    test_dataset = tf.data.Dataset.from_tensor_slices((test_x, test_y))
+    # test_dataset = tf.data.Dataset.from_tensor_slices((test_examples, test_labels))
     # val_dataset = tf.data.Dataset.from_tensor_slices((val_data, val_labels))
-    train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"]).batch(params["BATCH_SIZE"])
+    train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"], reshuffle_each_iteration=True).batch(params["BATCH_SIZE"])
     # train_dataset = train_dataset.map(lambda x: tf.reshape(x,axis=[-1,40,8]))
     test_dataset = test_dataset.batch(params["BATCH_SIZE"])
     return train_dataset, test_dataset, label_ratio#, val_dataset
