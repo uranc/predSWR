@@ -6,3 +6,4 @@ allen_dataset/
 *.out
 *.pyc
 *.png
+time_analysis/ROC_curves/*.png

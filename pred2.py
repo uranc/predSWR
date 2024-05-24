@@ -336,3 +336,74 @@ elif mode == 'predict':
             plt.legend()
             plt.savefig(plot_filename)
             plt.close()
+
+elif mode == 'predictSynth':
+    
+    # modelname
+    model = args.model[0]
+    model_name = model
+    import importlib
+    
+    # get model
+    a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+    build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+    # from model.model_fn import build_DBI_TCN
+    
+    params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    model.summary()
+    
+    synth = np.load('/cs/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
+    synth = np.tile(synth, (1,8))
+    
+    # get predictions
+    n_channels = params['NO_CHANNELS']
+    timesteps = params['NO_TIMEPOINTS']
+    synth=synth[:len(synth)-len(synth)%timesteps,:].reshape(-1,timesteps,n_channels)
+    windowed_signal = np.squeeze(model.predict(synth,verbose=1))
+    probs = np.hstack(windowed_signal)
+    
+    from scipy.signal import decimate
+    import matplotlib.pyplot as plt
+    synth = np.load('/cs/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
+    synth = (synth-np.min(synth))/(np.max(synth)-np.min(synth))
+    tt = np.arange(synth.shape[0])/1250
+    # pdb.set_trace()
+    # plt.plot(decimate(tt, 2), decimate(synth[:, 0], 2))
+    tt = np.arange(probs.shape[0])/1250
+    # plt.plot(decimate(tt, 2), decimate(probs, 2))
+    # plt.show()
+
+        ############
+    #### RIPPL_AI_1D ####
+        ############
+    from model.cnn_ripple_utils import prediction_parser
+    tf.keras.backend.clear_session()
+    synth = np.load('/cs/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
+    synth = np.tile(synth, (1,8))
+    
+    # get predictions
+    n_channels = params['NO_CHANNELS']
+    timesteps = params['NO_TIMEPOINTS']
+
+    probs_ripp_AI = prediction_parser(synth,arch = arch)
+    synth = np.load('/cs/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
+    synth = (synth-np.min(synth))/(np.max(synth)-np.min(synth))
+    tt_synth = np.arange(synth.shape[0])/1250
+    tt_ripp_AI = np.arange(probs_ripp_AI.shape[0])/1250
+    tt = np.arange(probs.shape[0])/1250
+    # pdb.set_trace()
+    directory =  '/cs/projects/OWVinckSWR/DL/predSWR/synth/' 
+        
+    if not os.path.exists(directory):
+        os.makedirs(directory)
+   
+    plt.plot(decimate(tt_synth, 2), decimate(synth[:, 0], 2))
+    plt.plot(decimate(tt_ripp_AI, 2), decimate(probs_ripp_AI, 2), alpha=0.7,  label = '{0}'.format(arch))
+    plt.plot(decimate(tt, 2), decimate(probs, 2),alpha=0.7, label = '{0}'.format(model_name))
+    plt.legend(fontsize=6)
+    plot_filename = os.path.join(directory, '{0}_{1}.png'.format(arch, model_name ))
+    plt.savefig(plot_filename)
+    plt.close()
+
+    
