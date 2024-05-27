@@ -40,7 +40,7 @@ save_prob = 'True'
 # Parameters
 params = {'BATCH_SIZE': 64, 'SHUFFLE_BUFFER_SIZE': 4096, 
           'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-4, 'NO_EPOCHS': 500,
-          'NO_TIMEPOINTS': 40, 'NO_CHANNELS': 8,
+          'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8,
           'EXP_DIR': '/cs/projects/OWVinckSWR/DL/predSWR/experiments/' + model_name,
           }
 if mode == 'train':
@@ -93,12 +93,22 @@ elif mode == 'predict':
     th_arr=np.linspace(0.1,0.9,19)
     n_channels = params['NO_CHANNELS']
     timesteps = params['NO_TIMEPOINTS']
+    val_datasets[0] = val_datasets[0][89500:90500, :]
+    val_datasets[1] = val_datasets[1][0:50, :]
+    
+    aux_aux = []
     for LFP in val_datasets:
-        LFP=LFP[:len(LFP)-len(LFP)%timesteps,:].reshape(-1,timesteps,n_channels)
-        windowed_signal = np.squeeze(model.predict(LFP,verbose=1))
-        probs = np.hstack(windowed_signal)
-        val_pred.append(probs)
-
+        test_end = LFP.shape[0]
+        # LFP=LFP[:len(LFP)-len(LFP)%timesteps,:].reshape(-1,timesteps,n_channels)
+        for i in range(0, test_end-timesteps, 1):
+        
+            windowed_signal = np.squeeze(model.predict(np.expand_dims(LFP[np.arange(i, i + timesteps), :], axis=0),verbose=1))
+            probs = (windowed_signal) #np.hstack(windowed_signal)
+            aux_aux.append(probs)
+        val_pred.append(np.array(probs))
+        
+ 
+   
     # Validation plot in the second ax
     all_pred_events = []
     F1_val=np.zeros(shape=(len(val_datasets),len(th_arr)))
@@ -116,7 +126,7 @@ elif mode == 'predict':
     best_preds = all_pred_events[0][chosen_thr]
     pred_vec = np.zeros(val_datasets[0].shape[0])
     label_vec = np.zeros(val_datasets[0].shape[0])
-        
+    
     for pred in best_preds:
         pred_vec[int(pred[0]*fs):int(pred[1]*fs)] = 1
         
