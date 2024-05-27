@@ -73,15 +73,16 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     from tcn import TCN
 
     use_batch_norm = False
-    use_weight_norm = False
+    use_weight_norm = True
     use_l1_norm = False
-    n_filters = 16
-    n_kernels = 4
-    n_dilations = 5
+    n_filters = 64
+    n_kernels = 7
+    n_dilations = 4
     # load labels
     # inputs = Input(shape=(None, input_chans))    
     # inputs = Input(shape=(None, input_chans), name='inputs')
-    inputs = Input(shape=(input_timepoints, input_chans), name='inputs')
+    # inputs = Input(shape=(input_timepoints*2, input_chans), name='inputs')
+    inputs = Input(shape=(None, input_chans), name='inputs')
     # weights = Input(shape=(), name='weights')
     # nets = inputs
 
@@ -96,7 +97,7 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                     padding='causal',
                     use_skip_connections=True,
                     dropout_rate=0.0,
-                    return_sequences=False,
+                    return_sequences=True,
                     activation='relu',
                     kernel_initializer='glorot_uniform',
                     use_batch_norm=False,
@@ -106,9 +107,11 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                     return_state=False)(inputs)
         # pdb.set_trace()
         # nets = Dense(1, kernel_initializer=GlorotUniform(), use_bias=True)(nets)
+        nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
         nets = Dense(1, activation='sigmoid', kernel_initializer=GlorotUniform())(nets)
         # nets = Activation('sigmoid')(nets)
         # nets = Flatten()(nets)
+        # pdb.set_trace()
     else:
         nets = []
         for i_ch in range(8):
@@ -124,14 +127,14 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                             dilation_rate=2**(i_dilate),
                             # groups=input_chans,
                             padding='causal',
-                            # activation='relu',
+                            activation='relu',
                             use_bias = True,
                             bias_initializer='zeros',
-                            kernel_regularizer=l1(0.001),
-                            activation=ELU(alpha=0),
+                            # kernel_regularizer=l1(0.001),
+                            # activation=ELU(alpha=0),
                             name='dconv1_{0}'.format(i_dilate),
-                            # kernel_initializer='glorot_uniform'
-                            kernel_initializer='he_normal'
+                            kernel_initializer='glorot_uniform'
+                            # kernel_initializer='he_normal'
                             )
             if use_weight_norm:
                 wconv = WeightNormalization(wconv)
@@ -164,12 +167,12 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                         padding='causal',
                         use_bias = True,
                         bias_initializer='zeros',
-                        # activation='relu',
-                        kernel_regularizer=l1(0.001),
-                        activation=ELU(alpha=0),
+                        activation='relu',
+                        # kernel_regularizer=l1(0.001),
+                        # activation=ELU(alpha=0),
                         name='de_dconv1_{0}'.format(0),
-                        kernel_initializer='he_normal'
-                        # kernel_initializer='glorot_uniform'
+                        # kernel_initializer='he_normal'
+                        kernel_initializer='glorot_uniform'
                         )
         if use_weight_norm:
             wconv = WeightNormalization(wconv)
@@ -196,10 +199,10 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                         bias_initializer='zeros',
                         activation='relu',
                         # kernel_regularizer=l1(0.001),
-                        activation=ELU(alpha=0),
+                        # activation=ELU(alpha=0),
                         name='de_dconv1_{0}'.format(1),
-                        # kernel_initializer='glorot_uniform'
-                        kernel_initializer='he_normal'
+                        kernel_initializer='glorot_uniform'
+                        # kernel_initializer='he_normal'
                         )
         if use_weight_norm:
             wconv = WeightNormalization(wconv)
@@ -218,11 +221,12 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
         
         # concat
         nets = Concatenate(axis=-1)(all_chs)
-        nets = Lambda(lambda tt: tt[:, -1, :], name='Slice_Output')(nets)
-        nets = tf.expand_dims(nets, axis=1)
+        nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+        # pdb.set_trace()
+        # nets = tf.expand_dims(nets, axis=1)
 
         # reduce mean and get output
-        nets = tf.reduce_mean(nets, axis=-1, keepdims=True)
+        # nets = tf.reduce_mean(nets, axis=-1, keepdims=True)
         
         nets = Dense(1, use_bias = True,
                         # bias_initializer=Constant(value=-5.0),
@@ -270,7 +274,8 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     # model.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=params['LEARNING_RATE']),
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
                     # loss=custom_fbfce(weights=weights),
-                    loss=tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True), 
+                    loss=tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True, label_smoothing=0.1), 
+                    # loss=tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True), 
                     metrics=[tf.keras.metrics.BinaryCrossentropy(), 
                              tf.keras.metrics.BinaryAccuracy()])
     model.trainable = True

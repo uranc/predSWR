@@ -28,8 +28,8 @@ mode = args.mode[0]
 model_name = args.model[0]
 
 # Parameters
-params = {'BATCH_SIZE': 64, 'SHUFFLE_BUFFER_SIZE': 4096, 
-          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 200,
+params = {'BATCH_SIZE': 64, 'SHUFFLE_BUFFER_SIZE': 4096*5, 
+          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-4, 'NO_EPOCHS': 200,
           'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8,
           'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
           }
@@ -78,47 +78,58 @@ elif mode == 'predict':
     model.summary()
         
     # from model.model_fn import build_DBI_TCN
-    # # pdb.set_trace()
+    # pdb.set_trace()
     # model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     # model.summary()
-
+    params['BATCH_SIZE'] = 512
     
     # pdb.set_trace()
     # noise = np.random.rand(1024,8).reshape(int(1024/32),32,8)
     # probs = model.predict(noise)
     
     # get inputs
-    # a_input = importlib.import_module('experiments.{0}.model.input_fn'.format(model))
-    # rippleAI_load_dataset = getattr(a_input, 'rippleAI_load_dataset')
-    from model.input_fn import rippleAI_load_dataset
+    a_input = importlib.import_module('experiments.{0}.model.input_fn'.format(model_name))
+    rippleAI_load_dataset = getattr(a_input, 'rippleAI_load_dataset')
+    # from model.input_fn import rippleAI_load_dataset
     val_datasets, val_labels = rippleAI_load_dataset(params, mode='test')
     
     from model.cnn_ripple_utils import get_predictions_index, get_performance
     # get predictions
     val_pred = []
-    th_arr=np.linspace(0.1,0.9,10)
+    th_arr=np.linspace(0.1,0.9,19)
     n_channels = params['NO_CHANNELS']
     timesteps = params['NO_TIMEPOINTS']
+    
+    from keras.utils import timeseries_dataset_from_array
+
+    # get predictions
+    sample_length = params['NO_TIMEPOINTS']*2
+   
     # val_datasets[0] = val_datasets[0][89500:90500-500,:]
     # val_datasets[1] = val_datasets[1][:100,:]
     val_datasets = [val_datasets[0]]
-    test_end = val_datasets[0].shape[0]
-    val_batches = []
-    for i in range(0, test_end - timesteps, 1):
-        val_batches.append(val_datasets[0][np.arange(i, i + timesteps), :])
-    val_batches = np.array(val_batches)
+    # test_end = val_datasets[0].shape[0]
+    # val_batches = []
+    # for i in range(0, test_end - timesteps, 1):
+    #     val_batches.append(val_datasets[0][np.arange(i, i + timesteps), :])
+    # val_batches = np.array(val_batches)
     for LFP in [val_datasets[0]]:
         # test_end = LFP.shape[0]
         # LFP=LFP[:len(LFP)-len(LFP)%timesteps,:].reshape(-1,timesteps,n_channels)
         # aa = []
+        train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
+
         # for i in range(0, test_end - timesteps, 1):
-        windowed_signal = np.squeeze(model.predict(val_batches, verbose=1))
+        windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
             # aa.append(windowed_signal)
+        probs = np.hstack((np.zeros((50, 1)).flatten(),windowed_signal[0,:-1], windowed_signal[:, -1]))
+        
         # probs = np.hstack(aa)
-        probs = np.hstack(windowed_signal)
+        # pdb.set_trace()
+        # probs = np.hstack(windowed_signal)
         val_pred.append(probs)
 
-    pdb.set_trace()
+    # pdb.set_trace()
     # Validation plot in the second ax
     all_pred_events = []
     F1_val=np.zeros(shape=(len(val_datasets),len(th_arr)))
@@ -145,8 +156,13 @@ elif mode == 'predict':
     for lab in val_labels[0]:
         label_vec[int(lab[0]*1250):int(lab[1]*1250)] = 0.9
     
+    # pdb.set_trace()
+    
+    for j,pred in enumerate(val_pred):
+        np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}.npy'.format(j, model_name), pred)
+
     import matplotlib.pyplot as plt
-    for pred in best_preds:
+    for pred in val_labels[0]:
         rip_begin = int(pred[0]*1250)
         plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :])
         plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'k')
@@ -162,7 +178,7 @@ elif mode == 'predictSynth':
     import importlib
     
     # # get model
-    a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+    a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model_name))
     build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
     # from model.model_fn import build_DBI_TCN
     
@@ -173,25 +189,31 @@ elif mode == 'predictSynth':
     synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
     synth = np.tile(synth, (1,8))
     
-    train_end = synth.shape[0]
-    timesteps = 50
-    synth_batches = []
-    for i in range(0, train_end - timesteps, 1):
-        synth_batches.append(synth[np.arange(i, i + timesteps), :])
-    synth_batches = np.array(synth_batches)
+    # train_end = synth.shape[0]
+    # timesteps = 50
+    # synth_batches = []
+    # for i in range(0, train_end - timesteps, 1):
+    #     synth_batches.append(synth[np.arange(i, i + timesteps), :])
+    # synth_batches = np.array(synth_batches)
+    from keras.utils import timeseries_dataset_from_array
+
     # get predictions
     n_channels = params['NO_CHANNELS']
     timesteps = params['NO_TIMEPOINTS']
+    sample_length = params['NO_TIMEPOINTS']*2
+    train_x = timeseries_dataset_from_array(synth, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
     # synth=synth[:len(synth)-len(synth)%timesteps,:].reshape(-1,timesteps,n_channels)
+    # probs = np.squeeze(model.predict(train_x))
+    probs = np.squeeze(model.predict(train_x))
+    probs = np.hstack((probs[0,:-1], probs[:, -1]))
     # pdb.set_trace()
     # synth=np.expand_dims(synth, axis=0)
-    windowed_signal = np.squeeze(model.predict(synth_batches,verbose=1))
-    probs = np.hstack(windowed_signal)
     # pdb.set_trace()
     from scipy.signal import decimate
     import matplotlib.pyplot as plt
     synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
     synth = (synth-np.min(synth))/(np.max(synth)-np.min(synth))
+    synth = synth[50:,:]
     tt = np.arange(synth.shape[0])/1250
     # pdb.set_trace()
     # plt.plot(decimate(tt, 4), decimate(synth[:, 0], 4))
@@ -201,3 +223,62 @@ elif mode == 'predictSynth':
     plt.plot(tt, probs)
     plt.show()
     pdb.set_trace()
+    
+elif mode == 'predictPlot':
+    import matplotlib.pyplot as plt   
+    import importlib 
+    from model.cnn_ripple_utils import get_predictions_index, get_performance
+
+    # modelname
+    model = args.model[0]
+    model_name = model
+    
+    # get inputs
+    a_input = importlib.import_module('experiments.{0}.model.input_fn'.format(model))
+    rippleAI_load_dataset = getattr(a_input, 'rippleAI_load_dataset')
+    # from model.input_fn import rippleAI_load_dataset
+    val_datasets, val_labels = rippleAI_load_dataset(params, mode='test')
+    
+    # probs 
+    val_id = 0
+    val_pred = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}.npy'.format(val_id, model_name))
+    # val_pred = np.hstack((np.zeros((50,1)).flatten(), val_pred))
+    val_pred = [val_pred]
+    
+    val_datasets = [val_datasets[val_id]]
+
+    # Validation plot in the second axs
+    th_arr=np.linspace(0.1,0.9,19)
+    all_pred_events = []
+    F1_val=np.zeros(shape=(len(val_datasets),len(th_arr)))
+    for j,pred in enumerate(val_pred):
+        tmp_pred = []
+        for i,th in enumerate(th_arr):
+            pred_val_events=get_predictions_index(pred,th)/1250
+            _,_,F1_val[j,i],_,_,_=get_performance(pred_val_events ,val_labels[j], verbose=False)
+            tmp_pred.append(pred_val_events)
+        all_pred_events.append(tmp_pred)
+
+    # pick model
+    print(F1_val[0])
+    # pdb.set_trace()
+    mind = np.argmax(F1_val[0])
+    # print(all_pred_events[0][mind])
+    best_preds = all_pred_events[0][mind]
+    pred_vec = np.zeros(val_datasets[0].shape[0])
+    label_vec = np.zeros(val_datasets[0].shape[0])
+        
+    for pred in best_preds:
+        pred_vec[int(pred[0]*1250):int(pred[1]*1250)] = 1
+        
+    for lab in val_labels[0]:
+        label_vec[int(lab[0]*1250):int(lab[1]*1250)] = 0.9
+        
+    for pred in val_labels[0]:
+        rip_begin = int(pred[0]*1250)
+        plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]/3, 'gray')
+        plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'k')
+        plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'r')
+        plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k')
+        plt.show()        
+        # pdb.set_trace()

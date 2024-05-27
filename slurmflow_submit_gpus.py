@@ -8,7 +8,75 @@ import copy
 import numpy as np
 
 
-model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S10_AnchorGap_L1Reg_HeInitELU_AvgBottle'] # every other time sasmple
+# Average_K4_T50_D16_N16_B128_L2_E200_S5_FocalGap_WRegDense
+# Average_K4_T50_D16_N16_B512_L3_E200_S10_AnchorGap_WReg_AvgBottle
+# Average_K4_T50_D16_N16_B64_L3_E200_S10_AnchorGap_WReg_AvgBottle
+# Average_K4_T50_D16_N64_B64_L3_E200_S10_AnchorGap_WReg_AvgBottle
+# Average_K4_T50_D16_N64_B64_L3_E200_S5_AnchorGap_WReg_DenseBottle
+
+# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_Focal_WReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_FocalGap_WReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGap_WReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGap_WReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N64_B64_L4_E200_S25_AnchorGap_WReg_AvgBottle'] # every other time sasmple
+
+# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_Focal_GloWReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Base_K4_T50_D16_N64_B64_L3_E200_S25_Focal_GloWReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Base_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGapWide_GloWReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGapWide_GloWReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+
+# model_lib = ['Average_K2_T50_D64_N32_B32_L3_E200_S25_FocalGap_GloWReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Average_K2_T50_D64_N32_B32_L3_E200_S25_AnchorGap_GloWReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Average_K2_T50_D64_N32_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Average_K2_T50_D64_N32_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K2_T50_D64_N32_B64_L4_E200_S25_AnchorGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N32_B64_L4_E200_S25_AnchorGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N32_B64_L4_E200_S25_AnchorGapWide_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N32_B64_L3_E200_S25_AnchorGapWide_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottleDenseELU'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottleDenseELU'] # every other time sasmple
+
+# model_lib = ['Average_K7_T50_D8_N16_B128_L3_E200_S50_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K7_T50_D8_N16_B64_L3_E200_S50_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K7_T50_D8_N32_B32_L3_E200_S50_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K7_T50_D8_N32_B32_L3_E200_S100_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S100_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S50_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S25_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K13_T50_D4_N32_B32_L4_E200_S25_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S25_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S100_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K13_T50_D4_N64_B32_L3_E200_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K13_T50_D4_N128_B32_L3_E200_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K3_T50_D16_N128_B32_L3_E200_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Average_K3_T50_D16_N128_B32_L3_E200_S100_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Base_K3_T50_D16_N64_L3_E200_B64_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Base_K3_T50_D16_N64_L3_E200_B64_S100_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Base_K7_T50_D8_N64_L3_E200_B64_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Base_K13_T50_D4_N64_L3_E200_B64_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Base_K13_T50_D4_N64_L3_E200_B64_S100_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Base_K13_T50_D4_N64_L3_E200_B64_S100_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Base_K13_T50_D4_N64_L3_E200_B64_S50_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+
+# model_lib = ['Base_K7_T50_D8_N64_L3_E200_B64_S50_AnchorGap_GloWReg_AvgBottleDenseLBuff'] # every other time sasmple
+# model_lib = ['Base_K7_T50_D8_N64_L3_E200_B64_S50_AnchorGap_GloWReg_AvgBottleDenseL1'] # every other time sasmple
+model_lib = ['Base_K7_T50_D8_N64_L3_E200_B64_S50_FocalSmooth_GloWReg_AvgBottleDenseLBuff'] # every other time sasmple
+
+# Average_K3_T50_D16_N128_B32_L3_E200_S100_AnchorGap20_GloWReg_AvgBottleDense
+# Average_K13_T50_D4_N32_B32_L3_E200_S100_AnchorGap20_GloWReg_AvgBottleDense
+# Average_K13_T50_D4_N32_B32_L3_E200_S25_AnchorGap20_GloWReg_AvgBottleDense
+# Average_K13_T50_D4_N32_B32_L3_E200_S25_FocalGap_GloWReg_AvgBottleDense
+# Average_K13_T50_D4_N32_B32_L4_E200_S25_FocalGap_GloWReg_AvgBottleDense
+# Average_K7_T50_D8_N32_B32_L3_E200_S100_FocalGap_GloWReg_AvgBottleDense
+# Average_K13_T50_D4_N32_B32_L3_E200_S100_FocalGap_GloWReg_AvgBottleDense
+
+# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S10_AnchorGap_WReg_AvgBottleDStride'] # every other time sasmple
+# model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S10_AnchorGap_L1Reg_HeInitELU_AvgBottle'] # every other time sasmple
 # model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S10_AnchorGap_L1Reg_HeInit_AvgBottle'] # every other time sasmple
 # model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S10_AnchorGap_L1Reg_AvgBottle'] # every other time sasmple
 # model_lib = ['Average_K4_T50_D16_N16_B512_L3_E200_S10_AnchorGap_WReg_AvgBottle'] # every other time sasmple
