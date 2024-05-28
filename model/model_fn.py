@@ -7,7 +7,7 @@ from tensorflow.keras.regularizers import l1, l2
 from tensorflow.keras import backend as K
 from tensorflow.keras.models import Model
 from tensorflow.keras import applications
-import tensorflow_addons as tfa
+# import tensorflow_addons as tfa
 import tensorflow as tf
 import pdb
 
@@ -70,25 +70,26 @@ def build_DBI_CNN(mode, params):
     return model
 
 def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
-    from tcn import TCN
-
+    
+    # params
     use_batch_norm = False
     use_weight_norm = True
     use_l1_norm = False
-    n_filters = 64
-    n_kernels = 7
-    n_dilations = 4
+    this_activation = 'relu'
+    this_kernel_initializer = 'glorot_uniform'
+    model_type = params['TYPE_MODEL']
+    n_filters = params['NO_FILTERS']
+    n_kernels = params['NO_KERNELS']
+    n_dilations = params['NO_DILATIONS']
+    
+    # pdb.set_trace()
     # load labels
-    # inputs = Input(shape=(None, input_chans))    
-    # inputs = Input(shape=(None, input_chans), name='inputs')
     # inputs = Input(shape=(input_timepoints*2, input_chans), name='inputs')
     inputs = Input(shape=(None, input_chans), name='inputs')
-    # weights = Input(shape=(), name='weights')
-    # nets = inputs
-
+    
     # get TCN
-    baseTCN = False
-    if baseTCN:
+    if model_type=='Base':
+        from tcn import TCN
         nets = TCN(nb_filters=n_filters,
                     kernel_size=n_kernels,
                     nb_stacks=1,
@@ -98,27 +99,25 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                     use_skip_connections=True,
                     dropout_rate=0.0,
                     return_sequences=True,
-                    activation='relu',
-                    kernel_initializer='glorot_uniform',
+                    activation=this_activation,
+                    kernel_initializer=this_kernel_initializer,
+                    # activation=this_activation,
+                    # kernel_initializer=this_kernel_initializer,
                     use_batch_norm=False,
                     use_layer_norm=False,
-                    use_weight_norm=True,
+                    use_weight_norm=use_weight_norm,
                     go_backwards=False,
                     return_state=False)(inputs)
-        # pdb.set_trace()
-        # nets = Dense(1, kernel_initializer=GlorotUniform(), use_bias=True)(nets)
+        # Slice & Out
         nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
-        nets = Dense(1, activation='sigmoid', kernel_initializer=GlorotUniform())(nets)
-        # nets = Activation('sigmoid')(nets)
-        # nets = Flatten()(nets)
-        # pdb.set_trace()
-    else:
+        nets = Dense(1, activation='sigmoid', kernel_initializer=this_kernel_initializer)(nets)
+
+    elif model_type=='Average':
         nets = []
         for i_ch in range(8):
             nets_in = Lambda(lambda tt: tt[:, :, i_ch], name='Slice_Input_{}'.format(i_ch))(inputs)
             nets.append(tf.expand_dims(nets_in, axis=-1))
 
-        # pdb.set_trace()
         dropout_rate = 0
         all_nets = []
         for i_dilate in range(n_dilations):
@@ -127,13 +126,13 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                             dilation_rate=2**(i_dilate),
                             # groups=input_chans,
                             padding='causal',
-                            activation='relu',
+                            activation=this_activation,
                             use_bias = True,
                             bias_initializer='zeros',
                             # kernel_regularizer=l1(0.001),
                             # activation=ELU(alpha=0),
                             name='dconv1_{0}'.format(i_dilate),
-                            kernel_initializer='glorot_uniform'
+                            kernel_initializer=this_kernel_initializer
                             # kernel_initializer='he_normal'
                             )
             if use_weight_norm:
@@ -167,13 +166,14 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                         padding='causal',
                         use_bias = True,
                         bias_initializer='zeros',
-                        activation='relu',
+                        activation=this_activation,
                         # kernel_regularizer=l1(0.001),
                         # activation=ELU(alpha=0),
                         name='de_dconv1_{0}'.format(0),
                         # kernel_initializer='he_normal'
-                        kernel_initializer='glorot_uniform'
+                        kernel_initializer=this_kernel_initializer
                         )
+        # pdb.set_trace()
         if use_weight_norm:
             wconv = WeightNormalization(wconv)
         if use_batch_norm:
@@ -197,11 +197,11 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                         padding='causal',
                         use_bias = True,
                         bias_initializer='zeros',
-                        activation='relu',
+                        activation=this_activation,
                         # kernel_regularizer=l1(0.001),
                         # activation=ELU(alpha=0),
                         name='de_dconv1_{0}'.format(1),
-                        kernel_initializer='glorot_uniform'
+                        kernel_initializer=this_kernel_initializer
                         # kernel_initializer='he_normal'
                         )
         if use_weight_norm:
@@ -232,7 +232,7 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                         # bias_initializer=Constant(value=-5.0),
                         bias_initializer='zeros',
                         activation='sigmoid', 
-                        kernel_initializer=GlorotUniform())(nets)
+                        kernel_initializer=this_kernel_initializer)(nets)
     # pdb.set_trace()
     # get outputs
     outputs = nets
@@ -242,39 +242,60 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
         model.load_weights(params['WEIGHT_FILE'])
 
     
-    def custom_fbfce(weights=None):#y_true, y_pred
-        """Loss function"""
-        # return tf.keras.losses.BinaryFocalCrossentropy(y_true, y_pred)#, apply_class_balancing=True
-        def loss_fn(y_true, y_pred, weights=weights):
-            # tf.keras.losses.binary_focal_crossentropy
-            # tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True)
-            y_true = tf.expand_dims(y_true, axis=-1)
-            y_pred = tf.expand_dims(y_pred, axis=-1)
-            loss_function = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True, reduction='none')
-
-            # gamma = 2.0
-            # alpha = 0.25
-            
-            # Compute the focal loss
-            # pt = tf.where(tf.equal(y_true, 1), y_pred, 1 - y_pred)
-            # focal_loss = -alpha * (1 - pt) ** gamma * tf.math.log(pt + tf.keras.backend.epsilon())            
-            total_loss = loss_function(y_true, y_pred)
-            # pdb.set_trace()
-            # total_loss = loss_function(y_true, y_pred, sample_weight=weights)
-            # total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True)
-            # pdb.set_trace()
-            # weighted_loss = tf.reduce_mean(focal_loss, axis=-1)
-            weighted_loss = loss_function
-            # weighted_loss = tf.multiply(focal_loss, weights)
-            return weighted_loss
-            # return tf.keras.losses.binary_focal_crossentropy(y_true, y_pred)#, apply_class_balancing=True
-        return loss_fn
+    # def custom_fbfce(weights=None):
+    #     """Loss function"""
+    #     def loss_fn(y_true, y_pred, weights=weights):
+    #         if params['TYPE_LOSS'].find('FocalSmooth'):
+    #             total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True, label_smoothing=0.1)
+    #         elif params['TYPE_LOSS'].find('Focal'):
+    #             total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True)
+    #         elif params['TYPE_LOSS'].find('Anchor'):
+    #             total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True)
+    #         elif params['TYPE_LOSS'].find('Dice'):
+    #             total_loss = tf.keras.losses.Dice(y_true, y_pred)
+    #         elif params['TYPE_LOSS'].find('Tversky'):
+    #             total_loss = tf.keras.losses.Tversky(y_true, y_pred)
+    #         elif params['TYPE_LOSS'].find('Hinge'):
+    #             total_loss = tf.keras.losses.Hinge(y_true, y_pred)
+    #         if params['TYPE_LOSS'].find('TV'):
+    #             total_loss += 1e-5*tf.image.total_variation(y_pred)
+    #         return total_loss
+    #     return loss_fn
     
-    # pdb.set_trace()
     # model.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=params['LEARNING_RATE']),
+    
+    if params['TYPE_LOSS'].find('FocalSmooth')>-1:
+        print('FocalSmooth')
+        loss_obj = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True, label_smoothing=0.1)
+    elif params['TYPE_LOSS'].find('Focal')>-1:
+        print('Focal')
+        loss_obj = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True)
+    elif params['TYPE_LOSS'].find('Anchor')>-1:
+        print('Anchor')
+        loss_obj = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True)
+    elif params['TYPE_LOSS'].find('Dice')>-1:
+        print('Dice')
+        from loss_fn import  dice_loss
+        loss_obj = dice_loss(delta = 0.5, smooth = 0.000001)
+    elif params['TYPE_LOSS'].find('Tversky')>-1:
+        pind = params['TYPE_LOSS'].find('Tversky')+len('Tversky')
+        beta = float(params['TYPE_LOSS'][pind+1:pind+2])/10
+        print('Tversky')
+        print('beta: ', beta)
+        from model.loss_fn import  tversky_loss
+        loss_obj = tversky_loss(alpha=1-beta,beta=beta)
+        # loss_obj = asymmetric_focal_tversky_loss(delta=beta, gamma=2)
+    elif params['TYPE_LOSS'].find('Hinge')>-1:
+        print('Hinge')
+        loss_obj = tf.keras.losses.Hinge()
+    else:
+        pdb.set_trace()
+    # pdb.set_trace()
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
-                    # loss=custom_fbfce(weights=weights),
-                    loss=tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True, label_smoothing=0.1), 
+                    # loss=custom_fbfce,#(),
+                    loss=loss_obj,
+                    # loss='mse',
+                    # loss = tf.keras.metrics.BinaryCrossentropy(),
                     # loss=tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True), 
                     metrics=[tf.keras.metrics.BinaryCrossentropy(), 
                              tf.keras.metrics.BinaryAccuracy()])
@@ -332,3 +353,4 @@ def build_Prida_LSTM(input_shape,n_layers=3,layer_size=20):
     model.compile(loss='binary_crossentropy', optimizer=opt, metrics=['mse'])
 
     return model
+

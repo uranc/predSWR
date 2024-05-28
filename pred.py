@@ -28,14 +28,51 @@ mode = args.mode[0]
 model_name = args.model[0]
 
 # Parameters
-params = {'BATCH_SIZE': 64, 'SHUFFLE_BUFFER_SIZE': 4096*5, 
-          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-4, 'NO_EPOCHS': 200,
+params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*5, 
+          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 200,
           'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8,
           'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
           }
 
 if mode == 'train':
 
+    # update params
+    print(model_name)
+    param_lib = model_name.split('_')
+    assert(len(param_lib)==12)
+    params['TYPE_MODEL'] = param_lib[0]
+    print(params['TYPE_MODEL'])
+    assert(param_lib[1][0]=='K')
+    params['NO_KERNELS'] = int(param_lib[1][1:])
+    print(params['NO_KERNELS'])
+    assert(param_lib[2][0]=='T')
+    params['NO_TIMEPOINTS'] = int(param_lib[2][1:])
+    print(params['NO_TIMEPOINTS'])
+    assert(param_lib[3][0]=='D')
+    params['NO_DILATIONS'] = int(param_lib[3][1:])
+    print(params['NO_DILATIONS'])
+    assert(param_lib[4][0]=='N')
+    params['NO_FILTERS'] = int(param_lib[4][1:])
+    print(params['NO_FILTERS'])
+    assert(param_lib[5][0]=='L')
+    params['LEARNING_RATE'] = (1e-1)**int(param_lib[5][1:])
+    print(params['LEARNING_RATE'])
+    assert(param_lib[6][0]=='E')
+    params['NO_EPOCHS'] = int(param_lib[6][1:])
+    print(params['NO_EPOCHS'])
+    assert(param_lib[7][0]=='B')
+    params['BATCH_SIZE'] = int(param_lib[7][1:])
+    print(params['BATCH_SIZE'])
+    assert(param_lib[8][0]=='S')
+    params['NO_STRIDES'] = int(param_lib[8][1:])
+    print(params['NO_STRIDES'])
+    params['TYPE_LOSS'] = param_lib[9]
+    print(params['TYPE_LOSS'])
+    params['TYPE_REG'] = param_lib[10]
+    print(params['TYPE_REG'])
+    params['TYPE_ARCH'] = param_lib[11]
+    print(params['TYPE_ARCH'])
+    
     from model.model_fn import build_DBI_TCN
     # pdb.set_trace()
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
@@ -62,19 +99,61 @@ if mode == 'train':
     # pdb.set_trace()
     hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
 elif mode == 'predict':
-
+    
     # modelname
     model = args.model[0]
     model_name = model
     import importlib
     
-    # get model
-    a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
-    build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
-    # from model.model_fn import build_DBI_TCN
-    
-    params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
-    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    try:
+        import tensorflow.keras as kr
+        params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+        model = kr.models.load_model(params['WEIGHT_FILE'])
+    except:
+        # get model parameters
+        print(model_name)
+        param_lib = model_name.split('_')
+        assert(len(param_lib)==12)
+        params['TYPE_MODEL'] = param_lib[0]
+        print(params['TYPE_MODEL'])
+        assert(param_lib[1][0]=='K')
+        params['NO_KERNELS'] = int(param_lib[1][1:])
+        print(params['NO_KERNELS'])
+        assert(param_lib[2][0]=='T')
+        params['NO_TIMEPOINTS'] = int(param_lib[2][1:])
+        print(params['NO_TIMEPOINTS'])
+        assert(param_lib[3][0]=='D')
+        params['NO_DILATIONS'] = int(param_lib[3][1:])
+        print(params['NO_DILATIONS'])
+        assert(param_lib[4][0]=='N')
+        params['NO_FILTERS'] = int(param_lib[4][1:])
+        print(params['NO_FILTERS'])
+        assert(param_lib[5][0]=='L')
+        params['LEARNING_RATE'] = (1e-1)**int(param_lib[5][1:])
+        print(params['LEARNING_RATE'])
+        assert(param_lib[6][0]=='E')
+        params['NO_EPOCHS'] = int(param_lib[6][1:])
+        print(params['NO_EPOCHS'])
+        assert(param_lib[7][0]=='B')
+        params['BATCH_SIZE'] = int(param_lib[7][1:])
+        print(params['BATCH_SIZE'])
+        assert(param_lib[8][0]=='S')
+        params['NO_STRIDES'] = int(param_lib[8][1:])
+        print(params['NO_STRIDES'])
+        params['TYPE_LOSS'] = param_lib[9]
+        print(params['TYPE_LOSS'])
+        params['TYPE_REG'] = param_lib[10]
+        print(params['TYPE_REG'])
+        params['TYPE_ARCH'] = param_lib[11]
+        print(params['TYPE_ARCH'])
+        
+        # get model
+        a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+        # from model.model_fn import build_DBI_TCN
+        
+        params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+        model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
         
     # from model.model_fn import build_DBI_TCN
@@ -177,15 +256,58 @@ elif mode == 'predictSynth':
     model_name = model
     import importlib
     
-    # # get model
-    a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model_name))
-    build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
-    # from model.model_fn import build_DBI_TCN
     
-    params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
-    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    try:
+        import tensorflow.keras as kr
+        params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+        model = kr.models.load_model(params['WEIGHT_FILE'])
+    except:
+        # get model parameters
+        print(model_name)
+        param_lib = model_name.split('_')
+        assert(len(param_lib)==12)
+        params['TYPE_MODEL'] = param_lib[0]
+        print(params['TYPE_MODEL'])
+        assert(param_lib[1][0]=='K')
+        params['NO_KERNELS'] = int(param_lib[1][1:])
+        print(params['NO_KERNELS'])
+        assert(param_lib[2][0]=='T')
+        params['NO_TIMEPOINTS'] = int(param_lib[2][1:])
+        print(params['NO_TIMEPOINTS'])
+        assert(param_lib[3][0]=='D')
+        params['NO_DILATIONS'] = int(param_lib[3][1:])
+        print(params['NO_DILATIONS'])
+        assert(param_lib[4][0]=='N')
+        params['NO_FILTERS'] = int(param_lib[4][1:])
+        print(params['NO_FILTERS'])
+        assert(param_lib[5][0]=='L')
+        params['LEARNING_RATE'] = (1e-1)**int(param_lib[5][1:])
+        print(params['LEARNING_RATE'])
+        assert(param_lib[6][0]=='E')
+        params['NO_EPOCHS'] = int(param_lib[6][1:])
+        print(params['NO_EPOCHS'])
+        assert(param_lib[7][0]=='B')
+        params['BATCH_SIZE'] = int(param_lib[7][1:])
+        print(params['BATCH_SIZE'])
+        assert(param_lib[8][0]=='S')
+        params['NO_STRIDES'] = int(param_lib[8][1:])
+        print(params['NO_STRIDES'])
+        params['TYPE_LOSS'] = param_lib[9]
+        print(params['TYPE_LOSS'])
+        params['TYPE_REG'] = param_lib[10]
+        print(params['TYPE_REG'])
+        params['TYPE_ARCH'] = param_lib[11]
+        print(params['TYPE_ARCH'])
+        
+        # get model
+        a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+        # from model.model_fn import build_DBI_TCN
+        
+        params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+        model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
-    
+
     synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
     synth = np.tile(synth, (1,8))
     
@@ -256,12 +378,15 @@ elif mode == 'predictPlot':
         for i,th in enumerate(th_arr):
             pred_val_events=get_predictions_index(pred,th)/1250
             _,_,F1_val[j,i],_,_,_=get_performance(pred_val_events ,val_labels[j], verbose=False)
+            # if i==12:
+            #     [precision, recall, F1, TP, FN, IOU]=get_performance(pred_val_events ,val_labels[j], exclude_matched_trues=True, verbose=False)
+            #     pdb.set_trace()
             tmp_pred.append(pred_val_events)
         all_pred_events.append(tmp_pred)
 
     # pick model
     print(F1_val[0])
-    # pdb.set_trace()
+    pdb.set_trace()
     mind = np.argmax(F1_val[0])
     # print(all_pred_events[0][mind])
     best_preds = all_pred_events[0][mind]
@@ -273,7 +398,7 @@ elif mode == 'predictPlot':
         
     for lab in val_labels[0]:
         label_vec[int(lab[0]*1250):int(lab[1]*1250)] = 0.9
-        
+    pdb.set_trace()
     for pred in val_labels[0]:
         rip_begin = int(pred[0]*1250)
         plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :]/3, 'gray')
