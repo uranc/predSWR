@@ -10,9 +10,9 @@ def split_label(label):
 
 # y_true should contain the true binary labels (0 or 1)
 # y_probs should contain the predicted probabilities for class 1
-prob_list = ['prob_predSWR_TCN_BaseModel_k2_t40_d32_n128_e500_dilated_relu_dedilated_weightNorm_0.npy', 
-             'prob_Average_K3_T200_D32_N64_B16_Le4_AnchorLossFix_0.npy', 
-             'prob_Base_K3_T96_D32_N64_B32_Le4_AnchorLossFixNarrowNonZero_0.npy'
+prob_list = [ 
+             'Base_K4_T50_D3_N64_L3_E200_B64_S50_FocalSmooth_GloWReg_BottleDense', 
+             'Average_K4_T50_D3_N64_L3_E200_B64_S50_FocalSmooth_GloWReg_BottleDense'
              ]
 
 dir = '/cs/projects/OWVinckSWR/DL/predSWR/experiments/probabilities/'
@@ -25,8 +25,9 @@ f1 = []
 recall = []
 precision = []
 optimal_thrs = []
+dir = '/cs/projects/OWVinckSWR/DL/predSWR/probs/'
 for prob in prob_list:
-    y_probs = np.load(dir + prob)
+    y_probs = np.load(dir + 'preds_val0_' + prob + '.npy')
 
     # If they don't have the same length, remove the samples from y_true that are not present in y_probs
     if len(y_true) != len(y_probs):
@@ -49,7 +50,6 @@ for prob in prob_list:
     plt.ylabel('Rate')
     plt.title('TPR and FPR vs. Threshold {0}'.format(prob), fontsize=8)
     plt.legend(loc="best")
-
     directory =  '/cs/projects/OWVinckSWR/DL/predSWR/time_analysis/ROC_curves/tprVsfpr/'
     if not os.path.exists(directory):
         os.makedirs(directory)
