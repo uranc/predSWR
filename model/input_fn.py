@@ -127,7 +127,8 @@ def rippleAI_load_dataset(params, mode='train'):
     
     if params['TYPE_LOSS'].find('AnchorNarrow')>-1: 
         print('Using AnchorNarrow Weights')
-        weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 5, False))+0.1
+        weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 3, False))+0.01
+        # weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 5, False))+0.1
     elif params['TYPE_LOSS'].find('AnchorWide')>-1:
         print('Using AnchorWide Weights')
         weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 10, False))+0.5
@@ -155,15 +156,22 @@ def rippleAI_load_dataset(params, mode='train'):
     assert(np.unique(weights[np.where(onsets)[0]]-1)==0)
 
     # make batches 
+    sample_shift = 0
+    train_examples = train_examples[-sample_shift:, :]
+    train_labels = train_labels[sample_shift:]
+    weights = weights[sample_shift:]
+    test_examples = test_examples[-sample_shift:, :]
+    test_labels = test_labels[sample_shift:]
+    
+    # make datasets
     sample_length = params['NO_TIMEPOINTS']*2
     stride_step = sample_length/params['NO_STRIDES']
-    # pdb.set_trace()
     train_x = timeseries_dataset_from_array(train_examples, None, sequence_length=sample_length, sequence_stride=sample_length/stride_step, batch_size=params["BATCH_SIZE"])
-    train_y = timeseries_dataset_from_array(train_labels[int(sample_length/2):].reshape(-1,1), None, sequence_length=sample_length/stride_step, sequence_stride=sample_length/2, batch_size=params["BATCH_SIZE"])
-    train_w = timeseries_dataset_from_array(weights[int(sample_length/2):].reshape(-1,1), None, sequence_length=sample_length/stride_step, sequence_stride=sample_length/2, batch_size=params["BATCH_SIZE"])
+    train_y = timeseries_dataset_from_array(train_labels[int(sample_length/2)+sample_shift:].reshape(-1,1), None, sequence_length=sample_length/stride_step, sequence_stride=sample_length/2, batch_size=params["BATCH_SIZE"])
+    train_w = timeseries_dataset_from_array(weights[int(sample_length/2)+sample_shift:].reshape(-1,1), None, sequence_length=sample_length/stride_step, sequence_stride=sample_length/2, batch_size=params["BATCH_SIZE"])
     
     test_x = timeseries_dataset_from_array(test_examples, None, sequence_length=sample_length, sequence_stride=sample_length/stride_step, batch_size=params["BATCH_SIZE"])
-    test_y = timeseries_dataset_from_array(test_labels[int(sample_length/2):].reshape(-1,1), None, sequence_length=sample_length/stride_step, sequence_stride=sample_length/2, batch_size=params["BATCH_SIZE"])
+    test_y = timeseries_dataset_from_array(test_labels[int(sample_length/2)+sample_shift:].reshape(-1,1), None, sequence_length=sample_length/stride_step, sequence_stride=sample_length/2, batch_size=params["BATCH_SIZE"])
     
     
     # zip datasets
