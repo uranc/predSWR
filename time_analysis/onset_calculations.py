@@ -6,28 +6,60 @@ from scipy import signal
 import importlib
 import sys
 from scipy.signal import butter
-from scipy.signal import sosfiltfilt
+from scipy.signal import sosfilt
 from sklearn.metrics import roc_curve, auc, precision_recall_curve, f1_score
 
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), '../')))
 
 from model.cnn_ripple_utils import get_performance, intersection_over_union
-from model.input_fn import rippleAI_load_dataset
 def split_label(label):
     mid = len(label) // 2
     return label[:mid] + '\n' + label[mid:]
+def split_label_6(label): 
+    mid1 = len(label) // 3
+    mid2 = mid1 // 2
+    mid3 = mid1 + mid2
+    mid4 = mid3 + mid2
+    mid5 = mid4 + mid2
+    return label[:mid2] + '\n' + label[mid2:mid1] + '\n' + label[mid1:mid3] + '\n' + label[mid3:mid4] + '\n' + label[mid4:mid5]+ '\n' + label[mid5:]
+
 
 fs = 1250
 dir = '/cs/projects/OWVinckSWR/DL/predSWR/experiments/probabilities/'
-y_true_complete = np.load(dir + 'val_labels_0.npy')
+y_true_aux = np.load(dir + 'val_labels_0.npy')
+# Loading the LFP so we can plot it
+val_datasets = np.load(dir + 'val_dataset_0.npy')
+y_true_complete = np.zeros(val_datasets.shape[0])
+for lab in y_true_aux:
+    y_true_complete[int(lab[0]*1250):int(lab[1]*1250)] = 1
+
+
 #model = 'prob_rippAI_CNN1D_0.npy'
 dir = '/cs/projects/OWVinckSWR/DL/predSWR/probs/'
-model_list = [ 
-             'Base_K4_T50_D3_N64_L3_E200_B64_S50_FocalSmooth_GloWReg_BottleDense', 
-             'Average_K4_T50_D3_N64_L3_E200_B64_S50_FocalSmooth_GloWReg_BottleDense'
-             ]
-# Loading the LFP so we can plot it
-val_datasets, val_labels = rippleAI_load_dataset(params=None, mode='test')
+# model_list = ['Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowGap_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorWiderGap_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowGap_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorWiderGap_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowSmoothGap_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowSmoothGap_GloWReg_BottleDense'
+#              ]
+# model_list = ['Average_K4_T50_D3_N64_L3_E200_B64_S50_Focal_GloWReg_BottleDense',
+#                 'Average_K4_T50_D3_N64_L3_E200_B64_S50_FocalGap_GloWReg_BottleDense',
+#               'Average_K4_T50_D3_N64_L3_E200_B64_S50_FocalSmooth_GloWReg_BottleDense',
+#               'Base_K4_T50_D3_N64_L3_E200_B64_S50_Focal_GloWReg_BottleDense',
+#                'Base_K4_T50_D3_N64_L3_E200_B64_S50_FocalGap_GloWReg_BottleDense',
+#                'Base_K4_T50_D3_N64_L3_E200_B64_S50_FocalSmooth_GloWReg_BottleDense']
+model_list = [  #'Average_K4_T50_D3_N64_L3_E200_B32_S50_Hinge_GloWReg_BottleDense', 
+            #'Base_K4_T50_D3_N64_L3_E200_B32_S50_Hinge_GloWReg_BottleDense',
+            #  'Average_K4_T50_D3_N64_L3_E200_B32_S50_Tversky07_GloWReg_BottleDense',
+            #  'Base_K4_T50_D3_N64_L3_E200_B32_S50_Tversky07_GloWReg_BottleDense', 
+              'Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowGap_GloWReg_BottleDense',
+             'Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorWiderGap_GloWReg_BottleDense',
+             'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowGap_GloWReg_BottleDense',
+             'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorWiderGap_GloWReg_BottleDense',
+             'Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowSmoothGap_GloWReg_BottleDense',
+             'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowSmoothGap_GloWReg_BottleDense']
+# Create a .npy with the validation dataset 
 fpr = []
 tpr = []
 thresholds = []
@@ -51,9 +83,10 @@ for model in model_list:
 
     onset_indices = np.where(np.diff(y_true) == 1)[0] 
     offset_indices = np.where(np.diff(y_true) == -1)[0]
-
+   
     aligned_segments = []
     aligned_segments_mid = []
+    aligned_segments_off = []
 
     for onset,offset in zip(onset_indices, offset_indices):
         # Centered in onset
@@ -69,13 +102,22 @@ for model in model_list:
         segment_mid = y_probs[start_index:end_index]
         aligned_segments_mid.append(segment_mid)
 
+        # Centered in offset 
+        start_off = offset - window_size
+        end_off = offset + window_size
+        segment_off = y_probs[start_off:end_off]
+        aligned_segments_off.append(segment_off)
+
+
     # Stack aligned segments into an array
     aligned_segments_array = np.vstack(aligned_segments)
     aligned_segments_mid_array = np.vstack(aligned_segments_mid)
+    aligned_segments_off_array = np.vstack(aligned_segments_off)
 
     # Compute the mean across aligned segments for each time point
     average_probabilities = np.mean(aligned_segments_array, axis=0)
     average_probabilities_mid = np.mean(aligned_segments_mid_array, axis=0)
+    average_probabilities_off = np.mean(aligned_segments_off_array, axis=0)
 
     # Plot the segment
     time_axis = np.arange(-window_size, window_size)
@@ -83,6 +125,7 @@ for model in model_list:
     plt.figure()
     plt.plot(time_axis, average_probabilities, color = 'blue', label = 'onset')
     plt.plot(time_axis, average_probabilities_mid, color = 'k', label = 'midpoint')
+    plt.plot(time_axis, average_probabilities_off, color = 'gray', label = 'offset')
     plt.axvline(x=0, color='r', linestyle='--')
     plt.xlabel('Time')
     plt.ylabel('Probability')
@@ -94,6 +137,7 @@ for model in model_list:
     plt.savefig(directory + '{0}.png'.format(model))
     plt.close()
 
+    
     # # Computing the cross-correlation between the average probability and the onset-centered probability
     # correlation = signal.correlate(average_probabilities, average_probabilities_mid, mode='full')
     # time_axis = np.arange(-len(correlation)/2, len(correlation)/2)
@@ -150,7 +194,7 @@ for model in model_list:
     true_positive_intervals = pred_events[tp]
 
     # We want the LFP of the 4th channel where the pyr layer is 
-    LFP = val_datasets[0][:,4]
+    LFP = val_datasets[:,4]
 
     # Need to align in the center of the ripple: first try the average and if it
     # doesnt work bandpass the LFP and np.max for finding the center. 
@@ -166,38 +210,40 @@ for model in model_list:
     for interval in false_positive_intervals:
         
         rip = LFP[round(interval[0]*fs):round(interval[1]*fs)]
-        filtered_signal = sosfiltfilt(filter, rip, padlen=len(rip)-1)
+        filtered_signal = sosfilt(filter, rip)
         lfp_abs = np.abs(filtered_signal)
-        filtered_signal = sosfiltfilt(filter_envelope, lfp_abs, padlen=len(lfp_abs)-1)
+        filtered_signal = sosfilt(filter_envelope, lfp_abs)
 
         # we take the max of the filtered signal to find the center of the ripple
-        center = np.argmax(filtered_signal) + np.int32(interval[0]*fs)
+        center = np.argmax(filtered_signal) + round(interval[0]*fs)
         start = center - window_size
-        start = max(0, start) # Deal with boundary cases
+        if start < 0:   continue
         end = center + window_size
-        end = min(len(LFP), end) # Deal with boundary cases
-        ripple = sosfiltfilt(filter, LFP[start : end], padlen=(window_size*2)-1)   
+        if end > len(LFP): break
+        ripple = sosfilt(filter, LFP[start : end])   
         #ripple =  LFP[start : end] 
         ripple_list_fp.append(ripple)
-
+    
     ripple_list_tp = []
     for interval in true_positive_intervals:
         
         rip = LFP[round(interval[0]*fs):round(interval[1]*fs)]    
-        filtered_signal = sosfiltfilt(filter, rip, padlen=len(rip)-1)
+        filtered_signal = sosfilt(filter, rip)
         lfp_abs = np.abs(filtered_signal)
-        filtered_signal = sosfiltfilt(filter_envelope, lfp_abs, padlen=len(lfp_abs)-1)
+        filtered_signal = sosfilt(filter_envelope, lfp_abs)
 
         # we take the max of the filtered signal to find the center of the ripple
-        center = np.argmax(filtered_signal) + np.int32(interval[0]*fs)
+        center = np.argmax(filtered_signal) + round(interval[0]*fs)
         start = center - window_size
-        start = max(0, start) # Deal with boundary cases
         end = center + window_size
-        end = min(len(LFP), end) # Deal with boundary cases
-        ripple = sosfiltfilt(filter, LFP[start : end], padlen=(window_size*2)-1)   
+        if start < 0:   continue
+        if end > len(LFP): 
+            # If it is going to be shorter we exclude this ripple 
+            break
+        ripple = sosfilt(filter, LFP[start : end])   
         #ripple =  LFP[start : end]
         ripple_list_tp.append(ripple)
-
+    #pdb.set_trace() 
     # we compute the average accross the ripples
     TP_avg = np.mean(np.array(ripple_list_tp), axis=0)
     FP_avg = np.mean(np.array(ripple_list_fp), axis=0) 
@@ -244,10 +290,12 @@ for model in model_list:
     #plt.savefig(directory + '{0}.png'.format(model))
     plt.close()
 
-#######################
-# Time analysis plots #
-#######################
-prob_list_wrapped = [split_label(label) for label in model_list]
+######################
+# Time analysis plot #
+######################
+prob_list_wrapped = [split_label_6(label) for label in model_list]
+# create a model list with just the last 5 characters of each model 
+model_list_filename = [model[39:60] for model in model_list]
 # Ploting metrics
 num_models = len(model_list)
 indices = np.arange(num_models)
@@ -269,28 +317,8 @@ plt.tight_layout()
 directory =  '/cs/projects/OWVinckSWR/DL/predSWR/time_analysis/ROC_curves/metrics_rippAI/'
 if not os.path.exists(directory):
     os.makedirs(directory)
-plt.savefig(directory + '{0}.png'.format(model_list))
+plt.savefig(directory + '{0}.png'.format(model_list_filename))
 plt.close()
-
-
-# # Plot ROC curve
-# plt.figure()
-# for i in range(len(model_list)):
-#     plt.plot(fpr[i], tpr[i], lw=2, label='{0}'.format(prob_list_wrapped[i]))
-# #plt.plot(fpr, tpr, color='darkorange', lw=2, label='ROC curve (area = %0.2f)' % roc_auc)
-# plt.plot([0, 1], [0, 1], color='navy', lw=2, linestyle='--')
-# plt.xlim([0.0, 1.0])
-# plt.ylim([0.0, 1.05])
-# plt.xlabel('False Positive Rate')
-# plt.ylabel('True Positive Rate')
-# plt.title('ROC-AUC curve')
-# plt.legend(loc="lower right",fontsize=8)
-# # Saving images 
-# directory =  '/cs/projects/OWVinckSWR/DL/predSWR/time_analysis/ROC_curves/ROC_AUC/'   
-# if not os.path.exists(directory):
-#     os.makedirs(directory)
-# plt.savefig(directory + '{0}.png'.format(model))
-# plt.close()
 
 
 pdb.set_trace()
