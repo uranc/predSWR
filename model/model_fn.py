@@ -76,11 +76,17 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     use_weight_norm = True
     use_l1_norm = False
     this_activation = 'relu'
+    # this_activation = ELU(alpha=-1)
+    # this_activation = ELU(alpha=0.1)
     this_kernel_initializer = 'glorot_uniform'
     model_type = params['TYPE_MODEL']
     n_filters = params['NO_FILTERS']
     n_kernels = params['NO_KERNELS']
     n_dilations = params['NO_DILATIONS']
+    if params['TYPE_ARCH'].find('Drop')>-1:
+        r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
+    else:
+        r_drop = 0.0
     
     # pdb.set_trace()
     # load labels
@@ -97,7 +103,7 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                     # dilations=(1, 2, 4, 8, 16), #, 32
                     padding='causal',
                     use_skip_connections=True,
-                    dropout_rate=0.0,
+                    dropout_rate=r_drop,
                     return_sequences=True,
                     activation=this_activation,
                     kernel_initializer=this_kernel_initializer,
@@ -226,7 +232,7 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
         # nets = tf.expand_dims(nets, axis=1)
 
         # reduce mean and get output
-        # nets = tf.reduce_mean(nets, axis=-1, keepdims=True)
+        nets = tf.reduce_mean(nets, axis=-1, keepdims=True)
         
         nets = Dense(1, use_bias = True,
                         # bias_initializer=Constant(value=-5.0),
@@ -242,58 +248,66 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
         model.load_weights(params['WEIGHT_FILE'])
 
     
-    # def custom_fbfce(weights=None):
-    #     """Loss function"""
-    #     def loss_fn(y_true, y_pred, weights=weights):
-    #         if params['TYPE_LOSS'].find('FocalSmooth'):
-    #             total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True, label_smoothing=0.1)
-    #         elif params['TYPE_LOSS'].find('Focal'):
-    #             total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True)
-    #         elif params['TYPE_LOSS'].find('Anchor'):
-    #             total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True)
-    #         elif params['TYPE_LOSS'].find('Dice'):
-    #             total_loss = tf.keras.losses.Dice(y_true, y_pred)
-    #         elif params['TYPE_LOSS'].find('Tversky'):
-    #             total_loss = tf.keras.losses.Tversky(y_true, y_pred)
-    #         elif params['TYPE_LOSS'].find('Hinge'):
-    #             total_loss = tf.keras.losses.Hinge(y_true, y_pred)
-    #         if params['TYPE_LOSS'].find('TV'):
-    #             total_loss += 1e-5*tf.image.total_variation(y_pred)
-    #         return total_loss
-    #     return loss_fn
+    def custom_fbfce(weights=None):
+        """Loss function"""
+        def loss_fn(y_true, y_pred, weights=weights):
+            if params['TYPE_LOSS'].find('FocalSmooth')>-1:
+                print('FocalSmooth')
+                total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True, label_smoothing=0.1)
+            elif params['TYPE_LOSS'].find('Focal')>-1:
+                print('Focal')
+                total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True)
+            elif params['TYPE_LOSS'].find('Anchor')>-1:
+                print('Anchor')
+                total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True)
+            else:
+                pdb.set_trace()
+            if params['TYPE_LOSS'].find('TV')>-1:
+                print('TV Loss')
+                # total_loss += 1e-5*tf.image.total_variation(y_pred)
+                total_loss += 1e-5*tf.reduce_sum(tf.image.total_variation(tf.expand_dims(y_pred, axis=-1)))
+            if params['TYPE_LOSS'].find('L2')>-1:
+                print('L2 smoothness Loss')
+                total_loss += 1e-5*tf.reduce_mean((y_pred[1:]-y_pred[:-1])**2)
+            if params['TYPE_LOSS'].find('Margin')>-1:
+                print('Margin Loss')
+                # pdb.set_trace()
+                total_loss += 5e-1*tf.squeeze(y_pred * (1 - y_pred))
+                
+            return total_loss
+        return loss_fn
     
+    # if params['TYPE_LOSS'].find('FocalSmooth')>-1:
+    #     print('FocalSmooth')
+    #     loss_obj = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True, label_smoothing=0.1)
+    # elif params['TYPE_LOSS'].find('Focal')>-1:
+    #     print('Focal')
+    #     loss_obj = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True)
+    # elif params['TYPE_LOSS'].find('Anchor')>-1:
+    #     print('Anchor')
+    #     loss_obj = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True)
+    # elif params['TYPE_LOSS'].find('Dice')>-1:
+    #     print('Dice')
+    #     from loss_fn import  dice_loss
+    #     loss_obj = dice_loss(delta = 0.5, smooth = 0.000001)
+    # elif params['TYPE_LOSS'].find('Tversky')>-1:
+    #     pind = params['TYPE_LOSS'].find('Tversky')+len('Tversky')
+    #     beta = float(params['TYPE_LOSS'][pind+1:pind+2])/10
+    #     print('Tversky')
+    #     print('beta: ', beta)
+    #     from model.loss_fn import  tversky_loss
+    #     loss_obj = tversky_loss(alpha=1-beta,beta=beta)
+    #     # loss_obj = asymmetric_focal_tversky_loss(delta=beta, gamma=2)
+    # elif params['TYPE_LOSS'].find('Hinge')>-1:
+    #     print('Hinge')
+    #     loss_obj = tf.keras.losses.Hinge()
+    # else:
+    #     pdb.set_trace()
+        
     # model.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=params['LEARNING_RATE']),
-    
-    if params['TYPE_LOSS'].find('FocalSmooth')>-1:
-        print('FocalSmooth')
-        loss_obj = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True, label_smoothing=0.1)
-    elif params['TYPE_LOSS'].find('Focal')>-1:
-        print('Focal')
-        loss_obj = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True)
-    elif params['TYPE_LOSS'].find('Anchor')>-1:
-        print('Anchor')
-        loss_obj = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True)
-    elif params['TYPE_LOSS'].find('Dice')>-1:
-        print('Dice')
-        from loss_fn import  dice_loss
-        loss_obj = dice_loss(delta = 0.5, smooth = 0.000001)
-    elif params['TYPE_LOSS'].find('Tversky')>-1:
-        pind = params['TYPE_LOSS'].find('Tversky')+len('Tversky')
-        beta = float(params['TYPE_LOSS'][pind+1:pind+2])/10
-        print('Tversky')
-        print('beta: ', beta)
-        from model.loss_fn import  tversky_loss
-        loss_obj = tversky_loss(alpha=1-beta,beta=beta)
-        # loss_obj = asymmetric_focal_tversky_loss(delta=beta, gamma=2)
-    elif params['TYPE_LOSS'].find('Hinge')>-1:
-        print('Hinge')
-        loss_obj = tf.keras.losses.Hinge()
-    else:
-        pdb.set_trace()
-    # pdb.set_trace()
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
-                    # loss=custom_fbfce,#(),
-                    loss=loss_obj,
+                    loss=custom_fbfce(),
+                    # loss=loss_obj,
                     # loss='mse',
                     # loss = tf.keras.metrics.BinaryCrossentropy(),
                     # loss=tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True), 

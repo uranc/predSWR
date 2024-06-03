@@ -81,14 +81,112 @@ import numpy as np
 #              'Base_K4_T50_D3_N64_L3_E200_B32_S50_Hinge_GloWReg_BottleDense']
 # model_lib = ['Average_K4_T50_D3_N64_L3_E200_B32_S50_Tversky07_GloWReg_BottleDense',
 #              'Base_K4_T50_D3_N64_L3_E200_B32_S50_Tversky07_GloWReg_BottleDense']
-model_lib = ['Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowGap_GloWReg_BottleDense',
-             'Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorWiderGap_GloWReg_BottleDense',
-             'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowGap_GloWReg_BottleDense',
-             'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorWiderGap_GloWReg_BottleDense',
-             'Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowSmoothGap_GloWReg_BottleDense',
-             'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowSmoothGap_GloWReg_BottleDense'
-             ]
+# model_lib = ['Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowGap_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorWiderGap_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowGap_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorWiderGap_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowSmoothGap_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowSmoothGap_GloWReg_BottleDense'
+#              ]
 
+# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B32_S50_Focal_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalGap_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_Focal_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGap_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGap_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGap_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGap_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGap_GloWReg_BottleDense',
+#              ]
+# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalTVFix_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTVFix_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalTVFix_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTVFix_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTVFix_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTVFix_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTVFix_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTVFix_GloWReg_BottleDense',
+#              ]
+# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalTV_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTV_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalTV_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTV_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTV_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTV_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTV_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTV_GloWReg_BottleDense',
+#              ]
+# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalTV3_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTV3_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalTV3_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTV3_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTV3_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTV3_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTV3_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTV3_GloWReg_BottleDense',
+#              ]
+# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B32_S50_Focal_GloWReg_BottleDenseELU',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalGap_GloWReg_BottleDenseELU',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_Focal_GloWReg_BottleDenseELU',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGap_GloWReg_BottleDenseELU',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGap_GloWReg_BottleDenseELU',
+#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGap_GloWReg_BottleDenseELU',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGap_GloWReg_BottleDenseELU',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGap_GloWReg_BottleDenseELU',
+#              ]
+# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B64_S50_FocalMargin_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_FocalGapMargin_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_FocalMargin_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_FocalGapMargin_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_AnchorNarrowGapMargin_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_AnchorWiderGapMargin_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_AnchorNarrowGapMargin_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_AnchorWiderGapMargin_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_FocalMargin_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_FocalGapMarginTV_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_FocalMarginTV_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_FocalGapMarginTV_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_AnchorNarrowGapMarginTV_GloWReg_BottleDense',
+#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_AnchorWiderGapMarginTV_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_AnchorNarrowGapMarginTV_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_AnchorWiderGapMarginTV_GloWReg_BottleDense',
+#              ]
+
+# model_lib = ['Base_K4_T50_D3_N64_L3_E200_B64_S50_FocalGapMarginTV25_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapMarginTV25_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N64_L3_E200_B64_S25_FocalGapMarginTV25_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapMarginTV25_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N256_L3_E200_B32_S50_FocalGapMarginTV25_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV25_GloWReg_BottleDense']
+#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_FocalGapMarginTV25Drop05_GloWReg_BottleDense']
+        
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV14_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV14_GloWReg_BottleDenseDrop05',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDenseDrop05',
+#              'Average_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV14_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDenseDrop05',
+#              'Average_K4_T50_D3_N32_L3_E200_B64_S50_FocalGapMarginTV14_GloWReg_Bottle',
+#              ]
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV14_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV14_GloWReg_BottleDenseDrop05',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDenseDrop05',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDenseDrop05',
+#              ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalGapSmoothMarginTV15_GloWReg_BottleDense',
+#              'Base_K4_T50_D3_N32_L3_E300_B32_S50_AnchorNarrowGapSmoothMarginTV15_GloWReg_BottleDense',
+#              'Base_K9_T50_D2_N32_L3_E300_B32_S50_FocalGapSmoothMarginTV15_GloWReg_BottleDense',
+#              'Base_K9_T50_D2_N32_L3_E300_B32_S50_AnchorNarrowGapSmoothMarginTV15_GloWReg_BottleDense',
+#              ]
+# model_lib = ['Base_K9_T50_D2_N32_L3_E200_B64_S50_FocalGapSmoothMarginL215_GloWReg_BottleDense',
+#              'Base_K9_T50_D2_N32_L3_E200_B64_S50_AnchorNarrowGapSmoothMarginL215_GloWReg_BottleDense',
+#              ]
+model_lib = ['Base_K9_T50_D2_N32_L3_E200_B64_S50_FocalGapSmoothMarginL215_GloWReg_BottleDenseShift',
+             'Base_K9_T50_D2_N32_L3_E200_B64_S50_AnchorNarrowGapSmoothMarginL215_GloWReg_BottleDenseShift',
+             ]
 # Average_K3_T50_D16_N128_B32_L3_E200_S100_AnchorGap20_GloWReg_AvgBottleDense
 # Average_K13_T50_D4_N32_B32_L3_E200_S100_AnchorGap20_GloWReg_AvgBottleDense
 # Average_K13_T50_D4_N32_B32_L3_E200_S25_AnchorGap20_GloWReg_AvgBottleDense
