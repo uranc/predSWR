@@ -262,14 +262,14 @@ elif mode == 'predict':
         np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/stats_val{0}_{1}.npy'.format(j, model_name), stats[j,])
         # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/areas_val{0}_{1}.npy'.format(j, model_name), IOU[j])
 
-    import matplotlib.pyplot as plt
-    for pred in val_labels[0]:
-        rip_begin = int(pred[0]*1250)
-        plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :])
-        plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'k')
-        plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'r')
-        plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k')
-        plt.show()
+    # import matplotlib.pyplot as plt
+    # for pred in val_labels[0]:
+    #     rip_begin = int(pred[0]*1250)
+    #     plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :])
+    #     plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'k')
+    #     plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'r')
+    #     plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k')
+    #     plt.show()
     
 elif mode == 'predictSynth':
     

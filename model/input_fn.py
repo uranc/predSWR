@@ -120,7 +120,7 @@ def rippleAI_load_dataset(params, mode='train'):
     from scipy import signal
     M = 51
     # onsets = np.diff(train_labels)==1
-    onsets = np.hstack((0, np.diff(train_labels)))==1
+    onsets = np.hstack((0, np.diff(train_labels))).astype(np.uint32)==1
     assert(np.unique(train_labels[np.where(onsets)[0]])==1)
     assert(np.unique(train_labels[np.where(onsets)[0]]-1)==0)
     
@@ -148,20 +148,34 @@ def rippleAI_load_dataset(params, mode='train'):
         print('Using Gap Before Onset')
         onset_indices = np.where(onsets)[0]
         for onset in onset_indices:
-            if np.any(train_labels[onset-40:onset]==1):
-                weights[onset-40:onset] *= train_labels[onset-40:onset]
+            # if np.any(train_labels[onset-40:onset]==1):
+            weights[onset-40:onset] *= train_labels[onset-40:onset]
     weights = weights[:train_labels.shape[0]]
 
     assert(np.unique(weights[np.where(onsets)[0]])==1)
     assert(np.unique(weights[np.where(onsets)[0]]-1)==0)
 
     # make batches 
-    sample_shift = 0
-    train_examples = train_examples[-sample_shift:, :]
-    train_labels = train_labels[sample_shift:]
-    weights = weights[sample_shift:]
-    test_examples = test_examples[-sample_shift:, :]
-    test_labels = test_labels[sample_shift:]
+    # pdb.set_trace()
+    if params['TYPE_ARCH'].find('Shift')>-1:
+        print('Using Shift')
+        sample_shift = int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Shift')+5:params['TYPE_ARCH'].find('Shift')+7])
+        print(sample_shift)
+        if sample_shift>0:
+            train_examples = train_examples[:-sample_shift, :]
+            train_labels = train_labels[sample_shift:]
+            weights = weights[sample_shift:]
+            test_examples = test_examples[:-sample_shift, :]
+            test_labels = test_labels[sample_shift:]        
+    else:
+        sample_shift = 0
+
+    # pdb.set_trace()
+    print(train_examples.shape)
+    print(train_labels.shape)
+    print(weights.shape)
+    print(test_examples.shape)
+    print(test_labels.shape)
     
     # make datasets
     sample_length = params['NO_TIMEPOINTS']*2

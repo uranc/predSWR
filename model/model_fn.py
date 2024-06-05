@@ -95,7 +95,7 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     
     # get TCN
     if model_type=='Base':
-        from tcn import TCN
+        from tcn import TCN        
         nets = TCN(nb_filters=n_filters,
                     kernel_size=n_kernels,
                     nb_stacks=1,
@@ -232,7 +232,8 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
         # nets = tf.expand_dims(nets, axis=1)
 
         # reduce mean and get output
-        nets = tf.reduce_mean(nets, axis=-1, keepdims=True)
+        # nets = tf.reduce_mean(nets, axis=-1, keepdims=True)
+        nets = tf.reduce_max(nets, axis=-1, keepdims=True)
         
         nets = Dense(1, use_bias = True,
                         # bias_initializer=Constant(value=-5.0),
@@ -249,6 +250,52 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
 
     
     def custom_fbfce(weights=None):
+        
+        def threshold_consistent_margin_loss(y_true, y_pred):
+            margin = 0.2  # adjust the margin value as needed
+            positive_loss = K.maximum(0.0, y_pred - y_true + margin)
+            negative_loss = K.maximum(0.0, y_true - y_pred + margin)
+            total_loss = K.mean(positive_loss + negative_loss)
+            return total_loss
+        
+        def tcml_loss(y_true, y_pred, threshold=0.5, margin=0.2):
+            positive_mask = tf.equal(y_true, 1.0)
+            negative_mask = tf.equal(y_true, 0.0)
+
+            pos_loss = tf.maximum(0.0, threshold + margin - y_pred)
+            neg_loss = tf.maximum(0.0, y_pred - (threshold - margin))
+
+            pos_loss = tf.where(positive_mask, pos_loss, 0.0)
+            neg_loss = tf.where(negative_mask, neg_loss, 0.0)
+
+            loss = tf.reduce_mean(pos_loss + neg_loss)
+            return loss
+        
+        def cosine_similarity(a, b):
+            dot_product = tf.reduce_sum(a * b, axis=-1)
+            norm_a = tf.norm(a, axis=-1)
+            norm_b = tf.norm(b, axis=-1)
+            return dot_product / (norm_a * norm_b)
+        
+        def tcm_loss(y_true, y_pred, m_pos=0.5, m_neg=0.5, lambda_pos=1.0, lambda_neg=1.0):
+            y_true = tf.cast(y_true, tf.float32)
+            
+            # Calculate cosine similarity scores
+            cos_sim = cosine_similarity(y_true, y_pred)
+            
+            # Identify positive and negative samples
+            pos_mask = tf.equal(y_true, 1.0)
+            neg_mask = tf.equal(y_true, 0.0)
+            
+            # Compute positive and negative losses
+            pos_loss = lambda_pos * tf.reduce_sum((m_pos - cos_sim) * tf.cast(cos_sim <= m_pos, tf.float32)) / tf.reduce_sum(tf.cast(pos_mask, tf.float32))
+            neg_loss = lambda_neg * tf.reduce_sum((cos_sim - m_neg) * tf.cast(cos_sim >= m_neg, tf.float32)) / tf.reduce_sum(tf.cast(neg_mask, tf.float32))
+            
+            # Sum the positive and negative losses
+            tcm_loss_value = pos_loss + neg_loss
+            
+            return tcm_loss_value
+       
         """Loss function"""
         def loss_fn(y_true, y_pred, weights=weights):
             if params['TYPE_LOSS'].find('FocalSmooth')>-1:
@@ -276,7 +323,8 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                 
             return total_loss
         return loss_fn
-    
+        
+
     # if params['TYPE_LOSS'].find('FocalSmooth')>-1:
     #     print('FocalSmooth')
     #     loss_obj = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True, label_smoothing=0.1)
