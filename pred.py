@@ -116,6 +116,7 @@ elif mode == 'predict':
         new_model = None
         model_number = 1
         arch = model_name
+        params['TYPE_ARCH'] = arch
         for filename in os.listdir('/mnt/hpc/projects/OWVinckSWR/Carmen/DBI2/rippl-AI/optimized_models/'):
             if f'{arch}_{model_number}' in filename:
                 break
@@ -183,12 +184,14 @@ elif mode == 'predict':
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
 
-    params['BATCH_SIZE'] = 512*2
+    params['BATCH_SIZE'] = 512*4
     from model.input_fn import rippleAI_load_dataset
 
     preproc = False if model_name=='RippleNet' else True
     val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
-
+    
+    for j, labels in enumerate(val_labels):
+        np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/labels_val{0}.npy'.format(j), labels)
     from model.cnn_ripple_utils import get_predictions_index, get_performance
 
     # get predictions
@@ -200,16 +203,27 @@ elif mode == 'predict':
     from keras.utils import timeseries_dataset_from_array
 
     # get predictions
-    sample_length = params['NO_TIMEPOINTS']*2
 
     # val_datasets = [val_datasets[3]]
     # val_labels = [val_labels[3]]
     for LFP in val_datasets:
         if model_name == 'RippleNet':
-            train_x = timeseries_dataset_from_array(LFP[:,4]/1000, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
+            sample_length = params['NO_TIMEPOINTS']
+            all_probs = []
+            for ich in range(LFP.shape[1]):
+                train_x = timeseries_dataset_from_array(LFP[:,ich]/1000, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
+                windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
+                probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
+                all_probs.append(probs)
+            probs = np.array(all_probs).mean(axis=0)
+            # pdb.set_trace()
+        elif model_name == 'CNN1D':
+            sample_length = 16
+            train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
             windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
-            probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
+            probs = np.hstack((np.zeros((15, 1)).flatten(),windowed_signal[0,:-1], windowed_signal[:, -1]))
         else:
+            sample_length = params['NO_TIMEPOINTS']*2
             train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
             windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
             probs = np.hstack((np.zeros((50, 1)).flatten(),windowed_signal[0,:-1], windowed_signal[:, -1]))
@@ -234,7 +248,7 @@ elif mode == 'predict':
             IOU[j,i] = np.median(tmpIOU.sum(axis=0))
             tmp_pred.append(pred_val_events)
         all_pred_events.append(tmp_pred)
-    pdb.set_trace()
+    # pdb.set_trace()
 
     # pick model
     print(F1_val[0])
@@ -289,6 +303,8 @@ elif mode == 'predictSynth':
         new_model = None
         model_number = 1
         arch = model_name
+        params['TYPE_ARCH'] = arch
+
         for filename in os.listdir('/mnt/hpc/projects/OWVinckSWR/Carmen/DBI2/rippl-AI/optimized_models/'):
             if f'{arch}_{model_number}' in filename:
                 break
@@ -386,7 +402,7 @@ elif mode == 'predictSynth':
     tt = np.arange(probs.shape[0])/1250
     plt.plot(tt, probs)
     plt.show()
-    pdb.set_trace()
+    # pdb.set_trace()
 
 elif mode == 'predictPlot':
     import matplotlib.pyplot as plt
