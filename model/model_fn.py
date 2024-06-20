@@ -85,6 +85,8 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     n_dilations = params['NO_DILATIONS']
     if params['TYPE_ARCH'].find('Drop')>-1:
         r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
+        print('Using Dropout')
+        print(r_drop)
     else:
         r_drop = 0.0
     
@@ -95,29 +97,88 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     
     # get TCN
     if model_type=='Base':
-        from tcn import TCN        
-        nets = TCN(nb_filters=n_filters,
-                    kernel_size=n_kernels,
-                    nb_stacks=1,
-                    dilations=[2 ** i for i in range(n_dilations)],
-                    # dilations=(1, 2, 4, 8, 16), #, 32
-                    padding='causal',
-                    use_skip_connections=True,
-                    dropout_rate=r_drop,
-                    return_sequences=True,
-                    activation=this_activation,
-                    kernel_initializer=this_kernel_initializer,
-                    # activation=this_activation,
-                    # kernel_initializer=this_kernel_initializer,
-                    use_batch_norm=False,
-                    use_layer_norm=False,
-                    use_weight_norm=use_weight_norm,
-                    go_backwards=False,
-                    return_state=False)(inputs)
+        from tcn import TCN
+        tcn_op = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        # dilations=(1, 2, 4, 8, 16), #, 32
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        # activation=this_activation,
+                        # kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=False,
+                        use_layer_norm=False,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+        print(tcn_op.receptive_field)
+        nets = tcn_op(inputs)
+
+        # Smooth Conv
+        wconv = Conv1D(filters=n_filters,
+                kernel_size=3,
+                dilation_rate=1,
+                padding='causal',
+                activation=this_activation,
+                use_bias = True,
+                bias_initializer='zeros',
+                name='deconv_{0}'.format(1),
+                kernel_initializer=this_kernel_initializer
+                )
+        
         # Slice & Out
         nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+        
+        if use_weight_norm:
+            wconv = WeightNormalization(wconv)
+        nets = wconv(nets)        
+        
+        # sigmoid out
         nets = Dense(1, activation='sigmoid', kernel_initializer=this_kernel_initializer)(nets)
+        
+        
+    elif model_type=='BaseAvg':
+        from tcn import TCN
+        tcn_op = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        # dilations=(1, 2, 4, 8, 16), #, 32
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        # activation=this_activation,
+                        # kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=False,
+                        use_layer_norm=False,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+        print(tcn_op.receptive_field)
+        dense_op = Dense(1, activation='sigmoid', kernel_initializer=this_kernel_initializer)
+        
+        nets = []
+        for i_ch in range(8):
+            nets_in = Lambda(lambda tt: tt[:, :, i_ch], name='Slice_Input_{}'.format(i_ch))(inputs)
+            tcn_out = tcn_op(tf.expand_dims(nets_in, axis=-1))
+            nets.append(dense_op(tcn_out))
 
+        # pdb.set_trace()
+        
+        nets = Concatenate(axis=-1)(nets)
+        nets = tf.reduce_max(nets, axis=-1, keepdims=True)
+        
+        # Slice & Out
+        nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+        
     elif model_type=='Average':
         nets = []
         for i_ch in range(8):
@@ -214,7 +275,12 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
             wconv = WeightNormalization(wconv)
         if use_batch_norm:
             wconv = BatchNormalization()(wconv)            
-                    
+        
+        dense_op = Dense(1, use_bias = True,
+                        # bias_initializer=Constant(value=-5.0),
+                        bias_initializer='zeros',
+                        activation='sigmoid', 
+                        kernel_initializer=this_kernel_initializer)       
         tmp_chs = []
         for i_ch in range(8):
             if use_batch_norm:
@@ -222,25 +288,14 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                 tmp = BatchNormalization()(tmp)
                 tmp_chs.append(tmp)
             else:
-                tmp_chs.append(wconv(all_chs[i_ch]))
+                tmp_chs.append(dense_op(wconv(all_chs[i_ch])))
         all_chs = tmp_chs      
         
         # concat
         nets = Concatenate(axis=-1)(all_chs)
-        nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
-        # pdb.set_trace()
-        # nets = tf.expand_dims(nets, axis=1)
-
-        # reduce mean and get output
-        # nets = tf.reduce_mean(nets, axis=-1, keepdims=True)
         nets = tf.reduce_max(nets, axis=-1, keepdims=True)
-        
-        nets = Dense(1, use_bias = True,
-                        # bias_initializer=Constant(value=-5.0),
-                        bias_initializer='zeros',
-                        activation='sigmoid', 
-                        kernel_initializer=this_kernel_initializer)(nets)
-    # pdb.set_trace()
+        nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+
     # get outputs
     outputs = nets
     model = Model(inputs=[inputs], outputs=[outputs])
@@ -296,6 +351,7 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
             
             return tcm_loss_value
        
+        # pdb.set_trace()
         """Loss function"""
         def loss_fn(y_true, y_pred, weights=weights):
             if params['TYPE_LOSS'].find('FocalSmooth')>-1:
@@ -303,10 +359,26 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                 total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True, label_smoothing=0.1)
             elif params['TYPE_LOSS'].find('Focal')>-1:
                 print('Focal')
-                total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True)
+                aind = params['TYPE_LOSS'].find('Ax')+2
+                alp = float(params['TYPE_LOSS'][aind:aind+3])/100
+                gind = params['TYPE_LOSS'].find('Gx')+2
+                gam = float(params['TYPE_LOSS'][gind:gind+3])/100
+                print('Alpha: {0}, Gamma: {1}'.format(alp, gam))                
+                if alp == 0:
+                    total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, gamma = gam)
+                else:
+                    total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True, alpha = alp, gamma = gam)
             elif params['TYPE_LOSS'].find('Anchor')>-1:
                 print('Anchor')
-                total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True)
+                aind = params['TYPE_LOSS'].find('Ax')+2
+                alp = float(params['TYPE_LOSS'][aind:aind+3])/100
+                gind = params['TYPE_LOSS'].find('Gx')+2
+                gam = float(params['TYPE_LOSS'][gind:gind+3])/100
+                print('Alpha: {0}, Gamma: {1}'.format(alp, gam))
+                if alp == 0:
+                    total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, gamma = gam)
+                else:
+                    total_loss = tf.keras.losses.binary_focal_crossentropy(y_true, y_pred, apply_class_balancing=True, alpha = alp, gamma = gam)
             else:
                 pdb.set_trace()
             if params['TYPE_LOSS'].find('TV')>-1:
@@ -319,7 +391,7 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
             if params['TYPE_LOSS'].find('Margin')>-1:
                 print('Margin Loss')
                 # pdb.set_trace()
-                total_loss += 5e-1*tf.squeeze(y_pred * (1 - y_pred))
+                total_loss += 1e-4*tf.squeeze(y_pred * (1 - y_pred))
                 
             return total_loss
         return loss_fn
