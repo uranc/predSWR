@@ -73,10 +73,11 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     
     # params
     use_batch_norm = False
-    use_weight_norm = True
+    use_weight_norm = False
+    use_layer_norm = False
     use_l1_norm = False
-    this_activation = 'relu'
-    # this_activation = ELU(alpha=-1)
+    # this_activation = 'relu'
+    this_activation = ELU(alpha=-1)
     # this_activation = ELU(alpha=0.1)
     this_kernel_initializer = 'glorot_uniform'
     model_type = params['TYPE_MODEL']
@@ -112,7 +113,7 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                         # activation=this_activation,
                         # kernel_initializer=this_kernel_initializer,
                         use_batch_norm=False,
-                        use_layer_norm=False,
+                        use_layer_norm=use_layer_norm,
                         use_weight_norm=use_weight_norm,
                         go_backwards=False,
                         return_state=False)
@@ -132,7 +133,10 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                 )
         
         # Slice & Out
-        nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+        if params['mode'] == 'train':
+            nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+        else:
+            nets = Lambda(lambda tt: tt[:, -1:, :], name='Slice_Output')(nets)
         
         if use_weight_norm:
             wconv = WeightNormalization(wconv)
@@ -424,8 +428,8 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
     # else:
     #     pdb.set_trace()
         
-    # model.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=params['LEARNING_RATE']),
-    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
+    model.compile(optimizer=tf.keras.optimizers.AdamW(learning_rate=params['LEARNING_RATE']),
+    # model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
                     loss=custom_fbfce(),
                     # loss=loss_obj,
                     # loss='mse',
@@ -433,7 +437,7 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                     # loss=tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True), 
                     metrics=[tf.keras.metrics.BinaryCrossentropy(), 
                              tf.keras.metrics.BinaryAccuracy()])
-    model.trainable = True
+    # model.trainable = True
                     # tfa.metrics.F1Score(num_classes=2, threshold=0.5)
                     # , sample_weight=[1-params['RIPPLE_RATIO'], params['RIPPLE_RATIO']])
                     #   metrics='sparse_categorical_crossentropy') 'binary_focal_crossentropy'

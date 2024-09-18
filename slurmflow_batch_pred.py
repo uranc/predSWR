@@ -381,18 +381,30 @@ model_lib = [#'Average_K4_T50_D3_N64_L4_E200_B32_S50_Focal_GloWReg_BottleDense',
             #  'Base_K4_T50_D3_N128_L4_E200_B32_S50_AnchorNarrowAx025Gx100_GloWReg_Shift10',
             #  'Base_K4_T50_D3_N128_L4_E200_B32_S50_FocalAx025Gx200_GloWReg_Shift10',
             #  'Base_K4_T50_D3_N128_L4_E200_B32_S50_AnchorNarrowAx025Gx200_GloWReg_Shift10',
-            'RippleNet',
+            # 'RippleNet',
             'CNN1D',
-            'Base_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowGapSmooth_GloWReg_Shift00',
-            'Base_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowGapSmooth_GloWReg_Shift05',
-            'Base_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowGapSmooth_GloWReg_Shift10',
-            'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalGapAx099Gx200_GloWReg_Shift00',
-            'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalGapAx099Gx200_GloWReg_Shift05',
-            'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalGapAx099Gx200_GloWReg_Shift10',
+            # 'Base_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowSmooth_GloWReg_Shift00',
+            # 'Base_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowSmooth_GloWReg_Shift05',
+            # 'Base_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowSmooth_GloWReg_Shift10',            
+            # 'Base_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowGapSmooth_GloWReg_Shift00',
+            # 'Base_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowGapSmooth_GloWReg_Shift05',
+            # 'Base_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowGapSmooth_GloWReg_Shift10',
+            # 'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalGapAx099Gx200_GloWReg_Shift00',
+            # 'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalGapAx099Gx200_GloWReg_Shift05',
+            # 'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalGapAx099Gx200_GloWReg_Shift10',
+            #  'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx099Gx200_GloNoW_Shift00ELU',
+            #  'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx025Gx200_GloNoW_Shift00ELU',
+            #  'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx099Gx200_GloNoW_Shift00ELU',
+            #  'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx025Gx200_GloNoW_Shift00ELU',
+            #  'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx099Gx100_GloNoW_Shift00ELU',
+            #  'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx025Gx100_GloNoW_Shift00ELU',
+            #  'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx099Gx100_GloNoW_Shift00ELU',
+            #  'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx025Gx100_GloNoW_Shift00ELU',               
              ]
 
 for model in model_lib:
     subprocess.call(['python', 'pred.py', '--mode', 'predict', '--model', model])
+    # subprocess.call(['python', 'pred.py', '--mode', 'predictPlot', '--model', model])
     # subprocess.call(['sbatch', 'gpu_batch_107inference.sh', model])
 
 

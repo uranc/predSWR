@@ -118,9 +118,9 @@ def bz_LoadBinary(filename, nChannels, channels, sampleSize, verbose=False):
 
 # Functions used to load the raw LFP, select channels, load ripples, downsample and normalize
 def load_lab_data(path):
-    
+
     sf, expName, ref_channels, dead_channels = load_info(path)
-    
+
     if not (expName == 'ThyNpx'):
         ripples = load_ripples(path)/sf
         channels_map = load_channels_map(path)
@@ -129,7 +129,7 @@ def load_lab_data(path):
         ripples = scipy.io.loadmat(os.path.join(path, "ripples.mat"))['ripples']
 
     channels, shanks, ref_channels = reformat_channels(channels_map, ref_channels)
-    
+
     # Select channels to make dataset
     # pdb.set_trace()
     # channels_in_shank = list(np.where(np.array(shanks)==shank-1)[0])
@@ -204,7 +204,7 @@ def reformat_channels (channels_map, ref_channels):
 
     shanks = np.where(np.isnan(channels_map[:, 1]) == False, channels_map[:, 1], 0)
     shanks = [x-1 for x in (shanks).astype(int)]
-    
+
     ref_channels["so"] = np.where(np.isnan(ref_channels["so"]) == False, ref_channels["so"], 0)
     ref_channels["so"] = [x-1 for x in ref_channels["so"].astype(int)]
     ref_channels["pyr"] = np.where(np.isnan(ref_channels["pyr"]) == False, ref_channels["pyr"], 0)
@@ -352,6 +352,8 @@ def process_LFP(LFP,sf,channels,use_zscore=True):
                     and transformed to used the channels specified in channels.
     A Rubio, LCN 2023
     '''
+    # pdb.set_trace()
+    normalized_data = LFP
     data=interpolate_channels(LFP,channels)
     if sf!=1250:
         print('Downsampling data at 1250 Hz...')
@@ -360,7 +362,6 @@ def process_LFP(LFP,sf,channels,use_zscore=True):
     else:
         print("Data is already sampled at 1250 Hz!")
 
-    
     if use_zscore:
         print('Normalizing data...')
         normalized_data=z_score_normalization(data)
@@ -735,12 +736,20 @@ def split_data(x,GT,window_dur=60,sf=1250,split=0.7):
     rand_arr= np.random.rand(n_windows)
     for i in range(n_windows):
         if rand_arr[i]>=split:
-            x_test=np.append(x_test,x[i*n_samples_window:(i+1)*n_samples_window])
-            y_test=np.append(y_test,y[i*n_samples_window:(i+1)*n_samples_window])
+            x_test=np.append(x_test,np.arange(i*n_samples_window,(i+1)*n_samples_window))
+            y_test=np.append(y_test,np.arange(i*n_samples_window,(i+1)*n_samples_window))
+            # x_test=np.append(x_test,x[i*n_samples_window:(i+1)*n_samples_window])
+            # y_test=np.append(y_test,y[i*n_samples_window:(i+1)*n_samples_window])
         else:
-            x_train=np.append(x_train,x[i*n_samples_window:(i+1)*n_samples_window])
-            y_train=np.append(y_train,y[i*n_samples_window:(i+1)*n_samples_window])
+            x_train=np.append(x_train,np.arange(i*n_samples_window,(i+1)*n_samples_window))
+            y_train=np.append(y_train,np.arange(i*n_samples_window,(i+1)*n_samples_window))
+            # x_train=np.append(x_train,x[i*n_samples_window:(i+1)*n_samples_window])
+            # y_train=np.append(y_train,y[i*n_samples_window:(i+1)*n_samples_window])
 
+    x_test=x[x_test.astype(int), :]
+    x_train=x[x_train.astype(int), :]
+    y_test=y[y_test.astype(int)]
+    y_train=y[y_train.astype(int)]
     x_test=np.reshape(x_test,(-1,n_channels))
     x_train=np.reshape(x_train,(-1,n_channels))
     events_test=get_predictions_index(y_test)/sf

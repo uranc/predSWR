@@ -333,7 +333,7 @@ model_lib = [
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapAx025Gx200Margin0000_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapAx025Gx200_GloWReg_Shift00',
-             
+
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalAx025Gx050_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowAx025Gx050_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalAx025Gx100_GloWReg_Shift00',
@@ -342,7 +342,7 @@ model_lib = [
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowAx025Gx200_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalAx025Gx400_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowAx025Gx400_GloWReg_Shift00',
-             
+
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalAx000Gx050_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowAx000Gx050_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalAx000Gx100_GloWReg_Shift00',
@@ -351,7 +351,7 @@ model_lib = [
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowAx000Gx200_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalAx000Gx400_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowAx000Gx400_GloWReg_Shift00',
-             
+
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalAx075Gx050_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowAx075Gx050_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalAx075Gx100_GloWReg_Shift00',
@@ -360,7 +360,7 @@ model_lib = [
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowAx075Gx200_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalAx075Gx400_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowAx075Gx400_GloWReg_Shift00',
-             
+
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalAx099Gx050_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowAx099Gx050_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalAx099Gx100_GloWReg_Shift00',
@@ -393,7 +393,7 @@ model_lib = [
             #  'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalGapAx090Gx200_GloWReg_Shift05',
             #  'Base_K4_T50_D3_N32_L3_E300_B32_S50_AnchorNarrowGapAx090Gx200_GloWReg_Shift05',
             #  'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalGapAx090Gx200_GloWReg_Shift10',
-            #  'Base_K4_T50_D3_N32_L3_E300_B32_S50_AnchorNarrowGapAx090Gx200_GloWReg_Shift10',        
+            #  'Base_K4_T50_D3_N32_L3_E300_B32_S50_AnchorNarrowGapAx090Gx200_GloWReg_Shift10',
             #  'Base_K4_T50_D3_N32_L4_E200_B32_S50_FocalAx025Gx100_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowAx025Gx100_GloWReg_Shift00',
             #  'Base_K4_T50_D3_N32_L4_E200_B32_S50_FocalAx025Gx200_GloWReg_Shift00',
@@ -417,7 +417,7 @@ model_lib = [
             #  'Base_K4_T50_D3_N128_L4_E200_B32_S50_FocalAx025Gx100_GloWReg_Shift05',
             #  'Base_K4_T50_D3_N128_L4_E200_B32_S50_AnchorNarrowAx025Gx100_GloWReg_Shift05',
             #  'Base_K4_T50_D3_N128_L4_E200_B32_S50_FocalAx025Gx200_GloWReg_Shift05',
-            #  'Base_K4_T50_D3_N128_L4_E200_B32_S50_AnchorNarrowAx025Gx200_GloWReg_Shift05',             
+            #  'Base_K4_T50_D3_N128_L4_E200_B32_S50_AnchorNarrowAx025Gx200_GloWReg_Shift05',
             #  'Base_K4_T50_D3_N32_L4_E200_B32_S50_FocalAx025Gx100_GloWReg_Shift10',
             #  'Base_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowAx025Gx100_GloWReg_Shift10',
             #  'Base_K4_T50_D3_N32_L4_E200_B32_S50_FocalAx025Gx200_GloWReg_Shift10',
@@ -427,7 +427,6 @@ model_lib = [
             #  'Base_K4_T50_D3_N128_L4_E200_B32_S50_FocalAx025Gx200_GloWReg_Shift10',
             #  'Base_K4_T50_D3_N128_L4_E200_B32_S50_AnchorNarrowAx025Gx200_GloWReg_Shift10',
             ##########################################
-                        
             #  'Average_K4_T50_D3_N32_L4_E200_B32_S50_Focal_GloWReg_Shift00',
             #  'Average_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrow_GloWReg_Shift00',
             #  'Average_K4_T50_D3_N32_L4_E200_B32_S50_FocalSmooth_GloWReg_Shift05',
@@ -464,6 +463,45 @@ model_lib = [
             #  'Average_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowSmoothMargin05_GloWReg_Shift05DenseFirst',
             #  'Average_K4_T50_D3_N32_L4_E200_B32_S50_FocalSmoothMargin05_GloWReg_Shift10DenseFirst',
             #  'Average_K4_T50_D3_N32_L4_E200_B32_S50_AnchorNarrowSmoothMargin05_GloWReg_Shift10DenseFirst',
+            #  'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalAx090Gx200_GloNoW_Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalAx099Gx200_GloNoW_Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalAx025Gx200_GloNoW_Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalAx099Gx200_GloLNorm_Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalAx025Gx200_GloLNorm_Shift00',
+            #  'Base_K5_T300_D5_N32_L3_E150_B32_S800_FocalAx099Gx200_GloNoW_Shift00',
+            #  'Base_K5_T300_D5_N32_L3_E150_B32_S800_FocalAx025Gx200_GloNoW_Shift00',
+            #  'Base_K7_T200_D4_N32_L3_E150_B32_S800_FocalAx099Gx200_GloNoW_Shift00',
+            #  'Base_K7_T200_D4_N32_L3_E150_B32_S800_FocalAx025Gx200_GloNoW_Shift00',
+            #  'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx099Gx200_GloNoW_Shift00',
+            #  'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx025Gx200_GloNoW_Shift00',
+            #  'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx099Gx200_GloNoW_Shift00',
+            #  'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx025Gx200_GloNoW_Shift00',
+            #  'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx099Gx100_GloNoW_Shift00',
+            #  'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx025Gx100_GloNoW_Shift00',
+            #  'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx099Gx100_GloNoW_Shift00',
+            #  'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx025Gx100_GloNoW_Shift00',
+            #  'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalSmooth_GloNoW_Shift00',
+            #  'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalSmooth_GloNoW_Shift00',
+             'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx099Gx200_GloNoW_Shift00ELU',
+             'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx025Gx200_GloNoW_Shift00ELU',
+             'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx099Gx200_GloNoW_Shift00ELU',
+             'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx025Gx200_GloNoW_Shift00ELU',
+             'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx099Gx100_GloNoW_Shift00ELU',
+             'Base_K5_T300_D5_N32_L3_E300_B64_S800_FocalAx025Gx100_GloNoW_Shift00ELU',
+             'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx099Gx100_GloNoW_Shift00ELU',
+             'Base_K7_T200_D4_N32_L3_E300_B64_S800_FocalAx025Gx100_GloNoW_Shift00ELU',             
+            #  'Base_K3_T600_D7_N32_L3_E150_B32_S600_FocalAx099Gx200_GloNoW_Shift00Drop05',
+            #  'Base_K3_T600_D7_N32_L3_E150_B32_S600_FocalAx090Gx200_GloNoW_Shift00Drop05',
+            #  'Base_K3_T600_D7_N32_L3_E150_B32_S600_FocalAx025Gx200_GloNoW_Shift00Drop05',
+            #  'Base_K3_T600_D7_N32_L3_E150_B32_S600_FocalAx099Gx100_GloNoW_Shift00Drop05',
+            #  'Base_K3_T600_D7_N32_L3_E150_B32_S600_FocalAx090Gx100_GloNoW_Shift00Drop05',
+            #  'Base_K3_T600_D7_N32_L3_E150_B32_S600_FocalAx025Gx100_GloNoW_Shift00Drop05',
+            #  'Base_K10_T600_D5_N32_L3_E150_B32_S600_FocalAx099Gx200_GloNoW_Shift00Drop05',
+            #  'Base_K10_T600_D5_N32_L3_E150_B32_S600_FocalAx090Gx200_GloNoW_Shift00Drop05',
+            #  'Base_K10_T600_D5_N32_L3_E150_B32_S600_FocalAx025Gx200_GloNoW_Shift00Drop05',
+            #  'Base_K10_T600_D5_N32_L3_E150_B32_S600_FocalAx099Gx100_GloNoW_Shift00Drop05',
+            #  'Base_K10_T600_D5_N32_L3_E150_B32_S600_FocalAx090Gx100_GloNoW_Shift00Drop05',
+            #  'Base_K10_T600_D5_N32_L3_E150_B32_S600_FocalAx025Gx100_GloNoW_Shift00Drop05',
              ]
 
 # Average_K3_T50_D16_N128_B32_L3_E200_S100_AnchorGap20_GloWReg_AvgBottleDense
