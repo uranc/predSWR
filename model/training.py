@@ -5,6 +5,16 @@ import pdb
 import tensorflow as tf
 from tensorflow.keras import callbacks as cb
 from tensorflow.keras import backend as K
+import numpy as np
+
+def lr_scheduler(epoch, lr):
+    min_lr = 1e-4
+    max_lr = 1e-3
+    cycle_length = 15  # Number of epochs per cycle
+    cycle = np.floor(1 + epoch / (2 * cycle_length))
+    x = np.abs(epoch / cycle_length - 2 * cycle + 1)
+    new_lr = min_lr + (max_lr - min_lr) * np.maximum(0, (1 - x))
+    return new_lr
 
 def train_pred(model,
                train_inputs,
@@ -30,15 +40,19 @@ def train_pred(model,
     #                                   write_graph=True,
     #                                   write_images=True,
     #                                   update_freq='epoch'))
+    
+    # callbacks.append(cb.LearningRateScheduler(lr_scheduler))
     callbacks.append(cb.TensorBoard(log_dir=save_dir,
                                       write_graph=True,
                                       write_images=True,
                                       update_freq='epoch'))
+    # callbacks.append(cb.ModelCheckpoint(save_dir + '/weights.last.keras',
     callbacks.append(cb.ModelCheckpoint(save_dir + '/weights.last.h5',
-                                        monitor='val_binary_accuracy', # val_ssim
+                                        monitor='val_custom_binary_accuracy', # val_ssim
+                                        # monitor='val_binary_accuracy', # val_ssim
                                         verbose=1,
                                         save_best_only=True,
-                                        save_weights_only=False,
+                                        save_weights_only=True,
                                         mode='auto',
                                         save_freq="epoch"))
 
@@ -49,4 +63,4 @@ def train_pred(model,
                      epochs=n_epoch,
                      validation_data=valid_inputs,
                      callbacks=callbacks,
-                     verbose=1)                     #  steps_per_epoch=100, # batch=256,
+                     verbose=1)

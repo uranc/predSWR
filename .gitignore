@@ -1,4 +1,5 @@
 experiments/
+experiments_legacy/
 TCN_comparison/
 allen_dataset/
 **/__pycache__/

@@ -4,221 +4,760 @@ from os import path
 import pdb
 import shutil
 import time
-import copy 
+import copy
 import numpy as np
 
 
-# Average_K4_T50_D16_N16_B128_L2_E200_S5_FocalGap_WRegDense
-# Average_K4_T50_D16_N16_B512_L3_E200_S10_AnchorGap_WReg_AvgBottle
-# Average_K4_T50_D16_N16_B64_L3_E200_S10_AnchorGap_WReg_AvgBottle
-# Average_K4_T50_D16_N64_B64_L3_E200_S10_AnchorGap_WReg_AvgBottle
-# Average_K4_T50_D16_N64_B64_L3_E200_S5_AnchorGap_WReg_DenseBottle
+# model_lib = ['Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori05Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori10Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori20Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori05Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori10Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori20Loss014Shift20',
+# ]
 
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_Focal_WReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_FocalGap_WReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGap_WReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGap_WReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L4_E200_S25_AnchorGap_WReg_AvgBottle'] # every other time sasmple
+# model_lib = ['Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori05Loss011Drop05Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori10Loss011Drop05Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori20Loss011Drop05Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori05Loss011Drop15Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori10Loss011Drop15Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori20Loss011Drop15Shift20',
+# ]
 
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_Focal_GloWReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Base_K4_T50_D16_N64_B64_L3_E200_S25_Focal_GloWReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Base_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGapWide_GloWReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGapWide_GloWReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# model_lib = ['Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegBN_MaskedHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegBN_MaskedHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegBN_MaskedHori20Loss011Shift20',
+# ]
 
-# model_lib = ['Average_K2_T50_D64_N32_B32_L3_E200_S25_FocalGap_GloWReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K2_T50_D64_N32_B32_L3_E200_S25_AnchorGap_GloWReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K2_T50_D64_N32_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K2_T50_D64_N32_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K2_T50_D64_N32_B64_L4_E200_S25_AnchorGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N32_B64_L4_E200_S25_AnchorGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N32_B64_L4_E200_S25_AnchorGapWide_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N32_B64_L3_E200_S25_AnchorGapWide_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottleDenseELU'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S25_AnchorGap_GloWReg_AvgBottleDenseELU'] # every other time sasmple
+# model_lib = ['Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MaskedHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalSmoothless_GloWReg_MaskedHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalSmoothless_GloWReg_MaskedHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalSmoothless_GloWReg_MaskedHori20Loss011Shift20',
+# ]
 
-# model_lib = ['Average_K7_T50_D8_N16_B128_L3_E200_S50_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K7_T50_D8_N16_B64_L3_E200_S50_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K7_T50_D8_N32_B32_L3_E200_S50_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K7_T50_D8_N32_B32_L3_E200_S100_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S100_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S50_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S25_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K13_T50_D4_N32_B32_L4_E200_S25_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S25_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K13_T50_D4_N32_B32_L3_E200_S100_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K13_T50_D4_N64_B32_L3_E200_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K13_T50_D4_N128_B32_L3_E200_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K3_T50_D16_N128_B32_L3_E200_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Average_K3_T50_D16_N128_B32_L3_E200_S100_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Base_K3_T50_D16_N64_L3_E200_B64_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Base_K3_T50_D16_N64_L3_E200_B64_S100_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Base_K7_T50_D8_N64_L3_E200_B64_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Base_K13_T50_D4_N64_L3_E200_B64_S50_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Base_K13_T50_D4_N64_L3_E200_B64_S100_AnchorGap20_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Base_K13_T50_D4_N64_L3_E200_B64_S100_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
-# model_lib = ['Base_K13_T50_D4_N64_L3_E200_B64_S50_FocalGap_GloWReg_AvgBottleDense'] # every other time sasmple
+# BN also
+# model_lib = ['Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_HeWReg_MaskedHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_HeWReg_MaskedHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_HeWReg_MaskedHori20Loss011Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_HeWReg_MaskedHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_HeWReg_MaskedHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_HeWReg_MaskedHori20Loss011Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori05Loss111Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori10Loss111Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori20Loss111Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugHori05Loss111Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugHori10Loss111Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugHori20Loss111Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori05Loss011Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori10Loss011Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori20Loss011Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori05Loss111Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori10Loss111Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedHori20Loss111Drop10Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedDori05Loss011Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedDori10Loss011Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedDori20Loss011Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedDori05Loss111Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedDori10Loss111Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugMaskedDori20Loss111Drop10Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugDori05Loss011Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugDori10Loss011Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugDori20Loss011Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugDori05Loss111Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugDori10Loss111Drop10Shift20',
+#              'Base_K4_T50_D3_N64_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_AugDori20Loss111Drop10Shift20',
+# ]
+###############################################################################################################
+# model_lib = ['Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss016Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss016Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss016Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss016Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss016Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss016Shift20',
+# ]
 
-# model_lib = ['Base_K7_T50_D8_N64_L3_E200_B64_S50_AnchorGap_GloWReg_AvgBottleDenseLBuff'] # every other time sasmple
-# model_lib = ['Base_K7_T50_D8_N64_L3_E200_B64_S50_AnchorGap_GloWReg_AvgBottleDenseL1'] # every other time sasmple
-# model_lib = ['Base_K7_T50_D8_N64_L3_E200_B64_S50_FocalSmooth_GloWReg_AvgBottleDenseLBuff'] # every other time sasmple
-# model_lib = ['Average_K7_T50_D8_N64_L3_E200_B64_S50_FocalSmoothTV_GloWReg_AvgBottleDenseLBuff'] # every other time sasmple
-# model_lib = ['Average_K7_T50_D8_N64_L3_E200_B16_S50_FocalSmoothTV_GloWReg_AvgBottleDenseLBuff'] # every other time sasmple
-# model_lib = ['Average_K24_T50_D2_N64_L3_E200_B32_S50_FocalSmooth_GloWReg_AvgBottleDenseLBuff'] # every other time sasmple
-# model_lib = ['Average_K24_T50_D2_N64_L3_E200_B32_S50_FocalSmoothTV_GloWReg_AvgBottleDenseLBuff'] # every other time sasmple
+# model_lib = ['Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori05Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori10Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori20Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori05Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori10Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori20Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori05Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori10Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori20Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori05Loss016Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori10Loss016Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedHori20Loss016Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori05Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori10Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori20Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori05Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori10Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori20Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori05Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori10Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori20Loss014Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori05Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori10Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori20Loss014Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori05Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori10Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori20Loss016Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori05Loss016Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori10Loss016Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_NotMaskedDori20Loss016Shift20',
+# ]
 
-# model_lib = ['Average_K4_T50_D3_N64_L3_E200_B64_S50_Focal_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L3_E200_B64_S50_FocalGap_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L3_E200_B64_S50_FocalSmooth_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_Focal_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_FocalGap_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_FocalSmooth_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L3_E200_B32_S50_Hinge_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_Hinge_GloWReg_BottleDense']
-# model_lib = ['Average_K4_T50_D3_N64_L3_E200_B32_S50_Tversky07_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_Tversky07_GloWReg_BottleDense']
-# model_lib = ['Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowGap_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorWiderGap_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowGap_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorWiderGap_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowSmoothGap_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_AnchorNarrowSmoothGap_GloWReg_BottleDense'
+# model_lib = ['Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss012Shift00',
 #              ]
+# model_lib = ['Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss012Shift00', # mistake
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss012Shift20',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss012Shift20',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss012Shift00', # missing
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDori20Loss012Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedDori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedDori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedDori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedDori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedDori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWRegRelu_MMaskedDori20Loss012Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedDori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedDori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedDori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedDori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedDori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx100_GloWReg_MMaskedDori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedDori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedDori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedDori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedDori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedDori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalAx025Gx200_GloWReg_MMaskedDori20Loss012Shift20',
+# ]
 
-# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B32_S50_Focal_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalGap_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_Focal_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGap_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGap_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGap_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGap_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGap_GloWReg_BottleDense',
-#              ]
-# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalTVFix_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTVFix_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalTVFix_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTVFix_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTVFix_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTVFix_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTVFix_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTVFix_GloWReg_BottleDense',
-#              ]
-# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalTV_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTV_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalTV_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTV_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTV_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTV_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTV_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTV_GloWReg_BottleDense',
-#              ]
-# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalTV3_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTV3_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalTV3_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGapTV3_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTV3_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTV3_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGapTV3_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGapTV3_GloWReg_BottleDense',
-#              ]
-# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B32_S50_Focal_GloWReg_BottleDenseELU',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_FocalGap_GloWReg_BottleDenseELU',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_Focal_GloWReg_BottleDenseELU',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_FocalGap_GloWReg_BottleDenseELU',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGap_GloWReg_BottleDenseELU',
-#              'Average_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGap_GloWReg_BottleDenseELU',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorNarrowGap_GloWReg_BottleDenseELU',
-#              'Base_K4_T50_D3_N64_L4_E200_B32_S50_AnchorWiderGap_GloWReg_BottleDenseELU',
-#              ]
-# model_lib = ['Average_K4_T50_D3_N64_L4_E200_B64_S50_FocalMargin_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_FocalGapMargin_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_FocalMargin_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_FocalGapMargin_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_AnchorNarrowGapMargin_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_AnchorWiderGapMargin_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_AnchorNarrowGapMargin_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_AnchorWiderGapMargin_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_FocalMargin_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_FocalGapMarginTV_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_FocalMarginTV_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_FocalGapMarginTV_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_AnchorNarrowGapMarginTV_GloWReg_BottleDense',
-#              'Average_K4_T50_D3_N64_L4_E200_B64_S50_AnchorWiderGapMarginTV_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_AnchorNarrowGapMarginTV_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L4_E200_B64_S50_AnchorWiderGapMarginTV_GloWReg_BottleDense',
-#              ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori20Loss012Shift20',
+# ]
 
-# model_lib = ['Base_K4_T50_D3_N64_L3_E200_B64_S50_FocalGapMarginTV25_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapMarginTV25_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N64_L3_E200_B64_S25_FocalGapMarginTV25_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapMarginTV25_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N256_L3_E200_B32_S50_FocalGapMarginTV25_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV25_GloWReg_BottleDense']
-#              'Base_K4_T50_D3_N64_L3_E200_B64_S50_FocalGapMarginTV25Drop05_GloWReg_BottleDense']
-        
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDDori20Loss012Shift20',
+# ]
 
-# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV14_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV14_GloWReg_BottleDenseDrop05',
-#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDenseDrop05',
-#              'Average_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV14_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDenseDrop05',
-#              'Average_K4_T50_D3_N32_L3_E200_B64_S50_FocalGapMarginTV14_GloWReg_Bottle',
-#              ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDCori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDCori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDCori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDCori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDCori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedCSDCori20Loss012Shift20',
+# ]
 
-# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV14_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapMarginTV14_GloWReg_BottleDenseDrop05',
-#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDenseDrop05',
-#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_AnchorNarrowGapMarginTV14_GloWReg_BottleDenseDrop05',
-#              ]
-# model_lib = ['Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalGapSmoothMarginTV15_GloWReg_BottleDense',
-#              'Base_K4_T50_D3_N32_L3_E300_B32_S50_AnchorNarrowGapSmoothMarginTV15_GloWReg_BottleDense',
-#              'Base_K9_T50_D2_N32_L3_E300_B32_S50_FocalGapSmoothMarginTV15_GloWReg_BottleDense',
-#              'Base_K9_T50_D2_N32_L3_E300_B32_S50_AnchorNarrowGapSmoothMarginTV15_GloWReg_BottleDense',
-#              ]
-# model_lib = ['Base_K9_T50_D2_N32_L3_E200_B64_S50_FocalGapSmoothMarginL215_GloWReg_BottleDense',
-#              'Base_K9_T50_D2_N32_L3_E200_B64_S50_AnchorNarrowGapSmoothMarginL215_GloWReg_BottleDense',
-#              ]
-model_lib = ['Base_K9_T50_D2_N32_L3_E200_B64_S50_FocalGapSmoothMarginL215_GloWReg_BottleDenseShift',
-             'Base_K9_T50_D2_N32_L3_E200_B64_S50_AnchorNarrowGapSmoothMarginL215_GloWReg_BottleDenseShift',
-             ]
-# Average_K3_T50_D16_N128_B32_L3_E200_S100_AnchorGap20_GloWReg_AvgBottleDense
-# Average_K13_T50_D4_N32_B32_L3_E200_S100_AnchorGap20_GloWReg_AvgBottleDense
-# Average_K13_T50_D4_N32_B32_L3_E200_S25_AnchorGap20_GloWReg_AvgBottleDense
-# Average_K13_T50_D4_N32_B32_L3_E200_S25_FocalGap_GloWReg_AvgBottleDense
-# Average_K13_T50_D4_N32_B32_L4_E200_S25_FocalGap_GloWReg_AvgBottleDense
-# Average_K7_T50_D8_N32_B32_L3_E200_S100_FocalGap_GloWReg_AvgBottleDense
-# Average_K13_T50_D4_N32_B32_L3_E200_S100_FocalGap_GloWReg_AvgBottleDense
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDualDori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDualDori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDualDori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDualDori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDualDori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedDualDori20Loss012Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori20Loss012Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedConfidenceHori20Loss012Shift20',
+# ]
 
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S10_AnchorGap_WReg_AvgBottleDStride'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S10_AnchorGap_L1Reg_HeInitELU_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S10_AnchorGap_L1Reg_HeInit_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S10_AnchorGap_L1Reg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N16_B512_L3_E200_S10_AnchorGap_WReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N16_B64_L3_E200_S10_AnchorGap_WReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S10_AnchorGap_WReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S5_AnchorGap_WReg_AvgBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N64_B64_L3_E200_S5_AnchorGap_WReg_DenseBottle'] # every other time sasmple
-# model_lib = ['Average_K3_T36_D16_N64_B128_L2_E200_S5_AnchorGap_NoReg_DenseBottle'] # every other time sasmple
-# model_lib = ['Average_K3_T36_D16_N64_B128_L2_E200_S5_FocalGap_NoReg_DenseBottle'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N16_B128_L2_E200_S5_FocalGap_WRegDense'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N16_B128_L2_E200_S5_AnchorGap_WRegDense'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N32_B64_L2_E200_S5_AnchorGap_WReg'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N32_B128_L2_E200_S2_AnchorGap_WReg'] # every other time sasmple
-# model_lib = ['Average_K4_T50_D16_N32_B64_L3_E200_S2_AnchorGap_WReg'] # every other time sasmple
-# model_lib = ['Base_K7_T100_D16_N32_B64_L2_E200_S4_AnchorGap_WReg'] # every other time sasmple
-# model_lib = ['Base_K4_T50_D16_N32_B256_L2_E200_AnchorGap_WReg'] # every other time sasmple
-# model_lib = ['Base_K4_T50_D16_N32_B256_L3_E200_AnchorGap_WReg'] # every other time sasmple
-# model_lib = ['Base_K4_T50_D16_N32_B256_L4_E200_AnchorGap_WReg'] # every other time sasmple
-# model_lib = ['Base_K4_T50_D16_N32_B64_L2_E200_AnchorGap_WReg'] # every other time sasmple
-# model_lib = ['Base_K4_T50_D16_N32_B64_L3_E200_AnchorGap_WReg'] # every other time sasmple
-# model_lib = ['Base_K4_T50_D16_N32_B64_L4_E200_AnchorGap_WReg'] # every other time sasmple
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori20Loss012Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedSelfPosAttHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori20Loss012Shift20',             
+# ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori20Loss012Shift20',             
+# ]
+# model_lib = ['Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedSelfPosAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedSelfPosAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedSelfPosAttHori05Loss012Shift10',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedSelfPosAttHori10Loss012Shift10',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift10',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori05Loss012Shift10',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori10Loss012Shift10',
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift10',   
+# ]
+# model_lib = ['Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedAugDrop10SelfPosAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedAugDrop10SelfPosAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedAugDrop10SelfPosAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedAugDrop10SelfPosAttHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedAugDrop10SelfPosAttHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedAugDrop10SelfPosAttHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift20',   
+# ]
 
+
+# model_lib = ['Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnset_GloWReg_MMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori20Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori05Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori10Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori20Loss012Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori05Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori10Loss012Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori20Loss012Shift20',
+# ]
+# model_lib = ['Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL2Reg_GloWReg_MMaskedHori05Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL2Reg_GloWReg_MMaskedHori10Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL2Reg_GloWReg_MMaskedHori20Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL2Reg_GloWReg_MMaskedHori05Loss014Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL2Reg_GloWReg_MMaskedHori10Loss014Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL2Reg_GloWReg_MMaskedHori20Loss014Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori05Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori10Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori20Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori05Loss014Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori10Loss014Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori20Loss014Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori05Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori10Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori20Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori05Loss014Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori10Loss014Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori20Loss014Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori05Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori10Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori20Loss014Shift00',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori05Loss014Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori10Loss014Shift20',
+#              'Base_K4_T50_D3_N32_L4_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori20Loss014Shift20',
+# ]
+# model_lib = [ 'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L2Reg_GloWReg_MMaskedHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori05Loss01]Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori10Loss01]Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori20Loss01]Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori05Loss01]Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori10Loss01]Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedHori20Loss01]Shift20',
+# # ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedZNormHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedZNormHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedZNormHori20Loss011Shift20']
+
+############## new runs #############
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormHori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormHori20Loss011Shift20',
+            # 'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori01Loss011Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori05Loss011Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori10Loss011Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori20Loss011Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori01Loss011Shift20',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori05Loss011Shift20',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori10Loss011Shift20',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori20Loss011Shift20', 
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormCori01Loss011Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormCori05Loss011Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormCori10Loss011Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormCori20Loss011Shift00',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormCori01Loss011Shift20',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormCori05Loss011Shift20',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormCori10Loss011Shift20',
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormCori20Loss011Shift20']
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormHori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormCori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormCori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormCori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormCori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormCori20Loss011Shift20']
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormHori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormCori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormCori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormCori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormCori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormCori20Loss011Shift20']
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormHori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormCori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormCori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormCori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormCori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormCori20Loss011Shift20']
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormHori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormCori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormCori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormCori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormCori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormCori20Loss011Shift20']
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormHori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormCori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormCori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormCori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormCori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormCori20Loss011Shift20']
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUHori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUDori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUDori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUDori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUDori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUCori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUCori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUCori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUCori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedGELUCori20Loss011Shift20',
+# ]
+
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormHori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormCori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormCori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormCori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormCori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormCori20Loss011Shift20']
+
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormHori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormCori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormCori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormCori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormCori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormCori20Loss011Shift20']
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormHori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormDori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormDori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormDori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormDori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormCori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormCori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormCori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormCori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormCori20Loss011Shift20']
+
+model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori01Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori05Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori10Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori20Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori01Loss011Shift20',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori05Loss011Shift20',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori10Loss011Shift20',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori20Loss011Shift20',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori01Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori05Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori10Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori20Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori01Loss011Shift20',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori05Loss011Shift20',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori10Loss011Shift20',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori20Loss011Shift20', 
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori01Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori05Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori10Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori20Loss011Shift00',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori01Loss011Shift20',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori05Loss011Shift20',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori10Loss011Shift20',
+             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori20Loss011Shift20']
+ijob = -1
 for model_name in model_lib:
     exp_dir = 'experiments/' + model_name
     pr = exp_dir + '/model/'
@@ -227,9 +766,20 @@ for model_name in model_lib:
         shutil.copytree('model', exp_dir +'/model')
         shutil.copyfile('./pred.py', exp_dir +'/pred.py')
         time.sleep(0.1)
-    subprocess.call(['sbatch', 'gpu_batch_107.sh', model_name])
-    # if ijob < 3:
-    #     subprocess.call(['sbatch', 'gpu_batch_power_GPUshort.sh', model_name])
+    ijob += 1
+    # subprocess.call(['sbatch', 'gpu_batch_107test.sh', model_name])
+    # subprocess.call(['sbatch', 'gpu_batch_107short.sh', model_name])
+    subprocess.call(['sbatch', 'gpu_batch_107long.sh', model_name])
+    # if ijob % 10 < 5:
+    #     # subprocess.call(['sbatch', 'gpu_batch_107test.sh', model_name])
+    # # elif ijob % 10 < 6:
+    # # #     print('short', ijob)
+    #     # subprocess.call(['sbatch', 'gpu_batch_power_GPUshort.sh', model_name])
+    #     subprocess.call(['sbatch', 'gpu_batch_107short.sh', model_name])
+    #     # subprocess.call(['sbatch', 'gpu_batch_107long.sh', model_name])
     # else:
-    #     subprocess.call(['sbatch', 'gpu_batch_gpu.sh', model_name])
-        
+    #     print('long', ijob)
+    #     # subprocess.call(['sbatch', 'gpu_batch_gpu.sh', model_name])
+    #     # subprocess.call(['sbatch', 'gpu_batch_107short.sh', model_name])
+    #     subprocess.call(['sbatch', 'gpu_batch_107long.sh', model_name])
+
