@@ -114,6 +114,7 @@ def build_DBI_TCN(input_timepoints, input_chans=8, params=None):
                     use_weight_norm=use_weight_norm,
                     go_backwards=False,
                     return_state=False)(inputs)
+        pdb.set_trace()
         # Slice & Out
         nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
         nets = Dense(1, activation='sigmoid', kernel_initializer=this_kernel_initializer)(nets)

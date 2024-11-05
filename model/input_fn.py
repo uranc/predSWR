@@ -184,10 +184,26 @@ def rippleAI_load_dataset(params, mode='train'):
     return train_dataset, test_dataset, label_ratio#, val_dataset
 
 
-def load_allen(indeces= np.int32(np.linspace(49,62,8))):
-    loaded_data_raw = np.load('/cs/projects/OWVinckSWR/Carmen/LFP_extracted/sanity_check/raw_lfp_fc.npy')
+def load_allen(indeces = np.int32(np.linspace(33,40,8))):
+    #before we were using indeces= np.int32(np.linspace(49,62,8)), peak is found at 37
+    loaded_data_raw = np.load('/cs/projects/OWVinckSWR/DL/predSWR/allen_dataset/LFP_sanity_check/raw_lfp_fc.npy')
     indeces[::-1].sort()
     LFP = loaded_data_raw[:,indeces]
+    # Process LFP
+    data = process_LFP(LFP, sf = 1250, channels=np.arange(0,8))
+    return data
+
+def load_bruce(probe = 'probe1'):
+    if probe == 'probe1':
+        loaded_data_raw = np.load('/cs/projects/OWVinckSWR/DL/predSWR/bruce_dataset/LFP_sanity_check/LFP_Bruce_Probe1.npy')
+        # we know peak channel is 28
+        indeces = np.int32(np.linspace(24,31,8))
+        LFP = loaded_data_raw[:,indeces]
+    elif probe == 'probe2':
+        loaded_data_raw = np.load('/cs/projects/OWVinckSWR/DL/predSWR/bruce_dataset/LFP_sanity_check/LFP_Bruce_Probe1.npy')
+        # we know peak channel is 35
+        indeces = np.int32(np.linspace(31,38,8))
+        LFP = loaded_data_raw[:,indeces]
     # Process LFP
     data = process_LFP(LFP, sf = 1250, channels=np.arange(0,8))
     return data
