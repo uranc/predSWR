@@ -15,6 +15,7 @@ from scipy.stats import pearsonr
 from scipy.io import loadmat
 
 
+# tf.config.run_functions_eagerly(True)
 parser = argparse.ArgumentParser(
     description='Example 3 - Local and Parallel Execution.')
 # parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
@@ -56,6 +57,8 @@ if mode == 'train':
     print(params['NO_FILTERS'])
     assert(param_lib[5][0]=='L')
     params['LEARNING_RATE'] = (1e-1)**int(param_lib[5][1:])
+    # if params['LEARNING_RATE'] < 1e-3:
+    #     params['LEARNING_RATE'] *= 5 # 5e-4 hack        
     print(params['LEARNING_RATE'])
     assert(param_lib[6][0]=='E')
     params['NO_EPOCHS'] = int(param_lib[6][1:])
@@ -73,15 +76,48 @@ if mode == 'train':
     params['TYPE_ARCH'] = param_lib[11]
     print(params['TYPE_ARCH'])
 
-    from model.model_fn import build_DBI_TCN
+    if model_name.find('Hori') != -1:
+        from model.model_fn import build_DBI_TCN_Horizon as build_DBI_TCN
+        from model.input_augment import rippleAI_load_dataset
+    elif model_name.find('Dori') != -1:
+        from model.model_fn import build_DBI_TCN_Dorizon as build_DBI_TCN
+        from model.input_augment import rippleAI_load_dataset
+    elif model_name.find('Cori') != -1:
+        from model.model_fn import build_DBI_TCN_Corizon as build_DBI_TCN
+        from model.input_augment import rippleAI_load_dataset
+    elif model_name.find('CSD') != -1:
+        from model.model_fn import build_DBI_TCN_CSD as build_DBI_TCN
+        from model.input_aug import rippleAI_load_dataset
+    else:
+        from model.model_fn import build_DBI_TCN
+        from model.input_aug import rippleAI_load_dataset
+
     # pdb.set_trace()
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
 
     # input
-    from model.input_fn import rippleAI_load_dataset
+    # from model.input_fn import rippleAI_load_dataset
+    # from model.input_aug import rippleAI_load_dataset
+    # from model.input_augment import rippleAI_load_dataset
+
     train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params)
     train_size = len(list(train_dataset))
+
+    # pdb.set_trace()
+
+    # # Example usage with batch-shaped data
+    # batch_size = 32
+    # n_timepoints = 600  # For a 20 ms window at 30kHz sampling
+    # n_channels = 8
+    # synthetic_data_batch = np.random.randn(batch_size, n_timepoints, n_channels)  # Simulate some batch data
+    # event_indices = [np.random.choice(n_timepoints, size=50, replace=False) for _ in range(batch_size)]  # Example event locations
+    # params = {'TYPE_LOSS': 'GapWithDynamicMask'}
+
+    # # Augment data and prepare batch
+    # augmented_data_batch, updated_weights_batch = augment_data(synthetic_data_batch, event_indices=event_indices, params=params)
+    # print("Augmented data shape:", augmented_data_batch.shape)
+    # pdb.set_trace()
 
     params['RIPPLE_RATIO'] = label_ratio
 
@@ -95,6 +131,13 @@ if mode == 'train':
     #     print(aa[1].shape)
     #     n+=1
     #     print(n)
+    # tmp = next(iter(train_dataset))
+    # print(tmp[0].shape)
+    # print(tmp[1][0].shape)
+    # print(tmp[1][1].shape)
+    # out = model.predict(tmp[0])
+    # print(out[0].shape)
+    # print(out[1].shape)
     # pdb.set_trace()
     hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
 elif mode == 'predict':
@@ -148,6 +191,7 @@ elif mode == 'predict':
         # get model parameters
         print(model_name)
         param_lib = model_name.split('_')
+        # pdb.set_trace()
         assert(len(param_lib)==12)
         params['TYPE_MODEL'] = param_lib[0]
         print(params['TYPE_MODEL'])
@@ -183,32 +227,54 @@ elif mode == 'predict':
         print(params['TYPE_ARCH'])
 
         # get model
-        # a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
-        # build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
-        from model.model_fn import build_DBI_TCN
+        a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        # if model.find('CSD') != -1:
+        #     build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
+        if model.find('Hori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon')
+        elif model.find('Dori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Dorizon')
+        elif model.find('Cori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Corizon')
+        else:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+        # pdb.set_trace()
+        # # from model.model_fn import build_DBI_TCN
+        # # from model.model_fn import build_DBI_TCN
+        # # from model.model_fn import build_DBI_TCN_CSD as build_DBI_TCN
+
 
         params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+        # params['WEIGHT_FILE'] = ''
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+        # from keras.utils import custom_object_scope
+        # from model.model_fn import CSDLayer
+        # from tcn import TCN
+        # from keras.models import load_model
+        # with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+        #     model = load_model(params['WEIGHT_FILE'])
     model.summary()
 
     params['BATCH_SIZE'] = 512*8
-    from model.input_fn import rippleAI_load_dataset
+    from model.input_aug import rippleAI_load_dataset
+    # from model.input_fn import rippleAI_load_dataset
 
     preproc = False if model_name=='RippleNet' else True
     val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
-    
+
     for j, labels in enumerate(val_labels):
         np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/labels_val{0}.npy'.format(j), labels)
-    
-    pdb.set_trace()
+
+    # pdb.set_trace()
     for j, signals in enumerate(val_datasets):
         np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/signals_val{0}.npy'.format(j), signals)
-        
-    pdb.set_trace()
+
+    # pdb.set_trace()
     from model.cnn_ripple_utils import get_predictions_index, get_performance
 
     # get predictions
     val_pred = []
+    val_hori = []
     th_arr=np.linspace(0.1,0.9,19)
     n_channels = params['NO_CHANNELS']
     timesteps = params['NO_TIMEPOINTS']
@@ -240,7 +306,17 @@ elif mode == 'predict':
             train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
             windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
             # pdb.set_trace()
-            probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(),windowed_signal))
+            if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
+                probs = np.hstack((windowed_signal[0,:-1,-1], windowed_signal[:, -1,-1]))
+                # pdb.set_trace()
+                horizon = np.vstack((windowed_signal[0,:-1,:-1], windowed_signal[:, -1,:-1]))
+                val_hori.append(horizon)
+            elif model_name.find('Base_') != -1:
+                probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
+            else:
+                probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
+            # probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(),windowed_signal))
+            # probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
             # probs = np.hstack((np.zeros((params['NO_TIMEPOINTS'], 1)).flatten(),windowed_signal[0,:-1], windowed_signal[:, -1]))
         val_pred.append(probs)
 
@@ -285,6 +361,8 @@ elif mode == 'predict':
         np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}.npy'.format(j, model_name), pred)
         np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/stats_val{0}_{1}.npy'.format(j, model_name), stats[j,])
         # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/areas_val{0}_{1}.npy'.format(j, model_name), IOU[j])
+        if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1: 
+            np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}.npy'.format(j, model_name), val_hori[j])
 
     # import matplotlib.pyplot as plt
     # for pred in val_labels[0]:
@@ -381,14 +459,19 @@ elif mode == 'predictSynth':
 
             # get model
             a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
-            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+            if model.find('CSD') != -1:
+                build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
+            else:
+                build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+            # from model.model_fn import build_DBI_TCN
+
 
             params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
 
-    synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim_30k.npy')
-    # synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
+    # synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim_30k.npy')
+    synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
     if not (model_name == 'RippleNet'):
         synth = np.tile(synth, (1,8))#*5
     else:
@@ -405,7 +488,7 @@ elif mode == 'predictSynth':
     sample_length = params['NO_TIMEPOINTS']*2
     train_x = timeseries_dataset_from_array(synth, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
     probs = np.squeeze(model.predict(train_x))
-    probs = np.hstack((probs[0,:-1], probs[:, -1]))
+    # probs = np.hstack((probs[0,:-1], probs[:, -1]))
 
     def moving_average(x, w):
         return np.convolve(x, np.ones(w), 'valid') / w
@@ -413,11 +496,12 @@ elif mode == 'predictSynth':
 
     from scipy.signal import decimate
     import matplotlib.pyplot as plt
-    # synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
-    synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim_30k.npy')
+    synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim.npy')
+    # synth = np.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/synth_stim_30k.npy')
     synth = (synth-np.min(synth))/(np.max(synth)-np.min(synth))
-    synth = synth[600:,:]
+    # synth = synth[600:,:]
     # synth = synth[50+9*1250:-1250*12,:]
+    synth = synth[50:,:]
     tt = np.arange(synth.shape[0])/samp_freq
     plt.plot(tt, synth[:, 0])
     tt = np.arange(probs.shape[0])/samp_freq
@@ -519,11 +603,11 @@ elif mode == 'predictPlot':
             params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
-    
+
     # get inputs
     # a_input = importlib.import_module('experiments.{0}.model.input_fn'.format(model_name))
     # rippleAI_load_dataset = getattr(a_input, 'rippleAI_load_dataset')
-    
+
     from model.input_fn import rippleAI_load_dataset
     val_datasets, val_labels = rippleAI_load_dataset(params, mode='test')
 
@@ -571,7 +655,7 @@ elif mode == 'predictPlot':
 
         # for lab in val_labels[0]:
         #     label_vec[int(lab[0]*1250):int(lab[1]*1250)] = 0.9
-        
+
         stats = np.stack((precision, recall, F1_val, TP, FN, IOU), axis=-1)
 
         for j,pred in enumerate(val_pred):
@@ -598,7 +682,7 @@ elif mode=='export':
 
     # necessary !!!
     # tf.compat.v1.disable_eager_execution()
-    
+
     if model_name == 'RippleNet':
         import sys, pickle, keras, h5py
         sys.path.insert(0, '/cs/projects/OWVinckSWR/DL/RippleNet/')
@@ -715,7 +799,7 @@ elif mode=='export':
     #     output_names=['flatten/Reshape'],
     #     image_value_range=[-117, 138],  # 114.799
     # )
-    
+
     # from tensorflow import keras
 
     # from tensorflow.compat.v1 import graph_util
@@ -757,7 +841,7 @@ elif mode=='export':
     #     return graph_def
 
     # graph_def = frozen_keras_graph(model)
-    
+
     # # frozen_func.graph.as_graph_def()
     # tf.io.write_graph(graph_def, './frozen_models', 'simple_frozen_graph.pb')
     # from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2

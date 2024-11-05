@@ -271,8 +271,8 @@ def downsample_data(data, sf, downsampled_fs):
     # Change from int16 to float16 if necessary
     # int16 ranges from -32,768 to 32,767
     # float16 has ±65,504, with precision up to 0.0000000596046
-    if downsampled_data.dtype != 'float16':
-        downsampled_data = np.array(downsampled_data, dtype="float16")
+    if downsampled_data.dtype != 'float32':
+        downsampled_data = np.array(downsampled_data, dtype="float32")
 
     return downsampled_data
 
@@ -291,7 +291,7 @@ def z_score_normalization(data):
         m = np.mean(data[:, channel] / dmax, dtype='float64') * dmax
         s = np.std(data[:, channel] / dmax, dtype='float64') * dmax
         s = 1 if s == 0 else s # If std == 0, change it to 1, so data-mean = 0
-        data[:, channel] = ((data[:, channel] - m) / s).astype('float16')
+        data[:, channel] = ((data[:, channel] - m) / s).astype('float32')
 
     return data
 
@@ -353,7 +353,7 @@ def process_LFP(LFP,sf,channels,use_zscore=True):
     A Rubio, LCN 2023
     '''
     # pdb.set_trace()
-    normalized_data = LFP
+    # normalized_data = LFP
     data=interpolate_channels(LFP,channels)
     if sf!=1250:
         print('Downsampling data at 1250 Hz...')
