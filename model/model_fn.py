@@ -633,6 +633,7 @@ def build_DBI_TCN_Horizon(input_timepoints, input_chans=8, params=None):
     else:
         r_drop = 0.0
 
+    hori_shift = 0  # Default value
     if params['TYPE_ARCH'].find('Hori')>-1:
         print('Using Horizon Timesteps:')
         hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Hori')+4:params['TYPE_ARCH'].find('Hori')+6])/1000*1250)
@@ -847,7 +848,7 @@ def build_DBI_TCN_Horizon(input_timepoints, input_chans=8, params=None):
             # mse_loss = tf.reduce_mean(y_true_exp[:,horizon:,:]*tf.square(prediction_targets-prediction_out)) # multiply by labels
 
             print('rec_weights')
-            rec_weights = y_true_exp[:,horizon:,:]+0.0001
+            rec_weights = y_true_exp[:,horizon:,:] + tf.keras.backend.epsilon()
             mse_loss = tf.reduce_mean(rec_weights*tf.square(prediction_targets-prediction_out)) # multiply by labels
             # mse_loss = combined_prediction_loss(prediction_targets, prediction_out, y_true_exp, event_weight=loss_weight)
             total_loss += loss_weight*mse_loss
@@ -1102,7 +1103,7 @@ def build_DBI_TCN_Dorizon(input_timepoints, input_chans=8, params=None):
 
             # mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out)) # multiply by labels
             print('rec_weights')
-            rec_weights = y_true_exp[:,horizon:,:]+0.0001
+            rec_weights = y_true_exp[:,horizon:,:] + tf.keras.backend.epsilon()
             mse_loss = tf.reduce_mean(rec_weights*tf.square(prediction_targets-prediction_out)) # multiply by labels
             # mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out)) # multiply by labels
             # mse_loss = combined_prediction_loss(prediction_targets, prediction_out, y_true_exp, event_weight=loss_weight)
@@ -1356,7 +1357,7 @@ def build_DBI_TCN_Corizon(input_timepoints, input_chans=8, params=None):
 
             # mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out)) # multiply by labels
             print('rec_weights')
-            rec_weights = y_true_exp[:,horizon:,:]+0.0001
+            rec_weights = y_true_exp[:,horizon:,:] + tf.keras.backend.epsilon()
             mse_loss = tf.reduce_mean(rec_weights*tf.square(prediction_targets-prediction_out)) # multiply by labels
             # mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out)) # multiply by labels
             # mse_loss = combined_prediction_loss(prediction_targets, prediction_out, y_true_exp, event_weight=loss_weight)
