@@ -567,24 +567,14 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
     # assert(np.unique(train_labels[np.where(offsets)[0]])==0)
     # assert(np.unique(train_labels[np.where(offsets)[0]]-1)==1)
 
-    if params['TYPE_LOSS'].find('AnchorNarrow')>-1:
-        print('Using AnchorNarrow Weights')
+    if params['TYPE_LOSS'].find('Anchor')>-1:
+        print('Using Anchor Weights')
         weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 3, False))+0.01
-        # weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 5, False))+0.1
-    elif params['TYPE_LOSS'].find('AnchorWide')>-1:
-        print('Using AnchorWide Weights')
-        weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 10, False))+0.5
-    elif params['TYPE_LOSS'].find('AnchorWider')>-1:
-        print('Using AnchorWider Weights')
-        weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 20, False))+0.8
-    elif params['TYPE_LOSS'].find('Focal')>-1:
-        print('Using Focal Weights (Ones)')
-        weights = np.ones(train_labels.shape, dtype=np.float32)
     else:
         print('Using Else (Ones)')
         weights = np.ones(train_labels.shape, dtype=np.float32)
     weights /= np.max(weights)
-    # pdb.set_trace()
+
     # make a gap in the weights
     if params['TYPE_LOSS'].find('Gap')>-1:
         print('Using Gap Before Onset')
@@ -595,9 +585,10 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
     weights = weights[:train_labels.shape[0]]
 
     # pdb.set_trace()
-    assert(np.unique(weights[np.where(onsets)[0]])==1)
-    assert(np.unique(weights[np.where(onsets)[0]]-1)==0)
-
+    if params['TYPE_LOSS'].find('Gap')>-1:
+        assert(np.abs(np.unique(weights[np.where(onsets)[0]])-1)<0.0001)
+        assert(np.unique(weights[np.where(onsets)[0]-1])<0.0001)
+    
     # make batches
     if sample_shift>0:
         train_examples = train_examples[:-sample_shift, :]

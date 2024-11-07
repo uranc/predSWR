@@ -58,7 +58,7 @@ if mode == 'train':
     assert(param_lib[5][0]=='L')
     params['LEARNING_RATE'] = (1e-1)**int(param_lib[5][1:])
     # if params['LEARNING_RATE'] < 1e-3:
-    #     params['LEARNING_RATE'] *= 5 # 5e-4 hack        
+    #     params['LEARNING_RATE'] *= 5 # 5e-4 hack
     print(params['LEARNING_RATE'])
     assert(param_lib[6][0]=='E')
     params['NO_EPOCHS'] = int(param_lib[6][1:])
@@ -88,58 +88,35 @@ if mode == 'train':
     elif model_name.find('CSD') != -1:
         from model.model_fn import build_DBI_TCN_CSD as build_DBI_TCN
         from model.input_aug import rippleAI_load_dataset
+    elif model_name.find('Proto') != -1:
+        # Build model and training function
+        # tf.config.run_functions_eagerly(True)
+        from model.model_fn import build_DBI_TCN_Horizon_Updated
+        model, train_model = build_DBI_TCN_Horizon_Updated(input_timepoints=params['NO_TIMEPOINTS'], input_chans=8, embedding_dim=params['NO_FILTERS'], params=params)
+        from model.input_proto import rippleAI_load_dataset
     else:
         from model.model_fn import build_DBI_TCN
         from model.input_aug import rippleAI_load_dataset
 
-    # pdb.set_trace()
-    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-    model.summary()
+    if model_name.find('Proto') == -1:
+        model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+        model.summary()
 
     # input
-    # from model.input_fn import rippleAI_load_dataset
-    # from model.input_aug import rippleAI_load_dataset
-    # from model.input_augment import rippleAI_load_dataset
-
     train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params)
     train_size = len(list(train_dataset))
-
-    # pdb.set_trace()
-
-    # # Example usage with batch-shaped data
-    # batch_size = 32
-    # n_timepoints = 600  # For a 20 ms window at 30kHz sampling
-    # n_channels = 8
-    # synthetic_data_batch = np.random.randn(batch_size, n_timepoints, n_channels)  # Simulate some batch data
-    # event_indices = [np.random.choice(n_timepoints, size=50, replace=False) for _ in range(batch_size)]  # Example event locations
-    # params = {'TYPE_LOSS': 'GapWithDynamicMask'}
-
-    # # Augment data and prepare batch
-    # augmented_data_batch, updated_weights_batch = augment_data(synthetic_data_batch, event_indices=event_indices, params=params)
-    # print("Augmented data shape:", augmented_data_batch.shape)
-    # pdb.set_trace()
-
     params['RIPPLE_RATIO'] = label_ratio
 
+    # import pdb
+    # pdb.set_trace()
     # train
-    from model.training import train_pred
-
-    # pdb.set_trace()
-    # n=0
-    # for aa in next(iter(train_dataset)):
-    #     print(aa[0].shape)
-    #     print(aa[1].shape)
-    #     n+=1
-    #     print(n)
-    # tmp = next(iter(train_dataset))
-    # print(tmp[0].shape)
-    # print(tmp[1][0].shape)
-    # print(tmp[1][1].shape)
-    # out = model.predict(tmp[0])
-    # print(out[0].shape)
-    # print(out[1].shape)
-    # pdb.set_trace()
-    hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
+    if model_name.find('Proto') != -1:
+        # import pdb
+        # pdb.set_trace()
+        train_model(train_dataset, test_dataset, params=params)
+    else:
+        from model.training import train_pred
+        hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
 elif mode == 'predict':
 
     # modelname
@@ -236,6 +213,22 @@ elif mode == 'predict':
             build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Dorizon')
         elif model.find('Cori') != -1:
             build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Corizon')
+        elif model_name.find('Proto') != -1:
+            from keras.utils import custom_object_scope
+            from model.model_fn import CSDLayer
+            from tcn import TCN
+            from keras.models import load_model
+            # with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_model.h5'
+            print((params['WEIGHT_FILE']))
+            with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+                model = load_model(params['WEIGHT_FILE'])
+            model.summary()
+            # model.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/{0}/'.format(model_name)+'best_model.h5')
+            # import pdb
+            # pdb.set_trace()
+            # build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon_Updated')
+            # model, train_model = build_DBI_TCN_Horizon_Updated(input_timepoints=params['NO_TIMEPOINTS'], input_chans=8, embedding_dim=params['NO_FILTERS'], params=params)
         else:
             build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
         # pdb.set_trace()
@@ -243,10 +236,10 @@ elif mode == 'predict':
         # # from model.model_fn import build_DBI_TCN
         # # from model.model_fn import build_DBI_TCN_CSD as build_DBI_TCN
 
-
-        params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
-        # params['WEIGHT_FILE'] = ''
-        model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+        if model_name.find('Proto') == -1:
+            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+            # params['WEIGHT_FILE'] = ''
+            model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         # from keras.utils import custom_object_scope
         # from model.model_fn import CSDLayer
         # from tcn import TCN
@@ -282,7 +275,6 @@ elif mode == 'predict':
     from keras.utils import timeseries_dataset_from_array
 
     # get predictions
-
     # val_datasets = [val_datasets[2]]
     # val_labels = [val_labels[2]]
     for LFP in val_datasets:
@@ -305,12 +297,12 @@ elif mode == 'predict':
             sample_length = params['NO_TIMEPOINTS']
             train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
             windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
-            # pdb.set_trace()
             if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
                 probs = np.hstack((windowed_signal[0,:-1,-1], windowed_signal[:, -1,-1]))
-                # pdb.set_trace()
                 horizon = np.vstack((windowed_signal[0,:-1,:-1], windowed_signal[:, -1,:-1]))
                 val_hori.append(horizon)
+            elif model_name.find('Proto') != -1:
+                probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
             elif model_name.find('Base_') != -1:
                 probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
             else:
@@ -361,7 +353,7 @@ elif mode == 'predict':
         np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}.npy'.format(j, model_name), pred)
         np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/stats_val{0}_{1}.npy'.format(j, model_name), stats[j,])
         # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/areas_val{0}_{1}.npy'.format(j, model_name), IOU[j])
-        if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1: 
+        if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
             np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}.npy'.format(j, model_name), val_hori[j])
 
     # import matplotlib.pyplot as plt

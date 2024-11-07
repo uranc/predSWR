@@ -348,7 +348,7 @@ import numpy as np
 #              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori20Loss012Shift00',
 #              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori05Loss012Shift20',
 #              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori10Loss012Shift20',
-#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori20Loss012Shift20',             
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloWReg_MMaskedLayerAttHori20Loss012Shift20',
 # ]
 # model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori05Loss012Shift00',
 #              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedSelfPosAttHori10Loss012Shift00',
@@ -373,7 +373,7 @@ import numpy as np
 #              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori20Loss012Shift00',
 #              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori05Loss012Shift20',
 #              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori10Loss012Shift20',
-#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori20Loss012Shift20',             
+#              'Base_K4_T50_D3_N64_L3_E200_B32_S50_FocalGapAx025Gx200_GloBN_MMaskedLayerAttHori20Loss012Shift20',
 # ]
 # model_lib = ['Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedSelfPosAttHori05Loss012Shift00',
 #              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200L1Reg_GloWReg_MMaskedSelfPosAttHori10Loss012Shift00',
@@ -386,7 +386,7 @@ import numpy as np
 #              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift00',
 #              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori05Loss012Shift10',
 #              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori10Loss012Shift10',
-#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift10',   
+#              'Base_K4_T50_D3_N128_L3_E200_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift10',
 # ]
 # model_lib = ['Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedAugDrop10SelfPosAttHori05Loss012Shift00',
 #              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedAugDrop10SelfPosAttHori10Loss012Shift00',
@@ -399,7 +399,7 @@ import numpy as np
 #              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift00',
 #              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori05Loss012Shift20',
 #              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori10Loss012Shift20',
-#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift20',   
+#              'Base_K4_T50_D3_N128_L4_E400_B32_S50_FocalGapAx025Gx200EarlyOnsetL1Reg_GloWReg_MMaskedSelfPosAttHori20Loss012Shift20',
 # ]
 
 
@@ -495,7 +495,7 @@ import numpy as np
             #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori01Loss011Shift20',
             #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori05Loss011Shift20',
             #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori10Loss011Shift20',
-            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori20Loss011Shift20', 
+            #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormDori20Loss011Shift20',
             #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormCori01Loss011Shift00',
             #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormCori05Loss011Shift00',
             #  'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200_Glo_MMaskedZNormCori10Loss011Shift00',
@@ -520,7 +520,7 @@ import numpy as np
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori01Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori05Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori10Loss011Shift20',
-#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormDori20Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormCori01Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormCori05Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1Reg_Glo_MMaskedZNormCori10Loss011Shift00',
@@ -545,7 +545,7 @@ import numpy as np
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori01Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori05Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori10Loss011Shift20',
-#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormDori20Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormCori01Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormCori05Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMargin_Glo_MMaskedZNormCori10Loss011Shift00',
@@ -570,7 +570,7 @@ import numpy as np
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori01Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori05Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori10Loss011Shift20',
-#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormDori20Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormCori01Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormCori05Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedZNormCori10Loss011Shift00',
@@ -595,7 +595,7 @@ import numpy as np
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori01Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori05Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori10Loss011Shift20',
-#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormDori20Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormCori01Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormCori05Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_Glo_MMaskedAugZNormCori10Loss011Shift00',
@@ -620,7 +620,7 @@ import numpy as np
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori01Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori05Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori10Loss011Shift20',
-#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormDori20Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormCori01Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormCori05Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200L1RegMarginTMSE_GloWReg_MMaskedAugZNormCori10Loss011Shift00',
@@ -672,7 +672,7 @@ import numpy as np
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori01Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori05Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori10Loss011Shift20',
-#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormDori20Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormCori01Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormCori05Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200MarginTMSE_GloWReg_MMaskedAugZNormCori10Loss011Shift00',
@@ -698,7 +698,7 @@ import numpy as np
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori01Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori05Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori10Loss011Shift20',
-#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori20Loss011Shift20', 
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormDori20Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormCori01Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormCori05Loss011Shift00',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedAugZNormCori10Loss011Shift00',
@@ -733,30 +733,127 @@ import numpy as np
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormCori10Loss011Shift20',
 #              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedZNormCori20Loss011Shift20']
 
-model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori01Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori05Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori10Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori20Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori01Loss011Shift20',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori05Loss011Shift20',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori10Loss011Shift20',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori20Loss011Shift20',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori01Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori05Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori10Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori20Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori01Loss011Shift20',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori05Loss011Shift20',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori10Loss011Shift20',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori20Loss011Shift20', 
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori01Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori05Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori10Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori20Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori01Loss011Shift20',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori05Loss011Shift20',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori10Loss011Shift20',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori20Loss011Shift20']
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori20Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori01Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori05Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori10Loss011Shift20',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori20Loss011Shift20']
+
+# model_lib = ['Base_K4_T50_D3_N128_L3_E400_B32_S50_Proto_GloWReg_MMaskedShift00']
+# model_lib = ['Base_K4_T50_D3_N32_L3_E100_B32_S50_Proto_GloWReg_MMaskedShift00']
+# model_lib = ['Base_K4_T50_D3_N32_L3_E500_B32_S50_Proto_GloWReg_MMaskedShift00',
+#              'Base_K4_T50_D3_N32_L2_E500_B32_S50_Proto_GloWReg_MMaskedShift00',
+#              'Base_K4_T50_D3_N128_L3_E500_B32_S50_Proto_GloWReg_MMaskedShift00',
+#              'Base_K4_T50_D3_N128_L2_E500_B32_S50_Proto_GloWReg_MMaskedShift00',
+#              'Base_K4_T50_D3_N64_L3_E500_B32_S50_Proto_GloWReg_MMaskedShift00',
+#              'Base_K4_T50_D3_N64_L2_E500_B32_S50_Proto_GloWReg_MMaskedShift00']
+# model_lib = ['Base_K4_T50_D3_N32_L3_E500_B32_S50_Proto_GloWReg_NMMaskedShift00']
+
+
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto150Focal_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto150FocalGap_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto150FocalAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto150FocalGapAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto051Focal_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto051FocalGap_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto051FocalAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto051FocalGapAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto054Focal_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto054FocalGap_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto054FocalAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto054FocalGapAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto004Focal_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto004FocalGap_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto004FocalAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto004FocalGapAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto150Tversky_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto150TverskyGap_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto150TverskyAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto150TverskyGapAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto051Tversky_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto051TverskyGap_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto051TverskyAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto051TverskyGapAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto054Tversky_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto054TverskyGap_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto054TverskyAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto054TverskyGapAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto004Tversky_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto004TverskyGap_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto004TverskyAnchor_GloWReg_Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_Proto004TverskyGapAnchor_GloWReg_Shift00',
+#              ]
+
+model_lib = ['Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150Focal_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150FocalGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150FocalAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150FocalGapAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054Focal_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054FocalGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054FocalAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054FocalGapAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004Focal_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004FocalGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004FocalAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004FocalGapAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150Tversky_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150TverskyGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150TverskyAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150TverskyGapAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054Tversky_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054TverskyGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054TverskyAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054TverskyGapAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004Tversky_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004TverskyGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004TverskyAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004TverskyGapAnchor_GloWReg_Shift00',
+             ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAx025Gx200TMSE_GloWReg_MMaskedZNormCori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormHori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormHori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormHori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormDori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormDori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormDori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormDori20Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormCori01Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormCori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormCori10Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E200_B32_S50_FocalGapAnchorAx025Gx200TMSE_GloWReg_MMaskedZNormCori20Loss011Shift00',             
+#              ]
+
 ijob = -1
 for model_name in model_lib:
     exp_dir = 'experiments/' + model_name
@@ -767,10 +864,10 @@ for model_name in model_lib:
         shutil.copyfile('./pred.py', exp_dir +'/pred.py')
         time.sleep(0.1)
     ijob += 1
-    # subprocess.call(['sbatch', 'gpu_batch_107test.sh', model_name])
+    subprocess.call(['sbatch', 'gpu_batch_107test.sh', model_name])
     # subprocess.call(['sbatch', 'gpu_batch_107short.sh', model_name])
-    subprocess.call(['sbatch', 'gpu_batch_107long.sh', model_name])
-    # if ijob % 10 < 5:
+    # subprocess.call(['sbatch', 'gpu_batch_107long.sh', model_name])
+    # if ijob % 10 < 4:
     #     # subprocess.call(['sbatch', 'gpu_batch_107test.sh', model_name])
     # # elif ijob % 10 < 6:
     # # #     print('short', ijob)
@@ -779,7 +876,8 @@ for model_name in model_lib:
     #     # subprocess.call(['sbatch', 'gpu_batch_107long.sh', model_name])
     # else:
     #     print('long', ijob)
+    #     subprocess.call(['sbatch', 'gpu_batch_107test.sh', model_name])
     #     # subprocess.call(['sbatch', 'gpu_batch_gpu.sh', model_name])
-    #     # subprocess.call(['sbatch', 'gpu_batch_107short.sh', model_name])
-    #     subprocess.call(['sbatch', 'gpu_batch_107long.sh', model_name])
+        # subprocess.call(['sbatch', 'gpu_batch_107short.sh', model_name])
+        # subprocess.call(['sbatch', 'gpu_batch_107long.sh', model_name])
 
