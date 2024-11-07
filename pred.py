@@ -76,18 +76,15 @@ if mode == 'train':
     params['TYPE_ARCH'] = param_lib[11]
     print(params['TYPE_ARCH'])
 
-    if model_name.find('Hori') != -1:
+    if model_name.find('Hori') != -1: # predict horizon, pred lfp 
         from model.model_fn import build_DBI_TCN_Horizon as build_DBI_TCN
         from model.input_augment import rippleAI_load_dataset
-    elif model_name.find('Dori') != -1:
+    elif model_name.find('Dori') != -1: # predict horizon dual loss, pred lfp and lfp (2 classification)
         from model.model_fn import build_DBI_TCN_Dorizon as build_DBI_TCN
         from model.input_augment import rippleAI_load_dataset
-    elif model_name.find('Cori') != -1:
+    elif model_name.find('Cori') != -1: # predict lfp, csd and lfp
         from model.model_fn import build_DBI_TCN_Corizon as build_DBI_TCN
         from model.input_augment import rippleAI_load_dataset
-    elif model_name.find('CSD') != -1:
-        from model.model_fn import build_DBI_TCN_CSD as build_DBI_TCN
-        from model.input_aug import rippleAI_load_dataset
     else:
         from model.model_fn import build_DBI_TCN
         from model.input_aug import rippleAI_load_dataset

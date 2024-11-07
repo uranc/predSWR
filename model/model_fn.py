@@ -1378,7 +1378,263 @@ def build_DBI_TCN_Corizon(input_timepoints, input_chans=8, params=None):
     return model
 
 
+def build_DBI_multi_TCN_Horizon(input_timepoints, input_chans=8, params=None):
 
+    # params
+    use_batch_norm = params['TYPE_REG'].find('BN')>-1
+    use_weight_norm = params['TYPE_REG'].find('WReg')>-1
+    use_layer_norm = False
+    use_l1_norm = False
+    # this_activation = 'relu'
+    # this_activation = tf.keras.activations.gelu
+    this_activation = ELU(alpha=1)
+    # this_activation = ELU(alpha=0.1)
+    this_kernel_initializer = 'glorot_uniform'
+    # this_kernel_initializer = 'he_normal'
+    model_type = params['TYPE_MODEL']
+    n_filters = params['NO_FILTERS']
+    n_kernels = params['NO_KERNELS']
+    n_dilations = params['NO_DILATIONS']
+    if params['TYPE_ARCH'].find('Drop')>-1:
+        r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
+        print('Using Dropout')
+        print(r_drop)
+    else:
+        r_drop = 0.0
+
+    if params['TYPE_ARCH'].find('Hori')>-1:
+        print('Using Horizon Timesteps:')
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Hori')+4:params['TYPE_ARCH'].find('Hori')+6])/1000*1250)
+        print(hori_shift)
+
+    if params['TYPE_ARCH'].find('Loss')>-1:
+        print('Using Loss Weight:')
+        loss_weight = (params['TYPE_ARCH'][params['TYPE_ARCH'].find('Loss')+4:params['TYPE_ARCH'].find('Loss')+7])
+        weight = 1 if int(loss_weight[0])==1 else -1
+        loss_weight = float(loss_weight[1])*10**(weight*float(loss_weight[2]))
+        print(loss_weight)
+
+    # load labels
+    # inputs = Input(shape=(None, input_chans), name='inputs')
+    inputs = Input(shape=(100, input_chans), name='inputs')
+
+    if params['TYPE_ARCH'].find('CSD')>-1:
+        csd_inputs = CSDLayer()(inputs)
+        inputs_nets = Concatenate(axis=-1)([inputs, csd_inputs])
+    else:
+        inputs_nets = inputs
+    
+    if params['TYPE_ARCH'].find('ZNorm')>-1:
+        print('Using ZNorm')
+        inputs_nets = Normalization()(inputs_nets)
+
+    # get TCN
+    if model_type=='Base':
+        from tcn import TCN
+        tcn_op = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=(2, 8, 4, 6, 16, 32), 
+                        # dilations=(1, 2, 4, 8, 16), #, 32
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        # activation=this_activation,
+                        # kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=False,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+        print(tcn_op.receptive_field)
+        # nets = tcn_op(inputs)
+
+        # horizon = 13
+        # horizon_targets = Lambda(lambda tt: tt[:, -50:, :], name='Slice_Inputs')(inputs)
+        nets = tcn_op(inputs_nets)
+        # horizon_outputs = Lambda(lambda tt: tt[:, -input_timepoints+horizon:, :], name='Slice_Horizon')(nets)
+        nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+        # pdb.set_trace()
+        # # Smooth Conv
+        # wconv = Conv1D(filters=n_filters/2,
+        #         kernel_size=3,
+        #         dilation_rate=1,
+        #         padding='causal',
+        #         activation=this_activation,
+        #         use_bias = True,
+        #         bias_initializer='zeros',
+        #         name='deconv1_{0}'.format(1),
+        #         kernel_initializer=this_kernel_initializer
+        #         )
+
+        # # Smooth Conv
+        # wconv2 = Conv1D(filters=n_filters/4,
+        #         kernel_size=3,
+        #         dilation_rate=1,
+        #         padding='causal',
+        #         activation=this_activation,
+        #         use_bias = True,
+        #         bias_initializer='zeros',
+        #         name='deconv2_{0}'.format(1),
+        #         kernel_initializer=this_kernel_initializer
+        #         )
+
+        # # Slice & Out
+        # if params['mode'] == 'train':
+        #     nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+        # else:
+        #     nets = Lambda(lambda tt: tt[:, -1:, :], name='Slice_Output')(nets)
+
+        # if use_weight_norm:
+        #     wconv = WeightNormalization(wconv)
+        #     wconv2 = WeightNormalization(wconv2)
+        # nets = wconv(nets)
+        # nets = wconv2(nets)
+
+    # tcn output
+    tcn_output = nets
+
+    # Future prediction head
+    output_dim = 8
+    tmp_pred = Dense(32, activation=this_activation, name='tmp_pred')(tcn_output)  # Output future values
+    prediction_output = Dense(output_dim, activation='linear', name='prediction_output')(tmp_pred)  # Output future values
+
+
+
+    if params['TYPE_ARCH'].find('SelfPosAtt')>-1:
+        print('Using Self Positional Attention')
+        # compute csd of the predicted values as well
+        pred_CSD = CSDLayer()(prediction_output)
+        att_in = Concatenate(axis=-1)([pred_CSD, prediction_output])
+        embed_dim, num_heads, num_channels = 16, 4, 50  # Adjust based on model structure
+        attention_layer = SelfAttentionPositional(embed_dim=embed_dim, num_heads=num_heads, num_channels=num_channels)
+        attentive_output = attention_layer(att_in)
+        tcn_output = Concatenate(axis=-1)([tcn_output, attentive_output])
+        # pdb.set_trace()
+
+    elif params['TYPE_ARCH'].find('LayerAtt')>-1:
+        print('Using LearnedAttention')
+        pred_CSD = CSDLayer()(prediction_output)
+
+        lfp_output = TwoStageAttentivePooling(embed_dim=8, num_heads=4, num_queries=50)(prediction_output)
+        csd_output = TwoStageAttentivePooling(embed_dim=8, num_heads=4, num_queries=50)(pred_CSD)
+        attentive_output = Concatenate(axis=-1)([lfp_output, csd_output])
+        tcn_output = Concatenate(axis=-1)([tcn_output, attentive_output])
+
+    # pdb.set_trace()
+
+    # sigmoid out
+    tmp_class = Dense(32, activation=this_activation, name='tmp_class')(tcn_output)
+
+    # add confidence layer
+    if params['TYPE_ARCH'].find('Confidence')>-1:
+        print('Using Confidence Inputs')
+        conf_inputs = Lambda(lambda tt: tt[:, -50:, :], name='Slice_Confidence')(inputs)
+        confidence = tf.reduce_mean(tf.square(conf_inputs-prediction_output), axis=-1, keepdims=True)
+        tmp_class = Concatenate(axis=-1)([tmp_class, confidence])
+
+    # compute probability
+    classification_output = Dense(1, activation='sigmoid', name='classification_output')(tmp_class)
+    concat_outputs = Concatenate(axis=-1)([prediction_output, classification_output])
+    # concat_outputs = Lambda(lambda tt: tt[:, -50:, :], name='Slice_Output')(concat_outputs)
+    # Define model with both outputs
+    model = Model(inputs=inputs, outputs=concat_outputs)
+    # model = Model(inputs=inputs, outputs=classification_output)
+    # model = Model(inputs=inputs, outputs=[prediction_output, classification_output])
+
+    def custom_fbfce(loss_weight=1, horizon=0):
+        """Loss function"""
+
+
+        def loss_fn(y_true, y_pred, loss_weight=loss_weight, horizon=horizon):
+            # print(sample_weight.shape)
+            prediction_targets = y_true[:, horizon:, :8]  # Targets starting from horizon
+            prediction_out = y_pred[:, :-horizon, :8]  # Predicted outputs before the horizon
+            y_true_exp = tf.expand_dims(y_true[:, :, -1], axis=-1)
+            y_pred_exp = tf.expand_dims(y_pred[:, :, -1], axis=-1)  # First 8 channels for horizon prediction
+
+            # y_pred = classification_output
+            if params['TYPE_LOSS'].find('FocalSmooth')>-1:
+                print('FocalSmooth')
+                # print(tf.shape(y_true_exp))
+                # print(tf.shape(y_pred_exp))
+                total_loss = tf.keras.losses.binary_focal_crossentropy(y_true_exp, y_pred_exp, apply_class_balancing=True, label_smoothing=0.1)
+            elif params['TYPE_LOSS'].find('FocalSmoothless')>-1:
+                print('FocalRegular')
+                total_loss = tf.keras.losses.binary_focal_crossentropy(y_true_exp, y_pred_exp, apply_class_balancing=True)
+            elif params['TYPE_LOSS'].find('Focal')>-1:
+                print('Focal')
+                aind = params['TYPE_LOSS'].find('Ax')+2
+                alp = float(params['TYPE_LOSS'][aind:aind+3])/100
+                gind = params['TYPE_LOSS'].find('Gx')+2
+                gam = float(params['TYPE_LOSS'][gind:gind+3])/100
+                print('Alpha: {0}, Gamma: {1}'.format(alp, gam))
+                if alp == 0:
+                    total_loss = tf.keras.losses.binary_focal_crossentropy(y_true_exp, y_pred_exp, gamma = gam)
+                else:
+                    total_loss = tf.keras.losses.binary_focal_crossentropy(y_true_exp, y_pred_exp, apply_class_balancing=True, alpha = alp, gamma = gam)
+            elif params['TYPE_LOSS'].find('Anchor')>-1:
+                print('Anchor')
+                aind = params['TYPE_LOSS'].find('Ax')+2
+                alp = float(params['TYPE_LOSS'][aind:aind+3])/100
+                gind = params['TYPE_LOSS'].find('Gx')+2
+                gam = float(params['TYPE_LOSS'][gind:gind+3])/100
+                print('Alpha: {0}, Gamma: {1}'.format(alp, gam))
+                if alp == 0:
+                    total_loss = tf.keras.losses.binary_focal_crossentropy(y_true_exp, y_pred_exp, gamma = gam)
+                else:
+                    total_loss = tf.keras.losses.binary_focal_crossentropy(y_true_exp, y_pred_exp, apply_class_balancing=True, alpha = alp, gamma = gam)
+            else:
+                pdb.set_trace()
+            if params['TYPE_LOSS'].find('TV')>-1:
+                print('TV Loss')
+                # total_loss += 1e-5*tf.image.total_variation(y_pred)
+                total_loss += 1e-5*tf.reduce_sum(tf.image.total_variation(tf.expand_dims(y_pred_exp, axis=-1)))
+            if params['TYPE_LOSS'].find('L2')>-1:
+                print('L2 smoothness Loss')
+                total_loss += 1e-5*tf.reduce_mean((y_pred_exp[1:]-y_pred_exp[:-1])**2)
+            if params['TYPE_LOSS'].find('Margin')>-1:
+                print('Margin Loss')
+                # pdb.set_trace()
+                total_loss += 1e-3*tf.squeeze(y_pred_exp * (1 - y_pred_exp))
+            if params['TYPE_LOSS'].find('TMSE')>-1:
+                print('Truncated MSE Loss')
+                total_loss += 1e-1*truncated_mse_loss(y_true_exp, y_pred_exp, tau=4.0)
+            if params['TYPE_LOSS'].find('EarlyOnset')>-1:
+                print('Early Onset Preference Loss')
+                total_loss += 1e-3*early_onset_preference_loss(y_true_exp, y_pred_exp, threshold=0.5, early_onset_threshold=5, penalty_factor=0.1, reward_factor=0.05)
+            if params['TYPE_LOSS'].find('L1Reg')>-1:
+                print('L1 Regularization Loss')
+                total_loss += custom_l1_regularization_loss(model, l1_lambda=1e-3)
+            if params['TYPE_LOSS'].find('L2Reg')>-1:
+                print('L2 Regularization Loss')
+                total_loss += custom_l2_regularization_loss(model, l1_lambda=1e-3)
+            # mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out)) # multiply by labels
+            # mse_loss = tf.reduce_mean(y_true_exp[:,horizon:,:]*tf.square(prediction_targets-prediction_out)) # multiply by labels
+
+            print('rec_weights')
+            rec_weights = y_true_exp[:,horizon:,:]+0.0001
+            mse_loss = tf.reduce_mean(rec_weights*tf.square(prediction_targets-prediction_out)) # multiply by labels
+            # mse_loss = combined_prediction_loss(prediction_targets, prediction_out, y_true_exp, event_weight=loss_weight)
+            total_loss += loss_weight*mse_loss
+            return total_loss
+        return loss_fn
+
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
+                    loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight),
+                    metrics=[custom_mse_metric, custom_binary_accuracy]
+                  )
+                    # metrics=[tf.keras.metrics.BinaryCrossentropy(),
+                    #          tf.keras.metrics.BinaryAccuracy()])
+
+    if params['WEIGHT_FILE']:
+        print('load model')
+        model.load_weights(params['WEIGHT_FILE'])
+
+    return model
 class CSDLayer(Layer):
     """
     A custom Keras layer that computes Current Source Density (CSD)
