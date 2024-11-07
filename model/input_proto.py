@@ -571,24 +571,14 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
     # assert(np.unique(train_labels[np.where(offsets)[0]])==0)
     # assert(np.unique(train_labels[np.where(offsets)[0]]-1)==1)
 
-    if params['TYPE_LOSS'].find('AnchorNarrow')>-1:
-        print('Using AnchorNarrow Weights')
+    if params['TYPE_LOSS'].find('Anchor')>-1:
+        print('Using Anchor Weights')
         weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 3, False))+0.01
-        # weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 5, False))+0.1
-    elif params['TYPE_LOSS'].find('AnchorWide')>-1:
-        print('Using AnchorWide Weights')
-        weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 10, False))+0.5
-    elif params['TYPE_LOSS'].find('AnchorWider')>-1:
-        print('Using AnchorWider Weights')
-        weights = signal.convolve(onsets, signal.windows.exponential(M, 0, 20, False))+0.8
-    elif params['TYPE_LOSS'].find('Focal')>-1:
-        print('Using Focal Weights (Ones)')
-        weights = np.ones(train_labels.shape, dtype=np.float32)
     else:
         print('Using Else (Ones)')
         weights = np.ones(train_labels.shape, dtype=np.float32)
     weights /= np.max(weights)
-    # pdb.set_trace()
+
     # make a gap in the weights
     if params['TYPE_LOSS'].find('Gap')>-1:
         print('Using Gap Before Onset')
@@ -600,8 +590,8 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
 
     # pdb.set_trace()
     if params['TYPE_LOSS'].find('Gap')>-1:
-        assert(np.unique(weights[np.where(onsets)[0]])==1)
-        assert(np.unique(weights[np.where(onsets)[0]]-1)==0)
+        assert(np.abs(np.unique(weights[np.where(onsets)[0]])-1)<0.0001)
+        assert(np.unique(weights[np.where(onsets)[0]-1])<0.0001)
 
     # make batches
     if sample_shift>0:
@@ -618,16 +608,18 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
     print(test_examples.shape)
     print(test_labels.shape)
 
+    weights = weights.astype('float32')
+    # pdb.set_trace()
     # make datasets
     sample_length = params['NO_TIMEPOINTS']*2
     stride_step = sample_length/params['NO_STRIDES']
     # pdb.set_trace()
     train_x = timeseries_dataset_from_array(train_examples, None, sequence_length=sample_length, sequence_stride=sample_length/stride_step, batch_size=params["BATCH_SIZE"])
-    train_y = timeseries_dataset_from_array(train_labels[int(sample_length/2)+sample_shift:].reshape(-1,1), None, sequence_length=sample_length/2, sequence_stride=sample_length/stride_step, batch_size=params["BATCH_SIZE"])
-    train_w = timeseries_dataset_from_array(weights[int(sample_length/2)+sample_shift:].reshape(-1,1), None, sequence_length=sample_length/2, sequence_stride=sample_length/stride_step, batch_size=params["BATCH_SIZE"])
+    train_y = timeseries_dataset_from_array(train_labels[int(sample_length/2)+sample_shift:], None, sequence_length=sample_length/2, sequence_stride=sample_length/stride_step, batch_size=params["BATCH_SIZE"])
+    train_w = timeseries_dataset_from_array(weights[int(sample_length/2)+sample_shift:], None, sequence_length=sample_length/2, sequence_stride=sample_length/stride_step, batch_size=params["BATCH_SIZE"])
 
     test_x = timeseries_dataset_from_array(test_examples, None, sequence_length=sample_length, sequence_stride=sample_length/stride_step, batch_size=params["BATCH_SIZE"])
-    test_y = timeseries_dataset_from_array(test_labels[int(sample_length/2)+sample_shift:].reshape(-1,1), None, sequence_length=sample_length/2, sequence_stride=sample_length/stride_step, batch_size=params["BATCH_SIZE"])
+    test_y = timeseries_dataset_from_array(test_labels[int(sample_length/2)+sample_shift:], None, sequence_length=sample_length/2, sequence_stride=sample_length/stride_step, batch_size=params["BATCH_SIZE"])
 
     # train_dataset = tf.data.Dataset.zip((train_x, train_y, train_w))
 
@@ -642,7 +634,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
     
     # train_dataset = apply_augmentation_to_dataset(train_dataset, params=params)
     
-    train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"], reshuffle_each_iteration=True).prefetch(8)#.batch(params["BATCH_SIZE"])
+    train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"], reshuffle_each_iteration=True).prefetch(tf.data.experimental.AUTOTUNE)
 
     
 

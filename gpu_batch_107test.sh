@@ -1,7 +1,7 @@
 #!/bin/bash
    
 #SBATCH --job-name=tensorflow_gpu
-#SBATCH --partition=GPUtest
+#SBATCH --partition=GPUtest,GPUshort,GPUlong
 #SBATCH --gpus=rtxa6000:1
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-cpu=7000
