@@ -78,13 +78,13 @@ if mode == 'train':
 
     if model_name.find('Hori') != -1:
         from model.model_fn import build_DBI_TCN_Horizon as build_DBI_TCN
-        from model.input_augment import rippleAI_load_dataset
+        from model.input_augment_weighted import rippleAI_load_dataset
     elif model_name.find('Dori') != -1:
         from model.model_fn import build_DBI_TCN_Dorizon as build_DBI_TCN
-        from model.input_augment import rippleAI_load_dataset
+        from model.input_augment_weighted import rippleAI_load_dataset
     elif model_name.find('Cori') != -1:
         from model.model_fn import build_DBI_TCN_Corizon as build_DBI_TCN
-        from model.input_augment import rippleAI_load_dataset
+        from model.input_augment_weighted import rippleAI_load_dataset
     elif model_name.find('CSD') != -1:
         from model.model_fn import build_DBI_TCN_CSD as build_DBI_TCN
         from model.input_aug import rippleAI_load_dataset
@@ -103,16 +103,23 @@ if mode == 'train':
         model.summary()
 
     # input
-    train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params)
+    if 'NOZ' in params['TYPE_LOSS']:
+        print('Not pre-processing')
+        preproc = False
+    else:
+        print('Preprocessing')
+        preproc = True
+    if 'FiltL' in params['TYPE_LOSS']:
+        train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, use_band='low', preprocess=preproc)
+    elif 'FiltH' in params['TYPE_LOSS']:
+        train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, use_band='high', preprocess=preproc)
+    else:
+        train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
     train_size = len(list(train_dataset))
     params['RIPPLE_RATIO'] = label_ratio
 
-    # import pdb
-    # pdb.set_trace()
     # train
     if model_name.find('Proto') != -1:
-        # import pdb
-        # pdb.set_trace()
         train_model(train_dataset, test_dataset, params=params)
     else:
         from model.training import train_pred
@@ -219,7 +226,7 @@ elif mode == 'predict':
             from tcn import TCN
             from keras.models import load_model
             # with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
-            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_model.h5'
+            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_f1_model.h5'
             print((params['WEIGHT_FILE']))
             with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
                 model = load_model(params['WEIGHT_FILE'])
@@ -253,6 +260,7 @@ elif mode == 'predict':
     # from model.input_fn import rippleAI_load_dataset
 
     preproc = False if model_name=='RippleNet' else True
+
     val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
 
     for j, labels in enumerate(val_labels):

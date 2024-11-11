@@ -28,19 +28,22 @@ def train_pred(model,
         current_epoch: (Params) hyperparameters
     """
     callbacks = []
-    # callbacks.append(cb.ReduceLROnPlateau(monitor='val_loss',
-    #                                       factor=0.5,
-    #                                       patience=20,
-    #                                       verbose=1,
-    #                                       mode='auto',
-    #                                       min_delta=0.0001,
-    #                                       cooldown=10,
-    #                                       min_lr=1e-5))
+    callbacks.append(cb.ReduceLROnPlateau(monitor='val_loss',
+                                          factor=0.5,
+                                          patience=20,
+                                          verbose=1,
+                                          mode='auto',
+                                          min_delta=0.0001,
+                                          cooldown=10,
+                                          min_lr=1e-5))
+    callbacks.append(cb.EarlyStopping(monitor='val_loss',
+                                        min_delta=0.0001,
+                                        patience=50,
+                                        verbose=1))
     # callbacks.append(cb.TensorBoard(log_dir=save_dir,
     #                                   write_graph=True,
     #                                   write_images=True,
     #                                   update_freq='epoch'))
-    
     # callbacks.append(cb.LearningRateScheduler(lr_scheduler))
     callbacks.append(cb.TensorBoard(log_dir=save_dir,
                                       write_graph=True,
@@ -48,12 +51,14 @@ def train_pred(model,
                                       update_freq='epoch'))
     # callbacks.append(cb.ModelCheckpoint(save_dir + '/weights.last.keras',
     callbacks.append(cb.ModelCheckpoint(save_dir + '/weights.last.h5',
-                                        monitor='val_custom_binary_accuracy', # val_ssim
+                                        # monitor='val_custom_binary_accuracy', # val_ssim
+                                        # monitor='val_loss',
+                                        monitor='val_max_f1_metric_horizon',
                                         # monitor='val_binary_accuracy', # val_ssim
                                         verbose=1,
                                         save_best_only=True,
                                         save_weights_only=True,
-                                        mode='auto',
+                                        mode='max',
                                         save_freq="epoch"))
 
     if not os.path.exists(save_dir):

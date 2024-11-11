@@ -13,6 +13,7 @@ from keras.initializers import GlorotUniform, Orthogonal
 from xgboost import XGBClassifier
 from imblearn.under_sampling import RandomUnderSampler
 import pdb
+from scipy.signal import decimate
 
 def fcn_save_pickle(name,x):
     '''
@@ -259,8 +260,7 @@ def downsample_data(data, sf, downsampled_fs):
 
     # Dowsampling
     if sf > downsampled_fs:
-        downsampled_pts = np.linspace(0, data.shape[0]-1, int(np.round(data.shape[0]/sf*downsampled_fs))).astype(int)
-        downsampled_data = data[downsampled_pts, :]
+        downsampled_data = decimate(data, int(sf/downsampled_fs), axis=0, zero_phase=True, ftype='fir', n=250)
 
     # Upsampling
     elif sf < downsampled_fs:
@@ -334,25 +334,22 @@ def generate_overlapping_windows(data, window_size, stride, sf):
 # Detection functions
 
 def process_LFP(LFP,sf,channels,use_zscore=True):
-
     '''
     This function processes the LFP before calling the detection algorithm.
     1. It extracts the desired channels from the original LFP, and interpolates where there is a value of -1.
     2. Downsamples the LFP to 1250 Hz.
     3. Normalizes each channel separately by z-scoring them.
-
     Mandatory inputs:
         LFP: 		LFP recorded data (np.array: n_samples x n_channels).
         sf: 		Original sampling frequency (in Hz).
         channels: 	channel to which compute the undersampling and z-score normalization. Counting starts in 0.
                     If channels contains any -1, interpolation will be also applied.
                     See channels of rippl_AI.predict(), or aux_fcn.interpolate_channels() for more information.
-    Output:
+    Output: 
         LFP_norm: normalized LFP (np.array: n_samples x len(channels)). It is undersampled to 1250Hz, z-scored,
                     and transformed to used the channels specified in channels.
     A Rubio, LCN 2023
     '''
-    # pdb.set_trace()
     # normalized_data = LFP
     data=interpolate_channels(LFP,channels)
     if sf!=1250:
@@ -361,10 +358,11 @@ def process_LFP(LFP,sf,channels,use_zscore=True):
         print("Shape of downsampled data:",data.shape)
     else:
         print("Data is already sampled at 1250 Hz!")
-
     if use_zscore:
         print('Normalizing data...')
-        normalized_data=z_score_normalization(data)
+        data = (data - np.mean(data, axis=0)) / np.std(data, axis=0)
+        normalized_data = data
+        # normalized_data=z_score_normalization(data)
     else:
         print('Not normalized data.')
         normalized_data=data
@@ -389,7 +387,6 @@ def prediction_parser(LFP,arch='CNN1D',model_number=1,new_model=None,n_channels=
         y: (n) shape array with the output of the chosen model
     A Rubio, LCN 2023
     '''
-
     # If no new_model is passed:
     # Looks for the name of the selected model
     if new_model==None:
