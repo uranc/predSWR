@@ -76,7 +76,7 @@ if mode == 'train':
     params['TYPE_ARCH'] = param_lib[11]
     print(params['TYPE_ARCH'])
 
-    if model_name.find('multi') != -1 and model_name.find('Hori') != -1: # several tcn layers
+    if model_name.find('multi') != -1 and model_name.find('Hori') != -1: # several tcn layers, predict horizon, pred lfp 
         from model.model_fn import build_DBI_multi_TCN_Horizon as build_DBI_TCN
         from model.input_augment import rippleAI_load_dataset
     elif model_name.find('Hori') != -1: # predict horizon, pred lfp 
