@@ -266,6 +266,9 @@ def downsample_data(data, sf, downsampled_fs):
     elif sf < downsampled_fs:
         print("Original sampling rate below 1250 Hz!")
         return None
+    
+    else:
+        downsampled_data = data
 
 
     # Change from int16 to float16 if necessary
@@ -333,7 +336,7 @@ def generate_overlapping_windows(data, window_size, stride, sf):
 
 # Detection functions
 
-def process_LFP(LFP,sf,channels,use_zscore=True):
+def process_LFP(LFP, ch=np.arange(0,8), sf=30000, new_sf=1250, use_zscore=True):
     '''
     This function processes the LFP before calling the detection algorithm.
     1. It extracts the desired channels from the original LFP, and interpolates where there is a value of -1.
@@ -345,16 +348,17 @@ def process_LFP(LFP,sf,channels,use_zscore=True):
         channels: 	channel to which compute the undersampling and z-score normalization. Counting starts in 0.
                     If channels contains any -1, interpolation will be also applied.
                     See channels of rippl_AI.predict(), or aux_fcn.interpolate_channels() for more information.
-    Output: 
+    Output:
         LFP_norm: normalized LFP (np.array: n_samples x len(channels)). It is undersampled to 1250Hz, z-scored,
                     and transformed to used the channels specified in channels.
     A Rubio, LCN 2023
     '''
-    # normalized_data = LFP
-    data=interpolate_channels(LFP,channels)
+    # data=interpolate_channels(LFP,channels)
+    data = LFP
+    pdb.set_trace()
     if sf!=1250:
-        print('Downsampling data at 1250 Hz...')
-        data = downsample_data(data, sf, downsampled_fs=1250)
+        print('Downsampling data at {} Hz...'.format(new_sf))
+        data = downsample_data(data, sf, downsampled_fs=new_sf)
         print("Shape of downsampled data:",data.shape)
     else:
         print("Data is already sampled at 1250 Hz!")
@@ -591,7 +595,7 @@ def get_performance(pred_events, true_events, threshold=0, exclude_matched_trues
     # IOU_true-> IOU de la GT
 
 
- # Excluye los true coincidentes
+    # Excluye los true coincidentes
     if exclude_matched_trues:
         # Take maximal IOUs, and make the rest be zero
         pred_with_maxIOU = np.argmax(IOU, axis=0)

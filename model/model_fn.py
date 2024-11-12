@@ -391,8 +391,12 @@ def build_DBI_TCN_Horizon(input_timepoints, input_chans=8, params=None):
     use_layer_norm = params['TYPE_REG'].find('LN')>-1
     # this_activation = 'relu'
     this_activation = ELU(alpha=1)
-    this_kernel_initializer = 'glorot_uniform'
-    # this_kernel_initializer = 'he_normal'
+    if params['TYPE_REG'].find('Glo')>-1:
+        print('Using Glorot')
+        this_kernel_initializer = 'glorot_uniform'
+    elif params['TYPE_REG'].find('He')>-1:
+        print('Using He')
+        this_kernel_initializer = 'he_normal'
     model_type = params['TYPE_MODEL']
     n_filters = params['NO_FILTERS']
     n_kernels = params['NO_KERNELS']
@@ -407,7 +411,7 @@ def build_DBI_TCN_Horizon(input_timepoints, input_chans=8, params=None):
     hori_shift = 0  # Default value
     if params['TYPE_ARCH'].find('Hori')>-1:
         print('Using Horizon Timesteps:')
-        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Hori')+4:params['TYPE_ARCH'].find('Hori')+6])/1000*1250)
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Hori')+4:params['TYPE_ARCH'].find('Hori')+6])/1000*params['SRATE'])
         print(hori_shift)
 
     if params['TYPE_ARCH'].find('Loss')>-1:
@@ -426,7 +430,7 @@ def build_DBI_TCN_Horizon(input_timepoints, input_chans=8, params=None):
     if params['TYPE_ARCH'].find('ZNorm')>-1:
         print('Using ZNorm')
         inputs = Normalization()(inputs)
-        
+
     if params['TYPE_ARCH'].find('CSD')>-1:
         csd_inputs = CSDLayer()(inputs)
         inputs_nets = Concatenate(axis=-1)([inputs, csd_inputs])
@@ -468,25 +472,25 @@ def build_DBI_TCN_Horizon(input_timepoints, input_chans=8, params=None):
     tmp_pred = Dense(32, activation=this_activation, name='tmp_pred')(tcn_output)  # Output future values
     prediction_output = Dense(output_dim, activation='linear', name='prediction_output')(tmp_pred)  # Output future values
 
-    if params['TYPE_ARCH'].find('SelfPosAtt')>-1:
-        print('Using Self Positional Attention')
-        # compute csd of the predicted values as well
-        pred_CSD = CSDLayer()(prediction_output)
-        att_in = Concatenate(axis=-1)([pred_CSD, prediction_output])
-        embed_dim, num_heads, num_channels = 16, 4, 50  # Adjust based on model structure
-        attention_layer = SelfAttentionPositional(embed_dim=embed_dim, num_heads=num_heads, num_channels=num_channels)
-        attentive_output = attention_layer(att_in)
-        tcn_output = Concatenate(axis=-1)([tcn_output, attentive_output])
-        # pdb.set_trace()
+    # if params['TYPE_ARCH'].find('SelfPosAtt')>-1:
+    #     print('Using Self Positional Attention')
+    #     # compute csd of the predicted values as well
+    #     pred_CSD = CSDLayer()(prediction_output)
+    #     att_in = Concatenate(axis=-1)([pred_CSD, prediction_output])
+    #     embed_dim, num_heads, num_channels = 16, 4, 50  # Adjust based on model structure
+    #     attention_layer = SelfAttentionPositional(embed_dim=embed_dim, num_heads=num_heads, num_channels=num_channels)
+    #     attentive_output = attention_layer(att_in)
+    #     tcn_output = Concatenate(axis=-1)([tcn_output, attentive_output])
+    #     # pdb.set_trace()
 
-    elif params['TYPE_ARCH'].find('LayerAtt')>-1:
-        print('Using LearnedAttention')
-        pred_CSD = CSDLayer()(prediction_output)
+    # elif params['TYPE_ARCH'].find('LayerAtt')>-1:
+    #     print('Using LearnedAttention')
+    #     pred_CSD = CSDLayer()(prediction_output)
 
-        lfp_output = TwoStageAttentivePooling(embed_dim=8, num_heads=4, num_queries=50)(prediction_output)
-        csd_output = TwoStageAttentivePooling(embed_dim=8, num_heads=4, num_queries=50)(pred_CSD)
-        attentive_output = Concatenate(axis=-1)([lfp_output, csd_output])
-        tcn_output = Concatenate(axis=-1)([tcn_output, attentive_output])
+    #     lfp_output = TwoStageAttentivePooling(embed_dim=8, num_heads=4, num_queries=50)(prediction_output)
+    #     csd_output = TwoStageAttentivePooling(embed_dim=8, num_heads=4, num_queries=50)(pred_CSD)
+    #     attentive_output = Concatenate(axis=-1)([lfp_output, csd_output])
+    #     tcn_output = Concatenate(axis=-1)([tcn_output, attentive_output])
 
     # sigmoid out
     tmp_class = Dense(32, activation=this_activation, name='tmp_class')(tcn_output)
@@ -494,7 +498,7 @@ def build_DBI_TCN_Horizon(input_timepoints, input_chans=8, params=None):
     # add confidence layer
     if params['TYPE_ARCH'].find('Confidence')>-1:
         print('Using Confidence Inputs')
-        conf_inputs = Lambda(lambda tt: tt[:, -50:, :], name='Slice_Confidence')(inputs)
+        conf_inputs = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Confidence')(inputs)
         confidence = tf.reduce_mean(tf.square(conf_inputs-prediction_output), axis=-1, keepdims=True)
         tmp_class = Concatenate(axis=-1)([tmp_class, confidence])
 
@@ -534,10 +538,12 @@ def build_DBI_TCN_Dorizon(input_timepoints, input_chans=8, params=None):
     use_layer_norm = params['TYPE_REG'].find('LN')>-1
     # this_activation = 'relu'
     this_activation = ELU(alpha=1)
-    # this_activation = tf.keras.activations.gelu
-    # this_activation = ELU(alpha=0.1)
-    this_kernel_initializer = 'glorot_uniform'
-    # this_kernel_initializer = 'he_normal'
+    if params['TYPE_REG'].find('Glo')>-1:
+        print('Using Glorot')
+        this_kernel_initializer = 'glorot_uniform'
+    elif params['TYPE_REG'].find('He')>-1:
+        print('Using He')
+        this_kernel_initializer = 'he_normal'
     model_type = params['TYPE_MODEL']
     n_filters = params['NO_FILTERS']
     n_kernels = params['NO_KERNELS']
@@ -551,7 +557,7 @@ def build_DBI_TCN_Dorizon(input_timepoints, input_chans=8, params=None):
 
     if params['TYPE_ARCH'].find('Dori')>-1:
         print('Using Horizon Timesteps:')
-        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Dori')+4:params['TYPE_ARCH'].find('Dori')+6])/1000*1250)
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Dori')+4:params['TYPE_ARCH'].find('Dori')+6])/1000*params['SRATE'])
         print(hori_shift)
 
     if params['TYPE_ARCH'].find('Loss')>-1:
@@ -569,7 +575,7 @@ def build_DBI_TCN_Dorizon(input_timepoints, input_chans=8, params=None):
     if params['TYPE_ARCH'].find('ZNorm')>-1:
         print('Using ZNorm')
         inputs = Normalization()(inputs)
-        
+
     if params['TYPE_ARCH'].find('CSD')>-1:
         csd_inputs = CSDLayer()(inputs)
         inputs_nets = Concatenate(axis=-1)([inputs, csd_inputs])
@@ -632,13 +638,13 @@ def build_DBI_TCN_Dorizon(input_timepoints, input_chans=8, params=None):
         prediction_out_class = tcn_clas(prediction_output)
         if params['TYPE_ARCH'].find('L2N')>-1:
             prediction_out_class = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(prediction_out_class)
-        
+
         if params['TYPE_ARCH'].find('Dual')>-1:
             print('Using DualLoss')
             out_class = tcn_clas(inputs)
 
             if params['TYPE_ARCH'].find('L2N')>-1:
-                out_class = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(out_class)            
+                out_class = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(out_class)
             prediction_out_class = Concatenate(axis=-1)([prediction_out_class, out_class])
 
         # horizon_outputs = Lambda(lambda tt: tt[:, -input_timepoints+horizon:, :], name='Slice_Horizon')(nets)
@@ -646,17 +652,18 @@ def build_DBI_TCN_Dorizon(input_timepoints, input_chans=8, params=None):
         tcn_out = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Class_Output')(prediction_out_class)
 
         if params['TYPE_ARCH'].find('L2N')>-1:
-            tcn_output = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(nets)      
+            tcn_output = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(nets)
         # tmp_class = Dense(32, activation=this_activation, name='tmp_class')(tcn_output)
         classification_output = Dense(1, activation='sigmoid', name='classification_output')(tcn_out)
         concat_outputs = Concatenate(axis=-1)([pred_out, classification_output])
         # concat_outputs = Concatenate(axis=-1)([prediction_output, classification_output])
 
     # Define model with both outputs
+    f1_metric = MaxF1MetricHorizon()
     model = Model(inputs=inputs, outputs=concat_outputs)
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
                     loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model),
-                    metrics=[custom_mse_metric, custom_binary_accuracy]
+                    metrics=[custom_mse_metric, custom_binary_accuracy, f1_metric]
                   )
                     # metrics=[tf.keras.metrics.BinaryCrossentropy(),
                     #          tf.keras.metrics.BinaryAccuracy()])
@@ -676,9 +683,12 @@ def build_DBI_TCN_Corizon(input_timepoints, input_chans=8, params=None):
     use_layer_norm = params['TYPE_REG'].find('LN')>-1
     # this_activation = 'relu'
     this_activation = ELU(alpha=1)
-    # this_activation = ELU(alpha=0.1)
-    this_kernel_initializer = 'glorot_uniform'
-    # this_kernel_initializer = 'he_normal'
+    if params['TYPE_REG'].find('Glo')>-1:
+        print('Using Glorot')
+        this_kernel_initializer = 'glorot_uniform'
+    elif params['TYPE_REG'].find('He')>-1:
+        print('Using He')
+        this_kernel_initializer = 'he_normal'
     model_type = params['TYPE_MODEL']
     n_filters = params['NO_FILTERS']
     n_kernels = params['NO_KERNELS']
@@ -692,7 +702,7 @@ def build_DBI_TCN_Corizon(input_timepoints, input_chans=8, params=None):
 
     if params['TYPE_ARCH'].find('Cori')>-1:
         print('Using Horizon Timesteps:')
-        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Cori')+4:params['TYPE_ARCH'].find('Cori')+6])/1000*1250)
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Cori')+4:params['TYPE_ARCH'].find('Cori')+6])/1000*params['SRATE'])
         print(hori_shift)
 
     if params['TYPE_ARCH'].find('Loss')>-1:
@@ -785,10 +795,10 @@ def build_DBI_TCN_Corizon(input_timepoints, input_chans=8, params=None):
     model = Model(inputs=inputs, outputs=concat_outputs)
 
             # mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out)) # multiply by labels
-
+    f1_metric = MaxF1MetricHorizon()
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
                     loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model),
-                    metrics=[custom_mse_metric, custom_binary_accuracy]
+                    metrics=[custom_mse_metric, custom_binary_accuracy, f1_metric]
                   )
                     # metrics=[tf.keras.metrics.BinaryCrossentropy(),
                     #          tf.keras.metrics.BinaryAccuracy()])
@@ -838,7 +848,7 @@ def build_DBI_TCN_Horizon_Updated(input_timepoints, input_chans=8, embedding_dim
 
     current_lr = params['LEARNING_RATE']
     optimizer = tf.keras.optimizers.Adam(learning_rate=current_lr)
-    
+
     # Prototype-Based Loss
     def prototype_loss(embeddings, labels):
         d_event = tf.norm(embeddings - p_event, axis=-1)
@@ -856,17 +866,17 @@ def build_DBI_TCN_Horizon_Updated(input_timepoints, input_chans=8, embedding_dim
         true_pos = tf.reduce_sum(y_true * y_pred)
         false_neg = tf.reduce_sum(y_true * (1 - y_pred))
         false_pos = tf.reduce_sum((1 - y_true) * y_pred)
-        
+
         # Calculate Tversky index
         tversky_index = (true_pos + 1e-10) / (true_pos + alpha * false_neg + beta * false_pos + 1e-10)
-        
+
         # Apply focal modulation
         return tf.pow((1 - tversky_index), gamma)
 
     # Combined Loss
     def combined_loss(y_true, y_pred, embeddings, labels, alpha=0.0, weights=None, params=None):
-        
-        total_loss = 0.0        
+
+        total_loss = 0.0
         if params['TYPE_LOSS'].find('Focal')>-1:
             print('Using Focal Loss')
             # bfce = tf.keras.losses.BinaryFocalCrossentropy(reduction=tf.keras.losses.Reduction.NONE)
@@ -888,7 +898,7 @@ def build_DBI_TCN_Horizon_Updated(input_timepoints, input_chans=8, embedding_dim
                 total_loss += prototype_loss(embeddings, labels) * alpha
 
         return total_loss
-    
+
     # Training Step with Binary Accuracy Monitoring
     def train_step(x, y,sample_weight=None, params=None):
         y = tf.squeeze(y)
@@ -915,7 +925,7 @@ def build_DBI_TCN_Horizon_Updated(input_timepoints, input_chans=8, embedding_dim
 
         # learning rate scheduler
         no_improve_epochs = 0
-        
+
         # Instantiate F1 metric outside of `evaluate`
         val_f1_metric = MaxF1Metric()
         val_accuracy_metric = tf.keras.metrics.BinaryAccuracy()
@@ -924,7 +934,7 @@ def build_DBI_TCN_Horizon_Updated(input_timepoints, input_chans=8, embedding_dim
         val_loss_metric = tf.keras.metrics.Mean()
 
         for epoch in range(epochs):
-            
+
             current_lr = optimizer.learning_rate.numpy()
             # Initialize metrics for the current epoch
             epoch_loss_avg = tf.keras.metrics.Mean()
@@ -935,8 +945,8 @@ def build_DBI_TCN_Horizon_Updated(input_timepoints, input_chans=8, embedding_dim
                 # Perform a training step
                 loss, accuracy = train_step(inputs, labels, sample_weight=weights, params=params)
                 epoch_loss_avg.update_state(loss)
-                epoch_accuracy_avg.update_state(accuracy)            
-            
+                epoch_accuracy_avg.update_state(accuracy)
+
             # Run validation and get F1 score, accuracy, precision, recall, and loss
             val_f1, val_accuracy, val_precision, val_recall, val_loss = evaluate(val_dataset, val_f1_metric, val_accuracy_metric, val_precision_metric, val_recall_metric, val_loss_metric)
 
@@ -958,7 +968,7 @@ def build_DBI_TCN_Horizon_Updated(input_timepoints, input_chans=8, embedding_dim
             else:
                 no_improve_epochs += 1
             # print('No Improve Epochs:', no_improve_epochs)
-            
+
             # Reset metrics for the next epoch
             epoch_loss_avg.reset_states()
             epoch_accuracy_avg.reset_states()
@@ -967,7 +977,7 @@ def build_DBI_TCN_Horizon_Updated(input_timepoints, input_chans=8, embedding_dim
             val_precision_metric.reset_states()
             val_recall_metric.reset_states()
             val_loss_metric.reset_states()
-            
+
             # Callbacks at the end of each epoch
             if no_improve_epochs >= patience:
                 new_lr = max(current_lr * factor, min_lr)
@@ -977,7 +987,7 @@ def build_DBI_TCN_Horizon_Updated(input_timepoints, input_chans=8, embedding_dim
                     print(f"Reduced learning rate to {current_lr}")
                 else:
                     print(f"Learning rate already at minimum value of {min_lr}, Early stopping")
-                    break                    
+                    break
                 no_improve_epochs = 0  # Reset counter after reducing learning rate
 
     def evaluate(val_dataset, val_f1_metric, val_accuracy_metric, val_precision_metric, val_recall_metric, val_loss_metric):
@@ -1343,9 +1353,9 @@ def adaptive_early_onset_loss(y_true, y_pred, threshold=0.5, onset_confidence=3)
     combined_loss = tf.keras.losses.binary_crossentropy(y_true, y_pred) + early_loss
     return combined_loss
 
-    
+
 class MaxF1MetricHorizon(tf.keras.metrics.Metric):
-    def __init__(self, thresholds=tf.linspace(0.0, 1.0, 11), **kwargs):
+    def __init__(self, thresholds=tf.linspace(0.0, 1.0, 5), **kwargs):#tf.linspace(0.0, 1.0, 11)
         super(MaxF1MetricHorizon, self).__init__(**kwargs)
         self.thresholds = thresholds
         # Initialize accumulators for tp, fp, fn for each threshold
@@ -1355,27 +1365,27 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
             shape=(len(thresholds),), initializer='zeros', name='fp')
         self.fn = self.add_weight(
             shape=(len(thresholds),), initializer='zeros', name='fn')
-    
+
     def update_state(self, y_true, y_pred, sample_weight=None):
         # Cast to float32
         y_true = tf.cast(y_true[:, :, 8], tf.float32)
         y_pred = tf.cast(y_pred[:, :, 8], tf.float32)
-        
+
         def compute_metrics(threshold):
             y_pred_thresh = tf.cast(tf.reduce_any(y_pred >= threshold, axis=1), tf.float32)
             y_true_bin = tf.cast(tf.reduce_any(y_true==1, axis=1), tf.float32)
-            
+
             # Calculate batch TP, FP, FN
             tp = tf.reduce_sum(y_pred_thresh * y_true_bin)
             fp = tf.reduce_sum(y_pred_thresh * (1 - y_true_bin))
             fn = tf.reduce_sum((1 - y_pred_thresh) * y_true_bin)
-            
+
             return tp, fp, fn
-        
+
         # Use tf.map_fn to compute metrics for all thresholds
         def threshold_metrics(threshold):
             return compute_metrics(threshold)
-        
+
         metrics = tf.map_fn(threshold_metrics, self.thresholds, dtype=(tf.float32, tf.float32, tf.float32))
         tp_all, fp_all, fn_all = metrics
 
@@ -1389,9 +1399,9 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
         precision = self.tp / (self.tp + self.fp + tf.keras.backend.epsilon())
         recall = self.tp / (self.tp + self.fn + tf.keras.backend.epsilon())
         f1_scores = 2 * (precision * recall) / (precision + recall + tf.keras.backend.epsilon())
-        
+
         return tf.reduce_max(f1_scores)
-    
+
     def reset_state(self):
         # Reset all accumulators to zero
         self.tp.assign(tf.zeros_like(self.tp))
@@ -1443,7 +1453,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None):
         prediction_out = y_pred[:, :-horizon, :8]                 # Predicted outputs before the horizon
         y_true_exp = tf.expand_dims(y_true[:, :, 8], axis=-1)
         y_pred_exp = tf.expand_dims(y_pred[:, :, 8], axis=-1)     # First 8 channels for horizon prediction
-        
+
         if tf.keras.backend.learning_phase()==1:
             sample_weight = y_true[:, :, 9]  # Sample weights
         else:
@@ -1472,7 +1482,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None):
                 total_loss = tf.reduce_mean(tf.multiply(focal_loss(y_true_exp, y_pred_exp), sample_weight))
         else:
             pdb.set_trace()
-        
+
         # extra losses that can also be combined
         if params['TYPE_LOSS'].find('TV')>-1:
             print('TV Loss')

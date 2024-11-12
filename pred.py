@@ -31,7 +31,7 @@ model_name = args.model[0]
 # Parameters
 params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*5,
           'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 200,
-          'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8,
+          'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
           'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
           }
 params['mode'] = mode
@@ -76,7 +76,7 @@ if mode == 'train':
     params['TYPE_ARCH'] = param_lib[11]
     print(params['TYPE_ARCH'])
 
-    if model_name.find('Hori') != -1: # predict horizon, pred lfp 
+    if model_name.find('Hori') != -1: # predict horizon, pred lfp
         from model.model_fn import build_DBI_TCN_Horizon as build_DBI_TCN
         from model.input_augment_weighted import rippleAI_load_dataset
     elif model_name.find('Dori') != -1: # predict horizon dual loss, pred lfp and lfp
@@ -256,11 +256,12 @@ elif mode == 'predict':
     model.summary()
 
     params['BATCH_SIZE'] = 512*8
-    from model.input_aug import rippleAI_load_dataset
+    from model.input_augment_weighted import rippleAI_load_dataset
+    # from model.input_aug import rippleAI_load_dataset
     # from model.input_fn import rippleAI_load_dataset
 
     preproc = False if model_name=='RippleNet' else True
-
+    # rippleAI_load_dataset(params, use_band='low', preprocess=preproc)
     val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
 
     for j, labels in enumerate(val_labels):
@@ -320,7 +321,7 @@ elif mode == 'predict':
             # probs = np.hstack((np.zeros((params['NO_TIMEPOINTS'], 1)).flatten(),windowed_signal[0,:-1], windowed_signal[:, -1]))
         val_pred.append(probs)
 
-    samp_freq = 1250
+    samp_freq = params['SRATE']
     # Validation plot in the second ax
     all_pred_events = []
     precision=np.zeros(shape=(len(val_datasets),len(th_arr)))
