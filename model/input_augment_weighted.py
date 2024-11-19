@@ -226,8 +226,6 @@ def replace_channels_with_noise(data, noise_factor=0.1):
 
     return updated_data
 
-
-
 def apply_frequency_masking(data, num_masks=1, mask_width=2):
     """Mask frequency bands in the signal."""
     fft_data = tf.signal.fft(tf.cast(data, tf.complex64))
@@ -310,7 +308,7 @@ def augment_data(data, labels, weights, event_indices=None, apply_mixup=False, m
 
     # Add pink noise (low-frequency noise)
     print(data.shape)
-    
+
     # if tf.random.uniform([]) < 0.1:
     #     data = add_pink_noise(data)
 
@@ -352,7 +350,7 @@ def apply_augmentation_to_dataset(dataset, params=None, sampling_rate=1250):
     # Apply augment_batch function to each batch using map
     return dataset.map(augment_batch, num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
-def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250,channels=np.arange(0,8), zscore=True):
+def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250,new_sf=1250,channels=np.arange(0,8),zscore=True,use_band=None):
     '''
         Prepares data for training: subsamples, interpolates (if required), z-scores and concatenates
         the train/test data passed. Does the same for the validation data, but without concatenating
@@ -372,6 +370,35 @@ def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250
     A Rubio LCN 2023
 
     '''
+    def filter_LFP(LFP, sf=1250, band='low'):
+        """
+        Filters the LFP data in a specified frequency band.
+
+        Args:
+            LFP: Input LFP data of shape [num_samples, num_channels].
+            sf: Sampling frequency of the data.
+            band: Frequency band to filter ('low' for below 100 Hz, 'high' for 100-300 Hz).
+
+        Returns:
+            Filtered LFP data.
+        """
+        from scipy import signal
+        from scipy.signal import butter, filtfilt
+        if band == 'low':
+            print('Filtering low band')
+            lowcut = 0.5
+            highcut = 30.0
+        elif band == 'high':
+            print('Filtering high band')
+            lowcut = 120.0
+            highcut = 250.0
+        else:
+            raise ValueError("Invalid band. Choose 'low' or 'high'.")
+
+        b, a = butter(5, [lowcut, highcut], btype='band', fs=new_sf)
+        filtered_LFP = filtfilt(b, a, LFP, axis=0)
+        return filtered_LFP
+
     assert len(train_LFPs) == len(train_GTs), "The number of train LFPs doesn't match the number of train GTs"
     assert len(val_LFPs) == len(val_GTs), "The number of test LFPs doesn't match the number of test GTs"
 
@@ -385,18 +412,25 @@ def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250
         print('Original training data shape: ',LFP.shape)
         print('Sampling frequency: ',sf[counter_sf])
         if len(retrain_LFP)==0:
-            retrain_LFP = process_LFP(LFP,sf[counter_sf],channels,use_zscore=zscore)
-            # pdb.set_trace()
-            if retrain_LFP.shape[0] != LFP.shape[0]:
-                offset_sf = 1250
-            else:
-                offset_sf = 30000
+            retrain_LFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False)
+            if use_band is not None:
+                retrain_LFP = filter_LFP(retrain_LFP, sf=new_sf, band=use_band)
+            if zscore:
+                retrain_LFP = (retrain_LFP - np.mean(retrain_LFP, axis=0))/np.std(retrain_LFP, axis=0)
+            offset_sf = new_sf
+            if offset_sf == 30000:
+                assert(retrain_LFP.shape[0] == LFP.shape[0])
             offset=len(retrain_LFP)/offset_sf # fix labels
             retrain_GT=GT
+
         # Append the rest of the sessions, taking into account the length (in seconds)
         # of the previous sessions, to cocatenate the events' times
         else:
-            aux_LFP=process_LFP(LFP,sf[counter_sf],channels,use_zscore=zscore)
+            aux_LFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False)
+            if use_band is not None:
+                aux_LFP = filter_LFP(aux_LFP, sf=new_sf, band=use_band)
+            if zscore:
+                aux_LFP = (aux_LFP- np.mean(aux_LFP, axis=0))/np.std(aux_LFP, axis=0)
             retrain_LFP=np.vstack([retrain_LFP,aux_LFP])
             retrain_GT=np.vstack([retrain_GT,GT+offset])
             offset+=len(aux_LFP)/offset_sf
@@ -408,12 +442,17 @@ def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250
     for LFP in val_LFPs:
         print('Original validation data shape: ',LFP.shape)
         print('Sampling frequency: ',sf[counter_sf])
-        norm_val_GT.append(process_LFP(LFP,sf[counter_sf],channels,use_zscore=zscore))
+        tmpLFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False)
+        if use_band is not None:
+            tmpLFP = filter_LFP(tmpLFP, sf=new_sf, band=use_band)
+        if zscore:
+            tmpLFP = (tmpLFP - np.mean(tmpLFP, axis=0))/np.std(tmpLFP, axis=0)
+        norm_val_GT.append(tmpLFP)
         counter_sf += 1
     return retrain_LFP, retrain_GT , norm_val_GT, val_GTs
 
 
-def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=1250):
+def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
     """
     Loads the dataset for the Ripple AI model.
 
@@ -423,7 +462,8 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
     """
     if params['TYPE_ARCH'].find('Shift')>-1:
         print('Using Shift')
-        sample_shift = int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Shift')+5:params['TYPE_ARCH'].find('Shift')+7])
+        sample_shift = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Shift')+5:params['TYPE_ARCH'].find('Shift')+7])
+        sample_shift = int(sample_shift/1000*params['SRATE'])
         print(sample_shift)
     else:
         sample_shift = 0
@@ -436,14 +476,14 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
     # Amigo2
     path=os.path.join('/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/','Downloaded_data','Amigo2','figshare_16847521')
     LFP,GT=load_lab_data(path)
-    train_LFPs.append(LFP/1000)
+    train_LFPs.append(LFP)#1000
     train_GTs.append(GT)
     all_SFs.append(30000)
 
     # Som2
     path=os.path.join('/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/','Downloaded_data','Som2','figshare_16856137')
     LFP,GT=load_lab_data(path)
-    train_LFPs.append(LFP/1000)
+    train_LFPs.append(LFP)#/1000
     train_GTs.append(GT)
     all_SFs.append(30000)
 
@@ -480,12 +520,12 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
         val_GTs.append(GT)
         all_SFs.append(30000)
 
-        # ThyNpx Validation
-        path=os.path.join('/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/','Downloaded_data','ThyNpx','figshare_19779337')
-        LFP,GT=load_lab_data(path)
-        val_LFPs.append(LFP)
-        val_GTs.append(GT)
-        all_SFs.append(2500)
+    # # ThyNpx Validation
+    # path=os.path.join('/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/','Downloaded_data','ThyNpx','figshare_19779337')
+    # LFP,GT=load_lab_data(path)
+    # val_LFPs.append(LFP)
+    # val_GTs.append(GT)
+    # all_SFs.append(2500)
 
     # RippleNet Test Dataset
     # f = h5py.File(os.path.join('/mnt/hpc/projects/MWNaturalPredict/DL/RippleNet/data/m4029_session1.h5'), 'r')
@@ -532,18 +572,24 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
     # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/all_SWRr_val{0}.npy'.format(2), SWr_indexes)
 
     # pdb.set_trace()
-    train_data, train_labels_vec, val_data, val_labels_vec = rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=all_SFs,zscore=preprocess)
+    train_data, train_labels_vec, val_data, val_labels_vec = rippleAI_prepare_training_data(train_LFPs,
+                                                                                            train_GTs,
+                                                                                            val_LFPs,
+                                                                                            val_GTs,
+                                                                                            sf=all_SFs,
+                                                                                            new_sf=params['SRATE'],
+                                                                                            zscore=preprocess,
+                                                                                            use_band=use_band)
     train_data = train_data.astype('float32')
-
     if mode == 'test':
         val_data = [k.astype('float32') for k in val_data]
         return val_data, val_labels_vec
 
     # test_examples, events_test, train_examples, events_train = split_data(train_data, train_labels_vec, sf=30000, split=0.7)
-    test_examples, events_test, train_examples, events_train = split_data(train_data, train_labels_vec, sf=1250, split=0.7)
+    test_examples, events_test, train_examples, events_train = split_data(train_data, train_labels_vec, sf=params['SRATE'], split=0.7)
 
     # fix labels
-    sf = 1250
+    sf = params['SRATE']
     # sf = 30000
 
     y = np.zeros(shape=len(train_examples), dtype=np.float32)
@@ -557,8 +603,10 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
         y[int(sf*event[0]):int(sf*event[1])+sample_shift] = 1
     test_labels = y
 
+
     from scipy import signal
-    M = 51
+    from scipy.signal import butter, filtfilt
+    M = 51/1000*params['SRATE']
     # onsets = np.diff(train_labels)==1
     onsets = np.hstack((0, np.diff(train_labels))).astype(np.uint32)==1
     # offsets = np.hstack((0, np.diff(train_labels))).astype(np.uint32)==-1
@@ -588,7 +636,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
     if params['TYPE_LOSS'].find('Gap')>-1:
         assert(np.abs(np.unique(weights[np.where(onsets)[0]])-1)<0.0001)
         assert(np.unique(weights[np.where(onsets)[0]-1])<0.0001)
-    
+
     # make batches
     if sample_shift>0:
         train_examples = train_examples[:-sample_shift, :]
@@ -604,7 +652,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
     print(test_examples.shape)
     print(test_labels.shape)
 
-    weights = weights.astype('float32')*0
+    weights = weights.astype('float32')
     # make datasets
     sample_length = params['NO_TIMEPOINTS']*2
     stride_step = sample_length/params['NO_STRIDES']
@@ -649,24 +697,32 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, spatial_freq=12
 
     # train_y = train_y.map(lambda x: tf.pad(x, [[0, 0], [50, 0], [0, 0]], 'CONSTANT', constant_values=0.0))
     train_xy = train_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
+    test_xy = test_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
     # Concatenate train_x and train_y per batch
-    train_c = tf.data.Dataset.zip((train_xy, train_y))
+    test_c = tf.data.Dataset.zip((test_xy, test_y))
+    train_c = tf.data.Dataset.zip((train_xy, train_y, train_w))
+
+    @tf.autograph.experimental.do_not_convert
+    def concat_lfps_labels_weights(lfps, labels, weights):
+        return tf.concat([lfps, labels, weights], axis=-1)  # Concatenate along the last axis (channels)ZZ
+    train_d = train_c.map(lambda x, y, z: concat_lfps_labels_weights(x, y, z))
+
     @tf.autograph.experimental.do_not_convert
     def concat_lfps_labels(lfps, labels):
         return tf.concat([lfps, labels], axis=-1)  # Concatenate along the last axis (channels)ZZ
-    train_d = train_c.map(lambda x, y: concat_lfps_labels(x, y))
+    test_d = test_c.map(lambda x, y: concat_lfps_labels(x, y))
 
     # Combine the dataset with weights
-    train_dataset = tf.data.Dataset.zip((train_x, train_d, train_w))
-    test_dataset = tf.data.Dataset.zip((test_x, test_y)).prefetch(tf.data.experimental.AUTOTUNE)
+    train_dataset = tf.data.Dataset.zip((train_x, train_d))
+    test_dataset = tf.data.Dataset.zip((test_x, test_d)).prefetch(tf.data.experimental.AUTOTUNE)
 
     if params['TYPE_ARCH'].find('Aug')>-1:
         print('Using Augmentations:')
-        train_dataset = apply_augmentation_to_dataset(train_dataset, params=params)
+        train_dataset = apply_augmentation_to_dataset(train_dataset, params=params, sampling_rate=params['SRATE'])
     else:
         print('No augmentation')
 
-    train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"], reshuffle_each_iteration=True).prefetch(tf.data.experimental.AUTOTUNE)#.batch(params["BATCH_SIZE"])
+    train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"], reshuffle_each_iteration=True).prefetch(tf.data.experimental.AUTOTUNE)
 
 
 
