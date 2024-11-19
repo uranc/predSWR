@@ -355,7 +355,6 @@ def process_LFP(LFP, ch=np.arange(0,8), sf=30000, new_sf=1250, use_zscore=True):
     '''
     # data=interpolate_channels(LFP,channels)
     data = LFP
-    pdb.set_trace()
     if sf!=1250:
         print('Downsampling data at {} Hz...'.format(new_sf))
         data = downsample_data(data, sf, downsampled_fs=new_sf)

@@ -10,4 +10,5 @@ allen_dataset/
 *.npy
 *.pdf
 summaries/
+frozen_models/
 time_analysis/ROC_curves/*.png

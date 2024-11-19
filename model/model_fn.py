@@ -507,6 +507,9 @@ def build_DBI_TCN_Horizon(input_timepoints, input_chans=8, params=None):
     concat_outputs = Concatenate(axis=-1)([prediction_output, classification_output])
     # concat_outputs = Lambda(lambda tt: tt[:, -50:, :], name='Slice_Output')(concat_outputs)
     # Define model with both outputs
+    if params['mode']!='train':
+        concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
+    
     model = Model(inputs=inputs, outputs=concat_outputs)
 
     f1_metric = MaxF1MetricHorizon()
@@ -658,6 +661,8 @@ def build_DBI_TCN_Dorizon(input_timepoints, input_chans=8, params=None):
         concat_outputs = Concatenate(axis=-1)([pred_out, classification_output])
         # concat_outputs = Concatenate(axis=-1)([prediction_output, classification_output])
 
+    if params['mode']=='predict':
+        concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
     # Define model with both outputs
     f1_metric = MaxF1MetricHorizon()
     model = Model(inputs=inputs, outputs=concat_outputs)
@@ -792,6 +797,8 @@ def build_DBI_TCN_Corizon(input_timepoints, input_chans=8, params=None):
         classification_output = Dense(1, activation='sigmoid', name='classification_output')(tcn_out)
         concat_outputs = Concatenate(axis=-1)([pred_out, classification_output])
 
+    if params['mode']=='predict':
+        concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
     model = Model(inputs=inputs, outputs=concat_outputs)
 
             # mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out)) # multiply by labels
@@ -802,7 +809,6 @@ def build_DBI_TCN_Corizon(input_timepoints, input_chans=8, params=None):
                   )
                     # metrics=[tf.keras.metrics.BinaryCrossentropy(),
                     #          tf.keras.metrics.BinaryAccuracy()])
-
     if params['WEIGHT_FILE']:
         print('load model')
         model.load_weights(params['WEIGHT_FILE'])
@@ -1497,7 +1503,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None):
             total_loss += 1e-3*tf.reduce_mean(tf.squeeze(y_pred_exp * (1 - y_pred_exp)))
         if params['TYPE_LOSS'].find('TMSE')>-1:
             print('Truncated MSE Loss')
-            total_loss += 1e-2*truncated_mse_loss(y_true_exp, y_pred_exp, tau=4.0)
+            total_loss += 4e-2*truncated_mse_loss(y_true_exp, y_pred_exp, tau=4.0)
         if params['TYPE_LOSS'].find('EarlyOnset')>-1:
             print('Early Onset Preference Loss')
             total_loss += 1e-3*early_onset_preference_loss(y_true_exp, y_pred_exp, threshold=0.5, early_onset_threshold=5, penalty_factor=0.1, reward_factor=0.05)

@@ -23,11 +23,16 @@ parser.add_argument('--model', type=str, nargs=1,
                     help='model name ie. l9:experiments/l9', default='testSWR')
 parser.add_argument('--mode', type=str, nargs=1,
                     help='mode training/predict', default='train')
+parser.add_argument('--val', type=str, nargs=1,
+                    help='val_id 0,1,2,3', default='10')
 
 args = parser.parse_args()
+print(parser.parse_args())
 mode = args.mode[0]
 model_name = args.model[0]
-
+val_id = int(args.val[0])
+print(val_id)
+# pdb.set_trace()
 # Parameters
 params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*5,
           'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 200,
@@ -75,6 +80,16 @@ if mode == 'train':
     print(params['TYPE_REG'])
     params['TYPE_ARCH'] = param_lib[11]
     print(params['TYPE_ARCH'])
+
+
+    if params['NO_TIMEPOINTS'] == 50:
+        print('50 timepoints window')
+        params['SRATE'] = 1250
+    elif params['NO_TIMEPOINTS'] == 100:
+        print('100 timepoints window')
+        params['SRATE'] = 2500
+    else:
+        pdb.set_trace()
 
     if model_name.find('Hori') != -1: # predict horizon, pred lfp
         from model.model_fn import build_DBI_TCN_Horizon as build_DBI_TCN
@@ -210,8 +225,19 @@ elif mode == 'predict':
         params['TYPE_ARCH'] = param_lib[11]
         print(params['TYPE_ARCH'])
 
+        # get sampling rate # little dangerous
+        if params['NO_TIMEPOINTS'] == 50:
+            print('50 timepoints window')
+            params['SRATE'] = 1250
+        elif params['NO_TIMEPOINTS'] == 100:
+            print('100 timepoints window')
+            params['SRATE'] = 2500
+        else:
+            pdb.set_trace()
+
         # get model
-        a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        # a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        a_model = importlib.import_module('model.model_fn')
         # if model.find('CSD') != -1:
         #     build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
         if model.find('Hori') != -1:
@@ -255,7 +281,7 @@ elif mode == 'predict':
         #     model = load_model(params['WEIGHT_FILE'])
     model.summary()
 
-    params['BATCH_SIZE'] = 512*8
+    params['BATCH_SIZE'] = 512*4
     from model.input_augment_weighted import rippleAI_load_dataset
     # from model.input_aug import rippleAI_load_dataset
     # from model.input_fn import rippleAI_load_dataset
@@ -264,115 +290,76 @@ elif mode == 'predict':
     # rippleAI_load_dataset(params, use_band='low', preprocess=preproc)
     val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
 
-    for j, labels in enumerate(val_labels):
-        np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/labels_val{0}.npy'.format(j), labels)
+    print('val_id: ', val_id)
+    LFP = val_datasets[val_id]
+    labels = val_labels[val_id]
+    print(LFP.shape)
+    # for j, labels in enumerate(val_labels):
+    np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/labels_val{0}_sf{1}.npy'.format(val_id, params['SRATE']), labels)
 
-    # pdb.set_trace()
-    for j, signals in enumerate(val_datasets):
-        np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/signals_val{0}.npy'.format(j), signals)
+    # for j, signals in enumerate(val_datasets):
+    np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/signals_val{0}_sf{1}.npy'.format(val_id, params['SRATE']), LFP)
 
-    # pdb.set_trace()
     from model.cnn_ripple_utils import get_predictions_index, get_performance
 
     # get predictions
-    val_pred = []
-    val_hori = []
     th_arr=np.linspace(0.1,0.9,19)
     n_channels = params['NO_CHANNELS']
     timesteps = params['NO_TIMEPOINTS']
+    samp_freq = params['SRATE']
 
+    # Validation plot in the second ax
+    all_pred_events = []
+    precision=np.zeros(shape=(1,len(th_arr)))
+    recall=np.zeros(shape=(1,len(th_arr)))
+    F1_val=np.zeros(shape=(1,len(th_arr)))
+    TP=np.zeros(shape=(1,len(th_arr)))
+    FN=np.zeros(shape=(1,len(th_arr)))
+    IOU=np.zeros(shape=(1,len(th_arr)))
     from keras.utils import timeseries_dataset_from_array
 
     # get predictions
-    # val_datasets = [val_datasets[2]]
-    # val_labels = [val_labels[2]]
-    for LFP in val_datasets:
-        if model_name == 'RippleNet':
-            sample_length = params['NO_TIMEPOINTS']
-            all_probs = []
-            for ich in range(LFP.shape[1]):
-                train_x = timeseries_dataset_from_array(LFP[:,ich]/1000, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
-                windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
-                probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
-                all_probs.append(probs)
-            probs = np.array(all_probs).mean(axis=0)
-            # pdb.set_trace()
-        elif model_name == 'CNN1D':
-            sample_length = 16
-            train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
+    if model_name == 'RippleNet':
+        sample_length = params['NO_TIMEPOINTS']
+        all_probs = []
+        for ich in range(LFP.shape[1]):
+            train_x = timeseries_dataset_from_array(LFP[:,ich]/1000, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
             windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
-            probs = np.hstack((np.zeros((15, 1)).flatten(), windowed_signal))
-        else:
-            sample_length = params['NO_TIMEPOINTS']
-            train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
-            windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
-            if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
-                probs = np.hstack((windowed_signal[0,:-1,-1], windowed_signal[:, -1,-1]))
-                horizon = np.vstack((windowed_signal[0,:-1,:-1], windowed_signal[:, -1,:-1]))
-                val_hori.append(horizon)
-            elif model_name.find('Proto') != -1:
-                probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
-            elif model_name.find('Base_') != -1:
-                probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
-            else:
-                probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
-            # probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(),windowed_signal))
-            # probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
-            # probs = np.hstack((np.zeros((params['NO_TIMEPOINTS'], 1)).flatten(),windowed_signal[0,:-1], windowed_signal[:, -1]))
-        val_pred.append(probs)
-
-    samp_freq = params['SRATE']
-    # Validation plot in the second ax
-    all_pred_events = []
-    precision=np.zeros(shape=(len(val_datasets),len(th_arr)))
-    recall=np.zeros(shape=(len(val_datasets),len(th_arr)))
-    F1_val=np.zeros(shape=(len(val_datasets),len(th_arr)))
-    TP=np.zeros(shape=(len(val_datasets),len(th_arr)))
-    FN=np.zeros(shape=(len(val_datasets),len(th_arr)))
-    IOU=np.zeros(shape=(len(val_datasets),len(th_arr)))
-    for j,pred in enumerate(val_pred):
-        tmp_pred = []
-        # tmp_IOUs = []
-        for i,th in enumerate(th_arr):
-            pred_val_events = get_predictions_index(pred,th)/samp_freq
-            # pred_val_events = get_predictions_index(pred,th)/1250
-            [precision[j,i], recall[j,i], F1_val[j,i], tmpTP, tmpFN, tmpIOU] = get_performance(pred_val_events,val_labels[j],verbose=False)
-            TP[j,i] = tmpTP.sum()
-            FN[j,i] = tmpFN.sum()
-            IOU[j,i] = np.median(tmpIOU.sum(axis=0))
-            tmp_pred.append(pred_val_events)
-        all_pred_events.append(tmp_pred)
-    # pdb.set_trace()
-
-    # pick model
-    print(F1_val)
-    mind = np.argmax(F1_val[0])
-    best_preds = all_pred_events[0][mind]
-    pred_vec = np.zeros(val_datasets[0].shape[0])
-    label_vec = np.zeros(val_datasets[0].shape[0])
-
-    for pred in best_preds:
-        pred_vec[int(pred[0]*samp_freq):int(pred[1]*samp_freq)] = 1
-
-    for lab in val_labels[0]:
-        label_vec[int(lab[0]*samp_freq):int(lab[1]*samp_freq)] = 0.9
-    stats = np.stack((precision, recall, F1_val, TP, FN, IOU), axis=-1)
-
-    for j,pred in enumerate(val_pred):
-        np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}.npy'.format(j, model_name), pred)
-        np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/stats_val{0}_{1}.npy'.format(j, model_name), stats[j,])
-        # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/areas_val{0}_{1}.npy'.format(j, model_name), IOU[j])
+            probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
+            all_probs.append(probs)
+        probs = np.array(all_probs).mean(axis=0)
+        # pdb.set_trace()
+    elif model_name == 'CNN1D':
+        sample_length = 16
+        train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
+        windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
+        probs = np.hstack((np.zeros((15, 1)).flatten(), windowed_signal))
+    else:
+        sample_length = params['NO_TIMEPOINTS']
+        train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
+        windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
         if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
-            np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}.npy'.format(j, model_name), val_hori[j])
+            probs = np.hstack((windowed_signal[0,:-1,-1], windowed_signal[:, -1,-1]))
+            horizon = np.vstack((windowed_signal[0,:-1,:-1], windowed_signal[:, -1,:-1]))
+        elif model_name.find('Proto') != -1:
+            probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
+        elif model_name.find('Base_') != -1:
+            probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
+        else:
+            probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
 
-    # import matplotlib.pyplot as plt
-    # for pred in val_labels[0]:
-    #     rip_begin = int(pred[0]*1250)
-    #     plt.plot(val_datasets[0][rip_begin-128:rip_begin+128, :])
-    #     plt.plot(val_pred[0][rip_begin-128:rip_begin+128], 'k')
-    #     plt.plot(val_pred[0][rip_begin-128:rip_begin+128]*pred_vec[rip_begin-128:rip_begin+128], 'r')
-    #     plt.plot(label_vec[rip_begin-128:rip_begin+128], 'k')
-    #     plt.show()
+    np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}_sf{2}.npy'.format(val_id, model_name, params['SRATE']), probs)
+    if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
+        np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}_sf{2}.npy'.format(val_id, model_name, params['SRATE']), horizon)
+
+    for i,th in enumerate(th_arr):
+        pred_val_events = get_predictions_index(probs,th)/samp_freq
+        [precision[0,i], recall[0,i], F1_val[0,i], tmpTP, tmpFN, tmpIOU] = get_performance(pred_val_events,labels,verbose=False)
+        TP[0,i] = tmpTP.sum()
+        FN[0,i] = tmpFN.sum()
+        IOU[0,i] = np.mean(tmpIOU.sum(axis=0))
+    stats = np.stack((precision, recall, F1_val, TP, FN, IOU), axis=-1)
+    np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/stats_val{0}_{1}_sf{2}.npy'.format(val_id, model_name, params['SRATE']), stats)
 
 elif mode == 'predictSynth':
 
@@ -727,6 +714,7 @@ elif mode=='export':
         # get model parameters
         print(model_name)
         param_lib = model_name.split('_')
+        # pdb.set_trace()
         assert(len(param_lib)==12)
         params['TYPE_MODEL'] = param_lib[0]
         print(params['TYPE_MODEL'])
@@ -762,8 +750,16 @@ elif mode=='export':
         print(params['TYPE_ARCH'])
 
         # get model
-        a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
-        build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+        # a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        a_model = importlib.import_module('model.model_fn')
+        # if model.find('CSD') != -1:
+        #     build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
+        if model.find('Hori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon')
+        elif model.find('Dori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Dorizon')
+        elif model.find('Cori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Corizon')
 
         params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
@@ -772,9 +768,8 @@ elif mode=='export':
     # pdb.set_trace()
     from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
     full_model = tf.function(lambda x: model(x))
-
+    pdb.set_trace()
     full_model = full_model.get_concrete_function([tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype, name="x")])
-
     frozen_func = convert_variables_to_constants_v2(full_model, lower_control_flow=False)
     frozen_func.graph.as_graph_def(add_shapes=True)
     layers = [op.name for op in frozen_func.graph.get_operations()]
@@ -788,9 +783,10 @@ elif mode=='export':
     print("Frozen model outputs: ")
     print(frozen_func.outputs)
 
+    os.mkdir('./frozen_models/{}'.format(model_name))
     # Save frozen graph from frozen ConcreteFunction to hard drive
     tf.io.write_graph(graph_or_graph_def=frozen_func.graph,
-                    logdir="./frozen_models",
+                    logdir="./frozen_models/{}".format(model_name),
                     name="simple_frozen_graph.pb",
                     as_text=False)
     # model.save(
