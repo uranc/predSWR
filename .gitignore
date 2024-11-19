@@ -1,4 +1,6 @@
 experiments/
+experiments_carmen/
+slurm_out/
 experiments_legacy/
 TCN_comparison/
 allen_dataset/

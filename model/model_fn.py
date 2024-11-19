@@ -566,14 +566,15 @@ def build_DBI_multi_TCN_Horizon(input_timepoints, input_chans=8, params=None):
         print('Using ZNorm')
         inputs_nets = Normalization()(inputs_nets)
 
-    # get TCN
+    # get TCNs
+    tcn_branches = []
     if model_type=='Base':
         from tcn import TCN
-        tcn_op = TCN(nb_filters=n_filters,
+        tcn_1_layer = TCN(nb_filters=n_filters,
                         kernel_size=n_kernels,
                         nb_stacks=1,
-                        dilations=[n_dilations+2, n_dilations, n_dilations+4, 2 ], #[2 ** i for i in range(n_dilations)]
-                        # dilations=(1, 2, 4, 8, 16), #, 32
+                        #dilations=[n_dilations+2, n_dilations, n_dilations+4, 2 ], #[2 ** i for i in range(n_dilations)]
+                        dilations=(1, 2), #, 32
                         padding='causal',
                         use_skip_connections=True,
                         dropout_rate=r_drop,
@@ -586,12 +587,65 @@ def build_DBI_multi_TCN_Horizon(input_timepoints, input_chans=8, params=None):
                         use_layer_norm=use_layer_norm,
                         use_weight_norm=use_weight_norm,
                         go_backwards=False,
-                        return_state=False)
-        print(tcn_op.receptive_field)
-        nets = tcn_op(inputs_nets)
-        nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+                        return_state=False, 
+                        name="TCN_1"
+                        )
+        print('TCN 1 RF: ', tcn_1_layer.receptive_field)
+        tcn_1 = tcn_1_layer(inputs_nets)
+        tcn_1 = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output_TCN1')(tcn_1)
+        tcn_branches.append(tcn_1)
 
-    tcn_output = nets
+        tcn_2_layer = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        #dilations=[n_dilations+2, n_dilations, n_dilations+4, 2 ], #[2 ** i for i in range(n_dilations)]
+                        dilations=(8, 14), #, 32
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        # activation=this_activation,
+                        # kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=False,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False, 
+                        name="TCN_2"
+                        )
+        print('TCN 2 RF: ', tcn_2_layer.receptive_field)
+        tcn_2 = tcn_2_layer(inputs_nets)
+        tcn_2 = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output_TCN2')(tcn_2)
+        tcn_branches.append(tcn_2)
+
+        tcn_3_layer = TCN(nb_filters=n_filters,
+                kernel_size=n_kernels,
+                nb_stacks=1,
+                dilations=[2 ** i for i in range(n_dilations)], #[n_dilations+2, n_dilations, n_dilations+4, 2 ], #[2 ** i for i in range(n_dilations)]
+                padding='causal',
+                use_skip_connections=True,
+                dropout_rate=r_drop,
+                return_sequences=True,
+                activation=this_activation,
+                kernel_initializer=this_kernel_initializer,
+                # activation=this_activation,
+                # kernel_initializer=this_kernel_initializer,
+                use_batch_norm=False,
+                use_layer_norm=use_layer_norm,
+                use_weight_norm=use_weight_norm,
+                go_backwards=False,
+                return_state=False, 
+                name="TCN_3"
+                )
+        print('TCN 3 RF: ', tcn_3_layer.receptive_field)
+        tcn_3 = tcn_3_layer(inputs_nets)
+        tcn_3 = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output_TCN3')(tcn_3)
+        tcn_branches.append(tcn_3)
+    # Concatenate outputs from all TCN branches
+    tcn_output = Concatenate(axis=-1, name="Merged_TCN_Output")(tcn_branches)
+    
     output_dim = 8
     tmp_pred = Dense(32, activation=this_activation, name='tmp_pred')(tcn_output)  # Output future values
     prediction_output = Dense(output_dim, activation='linear', name='prediction_output')(tmp_pred)  # Output future values
@@ -646,7 +700,7 @@ def build_DBI_multi_TCN_Horizon(input_timepoints, input_chans=8, params=None):
         model.load_weights(params['WEIGHT_FILE'])
 
     return model
-
+    
 
 def build_DBI_TCN_Dorizon(input_timepoints, input_chans=8, params=None):
 

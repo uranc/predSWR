@@ -7,61 +7,50 @@ import time
 import copy
 import numpy as np
 
-# model_lib = ['Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150Focal_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150FocalGap_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150FocalAnchor_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150FocalGapAnchor_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054Focal_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054FocalGap_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054FocalAnchor_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054FocalGapAnchor_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004Focal_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004FocalGap_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004FocalAnchor_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004FocalGapAnchor_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150Tversky_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150TverskyGap_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150TverskyAnchor_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150TverskyGapAnchor_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054Tversky_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054TverskyGap_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054TverskyAnchor_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054TverskyGapAnchor_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004Tversky_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004TverskyGap_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004TverskyAnchor_GloWReg_Shift00',
-#              'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004TverskyGapAnchor_GloWReg_Shift00',
-#              ]
 
-model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop10Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop20Shift00',
-             'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop05Shift00', 
-             'Base_K5_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop05Shift00', 
-             'Base_K4_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Shift00', 
-             'Base_K4_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop10Shift00', 
-             'Base_K4_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop20Shift00', 
-             'Base_K5_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop10Shift00',
-             'Base_K5_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop20Shift00', 
-             'Base_K5_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Shift00',
-             'Base_K5_T50_D4_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Shift00',
-             'Base_K4_T50_D4_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Shift00',
-             'Base_K4_T50_D4_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop10Shift00',
-             'Base_K5_T50_D4_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop10Shift00',
-             'Base_K7_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop10Shift00'
-    ]
+# model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop10Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop20Shift00',
+#              'Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop05Shift00', 
+#              'Base_K5_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop05Shift00', 
+#              'Base_K4_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Shift00', 
+#              'Base_K4_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop10Shift00', 
+#              'Base_K4_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop20Shift00', 
+#              'Base_K5_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop10Shift00',
+#              'Base_K5_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop20Shift00', 
+#              'Base_K5_T50_D2_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Shift00',
+#              'Base_K5_T50_D4_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Shift00',
+#              'Base_K4_T50_D4_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Shift00',
+#              'Base_K4_T50_D4_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop10Shift00',
+#              'Base_K7_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiHori05Loss011Drop10Shift00'
+#     ]
+# model_lib = ['',
+#              '',
+#              '',
+#              '',
+#              '',
+#              '',
+#              '',
+#              '',
+#              '',
+#              '',
+#              '',
+#              '',
+#             ]
+model_lib = ['Base_K4_T50_D3_N32_L3_E400_B32_S50_FocalGapAx025Gx200Margin_GloWReg_MMaskedmultiNormHori05Loss011Shift00',
+            ]
 
 ijob = -1
 for model_name in model_lib:
-    exp_dir = 'experiments_carmen/' + model_name
+    exp_dir = '/cs/projects/OWVinckSWR/DL/predSWR/experiments_carmen/' + model_name
     pr = exp_dir + '/model/'
     if not path.exists(pr):
         print(exp_dir + '/model')
-        shutil.copytree('model', exp_dir +'/model')
-        shutil.copyfile('./pred_carmen.py', exp_dir +'/pred_carmen.py')
+        shutil.copytree('/cs/projects/OWVinckSWR/DL/predSWR/model', exp_dir +'/model')
+        shutil.copyfile('/cs/projects/OWVinckSWR/DL/predSWR/pred_carmen.py', exp_dir +'/pred_carmen.py')
         time.sleep(0.1)
     ijob += 1
-    subprocess.call(['sbatch', 'gpu_batch_107test_carmen.sh', model_name])
+    subprocess.call(['sbatch', '/cs/projects/OWVinckSWR/DL/predSWR/gpu_batch_107test_carmen.sh', model_name])
     # subprocess.call(['sbatch', 'gpu_batch_107short.sh', model_name])
     # subprocess.call(['sbatch', 'gpu_batch_107long.sh', model_name])
     # if ijob % 10 < 4:
