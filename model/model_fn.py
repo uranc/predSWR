@@ -1501,6 +1501,10 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None):
             print('Margin Loss')
             # pdb.set_trace()
             total_loss += 1e-3*tf.reduce_mean(tf.squeeze(y_pred_exp * (1 - y_pred_exp)))
+        if params['TYPE_LOSS'].find('Entropy')>-1:
+            print('Entropy Loss')
+            entropy_loss = -y_pred_exp * tf.math.log(y_pred_exp + tf.keras.backend.epsilon()) - (1 - y_pred_exp) * tf.math.log(1 - y_pred_exp + tf.keras.backend.epsilon())
+            total_loss += 1e-3 * tf.reduce_mean(entropy_loss)
         if params['TYPE_LOSS'].find('TMSE')>-1:
             print('Truncated MSE Loss')
             total_loss += 4e-2*truncated_mse_loss(y_true_exp, y_pred_exp, tau=4.0)

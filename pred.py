@@ -259,7 +259,6 @@ elif mode == 'predict':
             model.summary()
             # model.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/{0}/'.format(model_name)+'best_model.h5')
             # import pdb
-            # pdb.set_trace()
             # build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon_Updated')
             # model, train_model = build_DBI_TCN_Horizon_Updated(input_timepoints=params['NO_TIMEPOINTS'], input_chans=8, embedding_dim=params['NO_FILTERS'], params=params)
         else:
@@ -338,9 +337,14 @@ elif mode == 'predict':
         sample_length = params['NO_TIMEPOINTS']
         train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
         windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
+
         if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
-            probs = np.hstack((windowed_signal[0,:-1,-1], windowed_signal[:, -1,-1]))
-            horizon = np.vstack((windowed_signal[0,:-1,:-1], windowed_signal[:, -1,:-1]))
+            if len(windowed_signal.shape) == 3:
+                probs = np.hstack((windowed_signal[0,:-1,-1], windowed_signal[:, -1,-1]))
+                horizon = np.vstack((windowed_signal[0,:-1,:-1], windowed_signal[:, -1,:-1]))
+            else:
+                probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal[:,-1]))
+                horizon = np.vstack((np.zeros((sample_length-1, 8)), windowed_signal[:, :-1]))
         elif model_name.find('Proto') != -1:
             probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
         elif model_name.find('Base_') != -1:
