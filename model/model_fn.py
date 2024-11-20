@@ -532,6 +532,192 @@ def build_DBI_TCN_Horizon(input_timepoints, input_chans=8, params=None):
 
     return model
 
+def build_DBI_multi_TCN_Horizon(input_timepoints, input_chans=8, params=None):
+
+    # params
+    use_batch_norm = params['TYPE_REG'].find('BN')>-1
+    use_weight_norm = params['TYPE_REG'].find('WReg')>-1
+    use_layer_norm = False
+    use_l1_norm = False
+    # this_activation = 'relu'
+    # this_activation = tf.keras.activations.gelu
+    this_activation = ELU(alpha=1)
+    # this_activation = ELU(alpha=0.1)
+    this_kernel_initializer = 'glorot_uniform'
+    # this_kernel_initializer = 'he_normal'
+    model_type = params['TYPE_MODEL']
+    n_filters = params['NO_FILTERS']
+    n_kernels = params['NO_KERNELS']
+    n_dilations = params['NO_DILATIONS']
+    if params['TYPE_ARCH'].find('Drop')>-1:
+        r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
+        print('Using Dropout')
+        print(r_drop)
+    else:
+        r_drop = 0.0
+
+    hori_shift = 0  # Default value
+    if params['TYPE_ARCH'].find('Hori')>-1:
+        print('Using Horizon Timesteps:')
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Hori')+4:params['TYPE_ARCH'].find('Hori')+6])/1000*1250)
+        print(hori_shift)
+
+    if params['TYPE_ARCH'].find('Loss')>-1:
+        print('Using Loss Weight:')
+        loss_weight = (params['TYPE_ARCH'][params['TYPE_ARCH'].find('Loss')+4:params['TYPE_ARCH'].find('Loss')+7])
+        weight = 1 if int(loss_weight[0])==1 else -1
+        loss_weight = float(loss_weight[1])*10**(weight*float(loss_weight[2]))
+        print(loss_weight)
+
+    # load labels
+    # inputs = Input(shape=(None, input_chans), name='inputs')
+    inputs = Input(shape=(100, input_chans), name='inputs')
+
+    if params['TYPE_ARCH'].find('CSD')>-1:
+        csd_inputs = CSDLayer()(inputs)
+        inputs_nets = Concatenate(axis=-1)([inputs, csd_inputs])
+    else:
+        inputs_nets = inputs
+
+    if params['TYPE_ARCH'].find('ZNorm')>-1:
+        print('Using ZNorm')
+        inputs_nets = Normalization()(inputs_nets)
+
+    # get TCNs
+    tcn_branches = []
+    if model_type=='Base':
+        from tcn import TCN
+        tcn_1_layer = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        #dilations=[n_dilations+2, n_dilations, n_dilations+4, 2 ], #[2 ** i for i in range(n_dilations)]
+                        dilations=(1, 2), #, 32
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        # activation=this_activation,
+                        # kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=False,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False, 
+                        name="TCN_1"
+                        )
+        print('TCN 1 RF: ', tcn_1_layer.receptive_field)
+        tcn_1 = tcn_1_layer(inputs_nets)
+        tcn_1 = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output_TCN1')(tcn_1)
+        tcn_branches.append(tcn_1)
+
+        tcn_2_layer = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        #dilations=[n_dilations+2, n_dilations, n_dilations+4, 2 ], #[2 ** i for i in range(n_dilations)]
+                        dilations=(8, 14), #, 32
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        # activation=this_activation,
+                        # kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=False,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False, 
+                        name="TCN_2"
+                        )
+        print('TCN 2 RF: ', tcn_2_layer.receptive_field)
+        tcn_2 = tcn_2_layer(inputs_nets)
+        tcn_2 = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output_TCN2')(tcn_2)
+        tcn_branches.append(tcn_2)
+
+        tcn_3_layer = TCN(nb_filters=n_filters,
+                kernel_size=n_kernels,
+                nb_stacks=1,
+                dilations=[2 ** i for i in range(n_dilations)], #[n_dilations+2, n_dilations, n_dilations+4, 2 ], #[2 ** i for i in range(n_dilations)]
+                padding='causal',
+                use_skip_connections=True,
+                dropout_rate=r_drop,
+                return_sequences=True,
+                activation=this_activation,
+                kernel_initializer=this_kernel_initializer,
+                # activation=this_activation,
+                # kernel_initializer=this_kernel_initializer,
+                use_batch_norm=False,
+                use_layer_norm=use_layer_norm,
+                use_weight_norm=use_weight_norm,
+                go_backwards=False,
+                return_state=False, 
+                name="TCN_3"
+                )
+        print('TCN 3 RF: ', tcn_3_layer.receptive_field)
+        tcn_3 = tcn_3_layer(inputs_nets)
+        tcn_3 = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output_TCN3')(tcn_3)
+        tcn_branches.append(tcn_3)
+    # Concatenate outputs from all TCN branches
+    tcn_output = Concatenate(axis=-1, name="Merged_TCN_Output")(tcn_branches)
+    
+    output_dim = 8
+    tmp_pred = Dense(32, activation=this_activation, name='tmp_pred')(tcn_output)  # Output future values
+    prediction_output = Dense(output_dim, activation='linear', name='prediction_output')(tmp_pred)  # Output future values
+
+    if params['TYPE_ARCH'].find('SelfPosAtt')>-1:
+        print('Using Self Positional Attention')
+        # compute csd of the predicted values as well
+        pred_CSD = CSDLayer()(prediction_output)
+        att_in = Concatenate(axis=-1)([pred_CSD, prediction_output])
+        embed_dim, num_heads, num_channels = 16, 4, 50  # Adjust based on model structure
+        attention_layer = SelfAttentionPositional(embed_dim=embed_dim, num_heads=num_heads, num_channels=num_channels)
+        attentive_output = attention_layer(att_in)
+        tcn_output = Concatenate(axis=-1)([tcn_output, attentive_output])
+        # pdb.set_trace()
+
+    elif params['TYPE_ARCH'].find('LayerAtt')>-1:
+        print('Using LearnedAttention')
+        pred_CSD = CSDLayer()(prediction_output)
+
+        lfp_output = TwoStageAttentivePooling(embed_dim=8, num_heads=4, num_queries=50)(prediction_output)
+        csd_output = TwoStageAttentivePooling(embed_dim=8, num_heads=4, num_queries=50)(pred_CSD)
+        attentive_output = Concatenate(axis=-1)([lfp_output, csd_output])
+        tcn_output = Concatenate(axis=-1)([tcn_output, attentive_output])
+
+    # sigmoid out
+    tmp_class = Dense(32, activation=this_activation, name='tmp_class')(tcn_output)
+
+    # add confidence layer
+    if params['TYPE_ARCH'].find('Confidence')>-1:
+        print('Using Confidence Inputs')
+        conf_inputs = Lambda(lambda tt: tt[:, -50:, :], name='Slice_Confidence')(inputs)
+        confidence = tf.reduce_mean(tf.square(conf_inputs-prediction_output), axis=-1, keepdims=True)
+        tmp_class = Concatenate(axis=-1)([tmp_class, confidence])
+
+    # compute probability
+    classification_output = Dense(1, activation='sigmoid', name='classification_output')(tmp_class)
+    concat_outputs = Concatenate(axis=-1)([prediction_output, classification_output])
+    # concat_outputs = Lambda(lambda tt: tt[:, -50:, :], name='Slice_Output')(concat_outputs)
+    # Define model with both outputs
+    model = Model(inputs=inputs, outputs=concat_outputs)
+
+
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
+                    loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params),
+                    metrics=[custom_mse_metric, custom_binary_accuracy]
+                  )
+                    # metrics=[tf.keras.metrics.BinaryCrossentropy(),
+                    #          tf.keras.metrics.BinaryAccuracy()])
+
+    if params['WEIGHT_FILE']:
+        print('load model')
+        model.load_weights(params['WEIGHT_FILE'])
+
+    return model
+    
 
 def build_DBI_TCN_Dorizon(input_timepoints, input_chans=8, params=None):
 

@@ -8,6 +8,33 @@ import copy
 import numpy as np
 
 
+
+
+model_lib = ['Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150Focal_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150FocalGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150FocalAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150FocalGapAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054Focal_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054FocalGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054FocalAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054FocalGapAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004Focal_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004FocalGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004FocalAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004FocalGapAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150Tversky_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150TverskyGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150TverskyAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto150TverskyGapAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054Tversky_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054TverskyGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054TverskyAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto054TverskyGapAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004Tversky_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004TverskyGap_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004TverskyAnchor_GloWReg_Shift00',
+             'Base_K4_T50_D3_N32_L3_E100_B32_S50_XProto004TverskyGapAnchor_GloWReg_Shift00',
+             ]
 # model_lib = ['Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalAx025Gx200_GloWReg_Hori01Loss012Shift00',
 #              'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalAx025Gx200_GloWReg_Hori05Loss012Shift00',
 #              'Base_K4_T50_D3_N32_L3_E300_B32_S50_FocalAx025Gx200_GloWReg_Hori10Loss012Shift00',
