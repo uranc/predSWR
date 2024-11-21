@@ -20,7 +20,8 @@ def train_pred(model,
                train_inputs,
                valid_inputs,
                n_epoch,
-               save_dir):
+               save_dir,
+               checkpoint_metric='val_max_f1_metric_horizon'):
     """Train the model on `num_steps` batches
     Args:
         model: (Keras Model) contains the graph
@@ -30,11 +31,11 @@ def train_pred(model,
     callbacks = []
     callbacks.append(cb.ReduceLROnPlateau(monitor='val_loss',
                                           factor=0.5,
-                                          patience=20,
+                                          patience=10,
                                           verbose=1,
                                           mode='auto',
                                           min_delta=0.0001,
-                                          cooldown=10,
+                                          cooldown=5,
                                           min_lr=1e-5))
     callbacks.append(cb.EarlyStopping(monitor='val_loss',
                                         min_delta=0.0001,
@@ -53,7 +54,7 @@ def train_pred(model,
     callbacks.append(cb.ModelCheckpoint(save_dir + '/weights.last.h5',
                                         # monitor='val_custom_binary_accuracy', # val_ssim
                                         # monitor='val_loss',
-                                        monitor='val_max_f1_metric_horizon',
+                                        monitor=checkpoint_metric,
                                         # monitor='val_binary_accuracy', # val_ssim
                                         verbose=1,
                                         save_best_only=True,

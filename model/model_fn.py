@@ -2,6 +2,7 @@ from tensorflow.keras.layers import Conv1D, Conv2D, ELU, Input, LSTM, Dense, Dro
 from tensorflow.keras.layers import BatchNormalization, Activation, Flatten, Concatenate, Lambda
 from tensorflow.keras.initializers import GlorotUniform, Orthogonal
 from tensorflow_addons.layers import WeightNormalization
+from tensorflow_addons.losses import SigmoidFocalCrossEntropy, LiftedStructLoss, TripletSemiHardLoss, TripletHardLoss, ContrastiveLoss
 from tensorflow.keras.initializers import Constant
 from tensorflow.keras.regularizers import l1, l2
 from tensorflow.keras import backend as K
@@ -425,8 +426,6 @@ def build_DBI_TCN_Horizon(input_timepoints, input_chans=8, params=None):
     # inputs = Input(shape=(None, input_chans), name='inputs')
     inputs = Input(shape=(None, input_chans), name='inputs')
 
-
-
     if params['TYPE_ARCH'].find('ZNorm')>-1:
         print('Using ZNorm')
         inputs = Normalization()(inputs)
@@ -718,6 +717,7 @@ def build_DBI_multi_TCN_Horizon(input_timepoints, input_chans=8, params=None):
 
     return model
     
+
 
 def build_DBI_TCN_Dorizon(input_timepoints, input_chans=8, params=None):
 
@@ -1391,6 +1391,150 @@ def update_prototypes(embeddings, labels, p_event, p_non_event):
 
 #     return model, train_model
 
+
+def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
+
+    # logit oer sigmoid
+    flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
+    print('Using Sigmoid:', flag_sigmoid)
+    # params
+    use_batch_norm = params['TYPE_REG'].find('BN')>-1
+    use_weight_norm = params['TYPE_REG'].find('WReg')>-1
+    use_layer_norm = params['TYPE_REG'].find('LN')>-1
+    # this_activation = 'relu'
+    this_activation = ELU(alpha=1)
+    if params['TYPE_REG'].find('Glo')>-1:
+        print('Using Glorot')
+        this_kernel_initializer = 'glorot_uniform'
+    elif params['TYPE_REG'].find('He')>-1:
+        print('Using He')
+        this_kernel_initializer = 'he_normal'
+    model_type = params['TYPE_MODEL']
+    n_filters = params['NO_FILTERS']
+    n_kernels = params['NO_KERNELS']
+    n_dilations = params['NO_DILATIONS']
+    if params['TYPE_ARCH'].find('Drop')>-1:
+        r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
+        print('Using Dropout')
+        print(r_drop)
+    else:
+        r_drop = 0.0
+
+    hori_shift = 0  # Default value
+    if params['TYPE_ARCH'].find('Hori')>-1:
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Hori')+4:params['TYPE_ARCH'].find('Hori')+6])/1000*params['SRATE'])
+        print('Using Horizon Timesteps:', hori_shift)
+
+    if params['TYPE_ARCH'].find('Loss')>-1:
+        loss_weight = (params['TYPE_ARCH'][params['TYPE_ARCH'].find('Loss')+4:params['TYPE_ARCH'].find('Loss')+7])
+        weight = 1 if int(loss_weight[0])==1 else -1
+        loss_weight = float(loss_weight[1])*10**(weight*float(loss_weight[2]))
+        print('Using Loss Weight:', loss_weight)
+
+    # load labels
+    # inputs = Input(shape=(None, input_chans), name='inputs')
+    inputs = Input(shape=(None, input_chans), name='inputs')
+
+    if params['TYPE_ARCH'].find('ZNorm')>-1:
+        print('Using ZNorm')
+        inputs = Normalization()(inputs)
+
+    if params['TYPE_ARCH'].find('CSD')>-1:
+        csd_inputs = CSDLayer()(inputs)
+        inputs_nets = Concatenate(axis=-1)([inputs, csd_inputs])
+    else:
+        inputs_nets = inputs
+
+    # get TCN
+    if model_type=='Base':
+        from tcn import TCN
+        tcn_op = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        # dilations=(1, 2, 4, 8, 16), #, 32
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        # activation=this_activation,
+                        # kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=use_batch_norm,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+        print(tcn_op.receptive_field)
+        nets = tcn_op(inputs_nets)
+        nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+
+    if params['TYPE_ARCH'].find('L2N')>-1:
+        tcn_output = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(nets)
+    else:
+        tcn_output = nets
+
+    # tcn_output = nets
+    output_dim = 8
+    # tmp_pred = Dense(32, activation=this_activation, name='tmp_pred')(tcn_output)  # Output future values
+    prediction_output = Conv1D(output_dim, kernel_size=1, activation='linear', name='prediction_output')(tcn_output)  # Output future values
+    # prediction_output = Dense(output_dim, activation='linear', name='prediction_output')(tmp_pred)  # Output future values
+
+    # sigmoid out
+    # tmp_class = Dense(32, activation=this_activation, name='tmp_class')(tcn_output)
+    if flag_sigmoid:
+        tmp_class = Conv1D(1, kernel_size=1, activation='linear', name='tmp_class')(tcn_output)
+    else:
+        tmp_class = Conv1D(1, kernel_size=1, activation='sigmoid', name='tmp_class')(tcn_output)
+
+    # add confidence layer
+    if params['TYPE_ARCH'].find('Confidence')>-1:
+        print('Using Confidence Inputs')
+        conf_inputs = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Confidence')(inputs)
+        confidence = tf.reduce_mean(tf.square(conf_inputs-prediction_output), axis=-1, keepdims=True)
+        tmp_class = Concatenate(axis=-1)([tmp_class, confidence])
+
+    # compute probability
+    # classification_output = Dense(1, activation='sigmoid', name='classification_output')(tmp_class)
+    classification_output = tmp_class
+    concat_outputs = Concatenate(axis=-1)([prediction_output, classification_output])
+    # concat_outputs = Lambda(lambda tt: tt[:, -50:, :], name='Slice_Output')(concat_outputs)
+    # Define model with both outputs
+    if params['mode']!='train':
+        concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
+    
+    model = Model(inputs=inputs, outputs=concat_outputs)
+
+    
+    if flag_sigmoid:
+        # f1_metric = MaxF1MetricHorizonMixer()
+        # this_binary_accuracy = custom_binary_accuracy_mixer
+        f1_metric = MaxF1MetricHorizon()
+        this_binary_accuracy = custom_binary_accuracy
+    else:
+        f1_metric = MaxF1MetricHorizon()
+        this_binary_accuracy = custom_binary_accuracy
+        
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
+                  loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model),
+                  metrics=[custom_mse_metric, this_binary_accuracy, f1_metric])
+                    # f1_metric
+                    # metrics=[tf.keras.metrics.BinaryCrossentropy(),
+                    #          tf.keras.metrics.BinaryAccuracy()])
+
+        # # Instantiate F1 metric outside of `evaluate`
+        # val_f1_metric = MaxF1Metric()
+        # val_accuracy_metric = tf.keras.metrics.BinaryAccuracy()
+        # val_precision_metric = tf.keras.metrics.Precision()
+        # val_recall_metric = tf.keras.metrics.Recall()
+        # val_loss_metric = tf.keras.metrics.Mean()
+    if params['WEIGHT_FILE']:
+        print('load model')
+        model.load_weights(params['WEIGHT_FILE'])
+
+    return model
+
 class CSDLayer(Layer):
     """
     A custom Keras layer that computes Current Source Density (CSD)
@@ -1427,6 +1571,12 @@ class CSDLayer(Layer):
         return config
 
 ###### Loss Functions ######
+
+def custom_binary_accuracy_mixer(y_true, y_pred):
+    # Calculate Binary Accuracy for the last channel
+    y_true_exp = tf.expand_dims(y_true[:, :, 8], axis=-1)
+    y_pred_exp = tf.math.sigmoid(tf.expand_dims(y_pred[:, :, 8], axis=-1))
+    return tf.keras.metrics.binary_accuracy(y_true_exp, y_pred_exp)
 
 def custom_mse_metric(y_true, y_pred):
     # Calculate MSE for the first 8 channels
@@ -1600,6 +1750,62 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
         self.fp.assign(tf.zeros_like(self.fp))
         self.fn.assign(tf.zeros_like(self.fn))
 
+
+class MaxF1MetricHorizonMixer(tf.keras.metrics.Metric):
+    def __init__(self, thresholds=tf.linspace(0.0, 1.0, 5), **kwargs):#tf.linspace(0.0, 1.0, 11)
+        super(MaxF1MetricHorizonMixer, self).__init__(**kwargs)
+        self.thresholds = thresholds
+        # Initialize accumulators for tp, fp, fn for each threshold
+        self.tp = self.add_weight(
+            shape=(len(thresholds),), initializer='zeros', name='tp')
+        self.fp = self.add_weight(
+            shape=(len(thresholds),), initializer='zeros', name='fp')
+        self.fn = self.add_weight(
+            shape=(len(thresholds),), initializer='zeros', name='fn')
+
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        # Cast to float32
+        y_true = tf.cast(y_true[:, :, 8], tf.float32)
+        y_pred = tf.math.sigmoid(tf.cast(y_pred[:, :, 8], tf.float32))
+
+        def compute_metrics(threshold):
+            y_pred_thresh = tf.cast(tf.reduce_any(y_pred >= threshold, axis=1), tf.float32)
+            y_true_bin = tf.cast(tf.reduce_any(y_true==1, axis=1), tf.float32)
+
+            # Calculate batch TP, FP, FN
+            tp = tf.reduce_sum(y_pred_thresh * y_true_bin)
+            fp = tf.reduce_sum(y_pred_thresh * (1 - y_true_bin))
+            fn = tf.reduce_sum((1 - y_pred_thresh) * y_true_bin)
+
+            return tp, fp, fn
+
+        # Use tf.map_fn to compute metrics for all thresholds
+        def threshold_metrics(threshold):
+            return compute_metrics(threshold)
+
+        metrics = tf.map_fn(threshold_metrics, self.thresholds, dtype=(tf.float32, tf.float32, tf.float32))
+        tp_all, fp_all, fn_all = metrics
+
+        # Update accumulators using vectorized operations
+        self.tp.assign_add(tp_all)
+        self.fp.assign_add(fp_all)
+        self.fn.assign_add(fn_all)
+
+    def result(self):
+        # Calculate F1 scores using accumulated metrics
+        precision = self.tp / (self.tp + self.fp + tf.keras.backend.epsilon())
+        recall = self.tp / (self.tp + self.fn + tf.keras.backend.epsilon())
+        f1_scores = 2 * (precision * recall) / (precision + recall + tf.keras.backend.epsilon())
+
+        return tf.reduce_max(f1_scores)
+
+    def reset_state(self):
+        # Reset all accumulators to zero
+        self.tp.assign(tf.zeros_like(self.tp))
+        self.fp.assign(tf.zeros_like(self.fp))
+        self.fn.assign(tf.zeros_like(self.fn))
+
+
 class SelfAttentionPositional(tf.keras.layers.Layer):
     def __init__(self, embed_dim, num_heads, num_channels):
         super(SelfAttentionPositional, self).__init__()
@@ -1636,9 +1842,9 @@ class TwoStageAttentivePooling(tf.keras.layers.Layer):
         combined_attention = self.concat([deep_attention_output, superficial_attention_output])
         return self.norm(combined_attention)
 
-
 def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None):
-    def loss_fn(y_true, y_pred, loss_weight=loss_weight, horizon=horizon):
+    flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
+    def loss_fn(y_true, y_pred, loss_weight=loss_weight, horizon=horizon, flag_sigmoid=flag_sigmoid):
         print(y_true.shape)
         print(y_pred.shape)
         prediction_targets = y_true[:, horizon:, :8]              # Targets starting from horizon
@@ -1657,6 +1863,15 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None):
         elif params['TYPE_LOSS'].find('FocalSmoothless')>-1:
             print('FocalRegular')
             total_loss = tf.keras.losses.binary_focal_crossentropy(y_true_exp, y_pred_exp, apply_class_balancing=True)
+        elif params['TYPE_LOSS'].find('SigmoidFoc')>-1:
+            print('Sigmoid Focal Loss')
+            aind = params['TYPE_LOSS'].find('Ax')+2
+            alp = float(params['TYPE_LOSS'][aind:aind+3])/100
+            gind = params['TYPE_LOSS'].find('Gx')+2
+            gam = float(params['TYPE_LOSS'][gind:gind+3])/100
+            print('Alpha: {0}, Gamma: {1}'.format(alp, gam))
+            sigmoid_focal_loss = SigmoidFocalCrossEntropy(alpha=alp,gamma=gam,reduction='none')
+            total_loss = tf.reduce_mean(tf.multiply(sigmoid_focal_loss(y_true_exp, y_pred_exp), sample_weight))                            
         elif params['TYPE_LOSS'].find('Focal')>-1:
             print('Focal')
             aind = params['TYPE_LOSS'].find('Ax')+2
@@ -1672,9 +1887,24 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None):
                 # total_loss = tf.keras.losses.binary_focal_crossentropy(y_true_exp, y_pred_exp, apply_class_balancing=True, alpha = alp, gamma = gam)
                 focal_loss = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True,alpha=alp,gamma=gam,axis=-1,reduction='none')
                 total_loss = tf.reduce_mean(tf.multiply(focal_loss(y_true_exp, y_pred_exp), sample_weight))
+        elif params['TYPE_LOSS'].find('LiftedStruct')>-1:
+            print('Lifted Structured Loss')
+            total_loss = LiftedStructLoss()(y_true_exp, y_pred_exp)
+        elif params['TYPE_LOSS'].find('Contrastive')>-1:        
+            print('Contrastive Loss')
+            total_loss = ContrastiveLoss()(y_true_exp, y_pred_exp)
+        elif params['TYPE_LOSS'].find('TripletHard')>-1:    
+            print('Triplet Hard Loss')
+            total_loss = TripletHardLoss()(y_true_exp, y_pred_exp)
+        elif params['TYPE_LOSS'].find('TripletSemiHard')>-1:    
+            print('Triplet Semi-Hard Loss')
+            total_loss = TripletSemiHardLoss()(y_true_exp, y_pred_exp)
         else:
             pdb.set_trace()
 
+        if flag_sigmoid:
+            y_pred_exp = tf.math.sigmoid(y_pred_exp)
+        
         # extra losses that can also be combined
         if params['TYPE_LOSS'].find('TV')>-1:
             print('TV Loss')

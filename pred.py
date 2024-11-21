@@ -81,17 +81,17 @@ if mode == 'train':
     params['TYPE_ARCH'] = param_lib[11]
     print(params['TYPE_ARCH'])
 
-
-    if params['NO_TIMEPOINTS'] == 50:
-        print('50 timepoints window')
-        params['SRATE'] = 1250
-    elif params['NO_TIMEPOINTS'] == 100:
-        print('100 timepoints window')
-        params['SRATE'] = 2500
+    # get sampling rate # little dangerous assumes 4 digits
+    if 'Samp' in params['TYPE_LOSS']:
+        sind = params['TYPE_LOSS'].find('Samp')
+        params['SRATE'] = int(params['TYPE_LOSS'][sind+4:sind+8])
     else:
-        pdb.set_trace()
-
-    if model_name.find('Hori') != -1: # predict horizon, pred lfp
+        params['SRATE'] = 1250
+    
+    if model_name.find('MixerHori') != -1:
+        from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
+        from model.input_augment_weighted import rippleAI_load_dataset
+    elif model_name.find('Hori') != -1: # predict horizon, pred lfp
         from model.model_fn import build_DBI_TCN_Horizon as build_DBI_TCN
         from model.input_augment_weighted import rippleAI_load_dataset
     elif model_name.find('Dori') != -1: # predict horizon dual loss, pred lfp and lfp
@@ -138,7 +138,11 @@ if mode == 'train':
         train_model(train_dataset, test_dataset, params=params)
     else:
         from model.training import train_pred
-        hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
+        if 'SigmoidFoc' in params['TYPE_LOSS']:
+            # hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'], checkpoint_metric='val_max_f1_metric_horizon_mixer')
+            hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
+        else:
+            hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
 elif mode == 'predict':
 
     # modelname
