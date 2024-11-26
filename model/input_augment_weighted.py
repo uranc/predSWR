@@ -606,7 +606,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
 
     from scipy import signal
     from scipy.signal import butter, filtfilt
-    M = 51/1000*params['SRATE']
+    M = round(51/1000*params['SRATE'])
     # onsets = np.diff(train_labels)==1
     onsets = np.hstack((0, np.diff(train_labels))).astype(np.uint32)==1
     # offsets = np.hstack((0, np.diff(train_labels))).astype(np.uint32)==-1

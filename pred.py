@@ -87,10 +87,14 @@ if mode == 'train':
         params['SRATE'] = int(params['TYPE_LOSS'][sind+4:sind+8])
     else:
         params['SRATE'] = 1250
-    
+
     if model_name.find('MixerHori') != -1:
         from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
         from model.input_augment_weighted import rippleAI_load_dataset
+    elif model_name.find('Barlow') != -1:
+        from model.model_fn import build_DBI_TCN_HorizonBarlow
+        from model.input_augment_weighted import rippleAI_load_dataset
+        model, train_model = build_DBI_TCN_HorizonBarlow(input_timepoints=params['NO_TIMEPOINTS'], input_chans=8, params=params)
     elif model_name.find('Hori') != -1: # predict horizon, pred lfp
         from model.model_fn import build_DBI_TCN_Horizon as build_DBI_TCN
         from model.input_augment_weighted import rippleAI_load_dataset
@@ -104,8 +108,6 @@ if mode == 'train':
         from model.model_fn import build_DBI_TCN_CSD as build_DBI_TCN
         from model.input_aug import rippleAI_load_dataset
     elif model_name.find('Proto') != -1:
-        # Build model and training function
-        # tf.config.run_functions_eagerly(True)
         from model.model_fn import build_DBI_TCN_Horizon_Updated
         model, train_model = build_DBI_TCN_Horizon_Updated(input_timepoints=params['NO_TIMEPOINTS'], input_chans=8, embedding_dim=params['NO_FILTERS'], params=params)
         from model.input_proto import rippleAI_load_dataset
@@ -113,7 +115,7 @@ if mode == 'train':
         from model.model_fn import build_DBI_TCN
         from model.input_aug import rippleAI_load_dataset
 
-    if model_name.find('Proto') == -1:
+    if ('Proto' not in model_name) and ('Barlow' not in model_name):
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         model.summary()
 
@@ -134,9 +136,11 @@ if mode == 'train':
     params['RIPPLE_RATIO'] = label_ratio
 
     # train
-    if model_name.find('Proto') != -1:
+    if ('Proto' in model_name) or ('Barlow' in model_name):
+        print('Training model with custom training loop')
         train_model(train_dataset, test_dataset, params=params)
     else:
+        print('Training model with keras')
         from model.training import train_pred
         if 'SigmoidFoc' in params['TYPE_LOSS']:
             # hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'], checkpoint_metric='val_max_f1_metric_horizon_mixer')
@@ -229,22 +233,32 @@ elif mode == 'predict':
         params['TYPE_ARCH'] = param_lib[11]
         print(params['TYPE_ARCH'])
 
-        # get sampling rate # little dangerous
-        if params['NO_TIMEPOINTS'] == 50:
-            print('50 timepoints window')
-            params['SRATE'] = 1250
-        elif params['NO_TIMEPOINTS'] == 100:
-            print('100 timepoints window')
-            params['SRATE'] = 2500
+        # get sampling rate # little dangerous assumes 4 digits
+        if 'Samp' in params['TYPE_LOSS']:
+            sind = params['TYPE_LOSS'].find('Samp')
+            params['SRATE'] = int(params['TYPE_LOSS'][sind+4:sind+8])
         else:
-            pdb.set_trace()
+            params['SRATE'] = 1250
 
         # get model
         # a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
         a_model = importlib.import_module('model.model_fn')
         # if model.find('CSD') != -1:
         #     build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
-        if model.find('Hori') != -1:
+        if model_name.find('MixerHori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_HorizonMixer')
+        elif model_name.find('Barlow') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_HorizonBarlow')
+            from keras.utils import custom_object_scope
+            from model.model_fn import CSDLayer
+            from tcn import TCN
+            from keras.models import load_model
+            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_f1_model.h5'
+            print((params['WEIGHT_FILE']))
+            with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+                model = load_model(params['WEIGHT_FILE'])
+            # model.summary()            
+        elif model.find('Hori') != -1:
             build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon')
         elif model.find('Dori') != -1:
             build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Dorizon')
@@ -260,7 +274,7 @@ elif mode == 'predict':
             print((params['WEIGHT_FILE']))
             with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
                 model = load_model(params['WEIGHT_FILE'])
-            model.summary()
+            # model.summary()
             # model.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/{0}/'.format(model_name)+'best_model.h5')
             # import pdb
             # build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon_Updated')
@@ -272,7 +286,7 @@ elif mode == 'predict':
         # # from model.model_fn import build_DBI_TCN
         # # from model.model_fn import build_DBI_TCN_CSD as build_DBI_TCN
 
-        if model_name.find('Proto') == -1:
+        if (model_name.find('Proto') == -1) and (model_name.find('Barlow') == -1):
             params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
             # params['WEIGHT_FILE'] = ''
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
