@@ -34,7 +34,7 @@ val_id = int(args.val[0])
 print(val_id)
 # pdb.set_trace()
 # Parameters
-params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*5,
+params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
           'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 200,
           'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
           'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
@@ -91,6 +91,12 @@ if mode == 'train':
     if model_name.find('MixerHori') != -1:
         from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
         from model.input_augment_weighted import rippleAI_load_dataset
+    elif model_name.find('MixerDori') != -1:
+        from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
+        from model.input_augment_weighted import rippleAI_load_dataset
+    elif model_name.find('MixerCori') != -1:
+        from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
+        from model.input_augment_weighted import rippleAI_load_dataset        
     elif model_name.find('Barlow') != -1:
         from model.model_fn import build_DBI_TCN_HorizonBarlow
         from model.input_augment_weighted import rippleAI_load_dataset
@@ -245,8 +251,13 @@ elif mode == 'predict':
         a_model = importlib.import_module('model.model_fn')
         # if model.find('CSD') != -1:
         #     build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
+
         if model_name.find('MixerHori') != -1:
-            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_HorizonMixer')
+            from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
+        elif model_name.find('MixerDori') != -1:
+            from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
+        elif model_name.find('MixerCori') != -1:
+            from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
         elif model_name.find('Barlow') != -1:
             build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_HorizonBarlow')
             from keras.utils import custom_object_scope
@@ -320,7 +331,7 @@ elif mode == 'predict':
     from model.cnn_ripple_utils import get_predictions_index, get_performance
 
     # get predictions
-    th_arr=np.linspace(0.1,0.9,19)
+    th_arr=np.linspace(0.0,1.0,11)
     n_channels = params['NO_CHANNELS']
     timesteps = params['NO_TIMEPOINTS']
     samp_freq = params['SRATE']
@@ -905,3 +916,198 @@ elif mode=='export':
     # model.save('export/model_{}.h5'.format(model_name))
     # # Save model in pb format
     # model.save('export/model_{}.pb'.format(model_name))
+
+elif mode == 'embedding':
+
+    # modelname
+    model = args.model[0]
+    model_name = model
+    import importlib
+
+    if model_name == 'RippleNet':
+        import sys, pickle, keras, h5py
+        sys.path.insert(0, '/cs/projects/OWVinckSWR/DL/RippleNet/')
+        from ripplenet.common import *
+        params['TYPE_ARCH'] = 'RippleNet'
+
+        # load info on best model (path, threhsold settings)
+        with open('/cs/projects/OWVinckSWR/DL/RippleNet/best_model.pkl', 'rb') as f:
+            best_model = pickle.load(f)
+            print(best_model)
+
+        # load the 'best' performing model on the validation sets
+        model = keras.models.load_model(best_model['model_file'])
+
+    elif model_name == 'CNN1D':
+        from tensorflow import keras
+        new_model = None
+        model_number = 1
+        arch = model_name
+        params['TYPE_ARCH'] = arch
+        for filename in os.listdir('/mnt/hpc/projects/OWVinckSWR/Carmen/DBI2/rippl-AI/optimized_models/'):
+            if f'{arch}_{model_number}' in filename:
+                break
+        print(filename)
+        sp=filename.split('_')
+        n_channels=int(sp[2][2])
+        timesteps=int(sp[4][2:])
+
+        optimizer = keras.optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=False)
+        if new_model==None:
+            model = keras.models.load_model(os.path.join('/mnt/hpc/projects/OWVinckSWR/Carmen/DBI2/rippl-AI/optimized_models',filename), compile=False)
+        else:
+            model=new_model
+        model.compile(loss="binary_crossentropy", optimizer=optimizer)
+    else:
+        # try:
+        #     import tensorflow.keras as kr
+        #     params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+        #     model = kr.models.load_model(params['WEIGHT_FILE'])
+        # except:
+        # get model parameters
+        print(model_name)
+        param_lib = model_name.split('_')
+        # pdb.set_trace()
+        assert(len(param_lib)==12)
+        params['TYPE_MODEL'] = param_lib[0]
+        print(params['TYPE_MODEL'])
+        assert(param_lib[1][0]=='K')
+        params['NO_KERNELS'] = int(param_lib[1][1:])
+        print(params['NO_KERNELS'])
+        assert(param_lib[2][0]=='T')
+        params['NO_TIMEPOINTS'] = int(param_lib[2][1:])
+        print(params['NO_TIMEPOINTS'])
+        assert(param_lib[3][0]=='D')
+        params['NO_DILATIONS'] = int(param_lib[3][1:])
+        print(params['NO_DILATIONS'])
+        assert(param_lib[4][0]=='N')
+        params['NO_FILTERS'] = int(param_lib[4][1:])
+        print(params['NO_FILTERS'])
+        assert(param_lib[5][0]=='L')
+        params['LEARNING_RATE'] = (1e-1)**int(param_lib[5][1:])
+        print(params['LEARNING_RATE'])
+        assert(param_lib[6][0]=='E')
+        params['NO_EPOCHS'] = int(param_lib[6][1:])
+        print(params['NO_EPOCHS'])
+        assert(param_lib[7][0]=='B')
+        params['BATCH_SIZE'] = int(param_lib[7][1:])
+        print(params['BATCH_SIZE'])
+        assert(param_lib[8][0]=='S')
+        params['NO_STRIDES'] = int(param_lib[8][1:])
+        print(params['NO_STRIDES'])
+        params['TYPE_LOSS'] = param_lib[9]
+        print(params['TYPE_LOSS'])
+        params['TYPE_REG'] = param_lib[10]
+        print(params['TYPE_REG'])
+        params['TYPE_ARCH'] = param_lib[11]
+        print(params['TYPE_ARCH'])
+
+        # get sampling rate # little dangerous assumes 4 digits
+        if 'Samp' in params['TYPE_LOSS']:
+            sind = params['TYPE_LOSS'].find('Samp')
+            params['SRATE'] = int(params['TYPE_LOSS'][sind+4:sind+8])
+        else:
+            params['SRATE'] = 1250
+
+        # get model
+        a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        # a_model = importlib.import_module('model.model_fn')
+        # if model.find('CSD') != -1:
+        #     build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
+        if model_name.find('MixerHori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_HorizonMixer')
+        elif model_name.find('Barlow') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_HorizonBarlow')
+            from keras.utils import custom_object_scope
+            from model.model_fn import CSDLayer
+            from tcn import TCN
+            from keras.models import load_model
+            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_f1_model.h5'
+            print((params['WEIGHT_FILE']))
+            with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+                model = load_model(params['WEIGHT_FILE'])
+            # model.summary()            
+        elif model.find('Hori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon')
+        elif model.find('Dori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Dorizon')
+        elif model.find('Cori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Corizon')
+        elif model_name.find('Proto') != -1:
+            from keras.utils import custom_object_scope
+            from model.model_fn import CSDLayer
+            from tcn import TCN
+            from keras.models import load_model
+            # with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_f1_model.h5'
+            print((params['WEIGHT_FILE']))
+            with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+                model = load_model(params['WEIGHT_FILE'])
+            # model.summary()
+            # model.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/{0}/'.format(model_name)+'best_model.h5')
+            # import pdb
+            # build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon_Updated')
+            # model, train_model = build_DBI_TCN_Horizon_Updated(input_timepoints=params['NO_TIMEPOINTS'], input_chans=8, embedding_dim=params['NO_FILTERS'], params=params)
+        else:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+        # pdb.set_trace()
+        # # from model.model_fn import build_DBI_TCN
+        # # from model.model_fn import build_DBI_TCN
+        # # from model.model_fn import build_DBI_TCN_CSD as build_DBI_TCN
+
+        if (model_name.find('Proto') == -1) and (model_name.find('Barlow') == -1):
+            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+            # params['WEIGHT_FILE'] = ''
+            model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+        # from keras.utils import custom_object_scope
+        # from model.model_fn import CSDLayer
+        # from tcn import TCN
+        # from keras.models import load_model
+        # with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+        #     model = load_model(params['WEIGHT_FILE'])
+    model.summary()
+
+    # pdb.set_trace()
+    params['BATCH_SIZE'] = 512*4
+    
+    flag_all = True
+    if flag_all:
+        layer_dict = dict([(layer.name, layer) for layer in model.layers])
+        outputs = [layer_dict[out].output for out in layer_dict.keys()]
+        outputs = outputs[2:]
+        model_act = Model(model.input, outputs)
+        model_act.trainable = False
+        model_act.compile(loss='mse', optimizer='adam')
+         
+        from scipy.io import loadmat
+        from scipy.signal import decimate
+        import h5py
+        data = h5py.File('/cs/projects/OWVinckSWR/Dataset/TopologicalData/AlbertoDB_struct.mat')
+        pro_data = np.asarray(data['ripples'])
+
+        # downsample if necessary 
+        if 'Samp1250' in model_name:
+            pro_data = np.array([decimate(pro_data[:,k], 2) for k in range(pro_data.shape[1])])
+        elif 'Samp2500' in model_name:
+            pro_data = np.transpose(pro_data, [1,0])
+        else:
+            pro_data = np.transpose(pro_data, [1,0])
+        ripples = np.tile(np.expand_dims(pro_data, axis=-1), (1,1,8))
+        
+        
+        
+        params["BATCH_SIZE"] = 512*4
+        n_channels = params['NO_CHANNELS']
+        timesteps = params['NO_TIMEPOINTS']
+        sample_length = params['NO_TIMEPOINTS']*2
+        from keras.utils import timeseries_dataset_from_array
+
+        test_ripples = tf.data.Dataset.from_tensor_slices(ripples[:,-sample_length:,:]).batch(params["BATCH_SIZE"])
+        # test_ripples = timeseries_dataset_from_array(ripples, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
+        
+        tmp_act = model_act.predict(test_ripples)
+        
+        # save activations
+        for il in range(len(tmp_act)):
+            np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/activations/{0}_act{1}.npy'.format(model_name, il), tmp_act[il])
+        

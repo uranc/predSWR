@@ -31,14 +31,14 @@ def train_pred(model,
     callbacks = []
     callbacks.append(cb.ReduceLROnPlateau(monitor='val_loss',
                                           factor=0.5,
-                                          patience=10,
+                                          patience=20,
                                           verbose=1,
                                           mode='auto',
-                                          min_delta=0.0001,
+                                          min_delta=0.00001,
                                           cooldown=5,
                                           min_lr=1e-5))
     callbacks.append(cb.EarlyStopping(monitor='val_loss',
-                                        min_delta=0.0001,
+                                        min_delta=0.00001,
                                         patience=50,
                                         verbose=1))
     # callbacks.append(cb.TensorBoard(log_dir=save_dir,

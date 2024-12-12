@@ -714,10 +714,7 @@ def build_DBI_multi_TCN_Horizon(input_timepoints, input_chans=8, params=None):
     if params['WEIGHT_FILE']:
         print('load model')
         model.load_weights(params['WEIGHT_FILE'])
-
     return model
-
-
 
 def build_DBI_TCN_Dorizon(input_timepoints, input_chans=8, params=None):
 
@@ -1298,8 +1295,8 @@ def build_DBI_TCN_HorizonBarlow(input_timepoints, input_chans=8, params=None):
 
         # barlow loss for embedding robustness
         barlow_weight = 5e-1
-        barlos_loss = barlow_weight * (barlow_twins_loss(embeddings1, embeddings2, lambda_param=0.005) +
-                                       barlow_twins_loss(embeddings1, prediction_out, lambda_param=0.005))
+        barlos_loss = barlow_weight * (barlow_twins_loss(embeddings1, embeddings2, lambda_param=0.005))# +
+                                    #    barlow_twins_loss(embeddings1, prediction_out, lambda_param=0.005))
         total_loss += barlos_loss
         return total_loss
 
@@ -1320,7 +1317,7 @@ def build_DBI_TCN_HorizonBarlow(input_timepoints, input_chans=8, params=None):
             predictions = model(inputs, training=True)
 
             # split inputs outputs
-            prediction_targets = y_true[:, horizon:, :8]                   # Targets starting from horizon
+            prediction_targets = y_true[:, horizon:, :8]                   # Targets starting from horizon            
             prediction_out = predictions[:, :-horizon, :8]                 # Predicted outputs before the horizon
             y_true_exp = tf.expand_dims(y_true[:, :, 8], axis=-1)
             y_pred_exp = tf.expand_dims(predictions[:, :, 8], axis=-1)     # First 8 channels for horizon prediction
@@ -1524,8 +1521,8 @@ def build_DBI_TCN_HorizonBarlow(input_timepoints, input_chans=8, params=None):
 
     # tcn_output = nets
     output_dim = 8
-    prediction_output = Conv1D(output_dim, kernel_size=1, activation='linear', name='prediction_output')(tcn_output)  # Output future values
-    tmp_class = Conv1D(1, kernel_size=1, activation='sigmoid', name='tmp_class')(tcn_output)
+    prediction_output = Conv1D(output_dim, kernel_size=1, use_bias=True, activation='linear', name='prediction_output')(tcn_output)  # Output future values
+    tmp_class = Conv1D(1, kernel_size=1, activation='sigmoid', use_bias=True, name='tmp_class')(tcn_output)
 
     # add confidence layer
     if params['TYPE_ARCH'].find('Confidence')>-1:
@@ -1639,15 +1636,15 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
     # tcn_output = nets
     output_dim = 8
     # tmp_pred = Dense(32, activation=this_activation, name='tmp_pred')(tcn_output)  # Output future values
-    prediction_output = Conv1D(output_dim, kernel_size=1, activation='linear', name='prediction_output')(tcn_output)  # Output future values
+    prediction_output = Conv1D(output_dim, kernel_size=1, use_bias=True, activation='linear', name='prediction_output')(tcn_output)  # Output future values
     # prediction_output = Dense(output_dim, activation='linear', name='prediction_output')(tmp_pred)  # Output future values
 
     # sigmoid out
     # tmp_class = Dense(32, activation=this_activation, name='tmp_class')(tcn_output)
     if flag_sigmoid:
-        tmp_class = Conv1D(1, kernel_size=1, activation='linear', name='tmp_class')(tcn_output)
+        tmp_class = Conv1D(1, kernel_size=1, use_bias=True, activation='linear', name='tmp_class')(tcn_output)
     else:
-        tmp_class = Conv1D(1, kernel_size=1, activation='sigmoid', name='tmp_class')(tcn_output)
+        tmp_class = Conv1D(1, kernel_size=1, use_bias=True, activation='sigmoid', name='tmp_class')(tcn_output)
 
     # add confidence layer
     if params['TYPE_ARCH'].find('Confidence')>-1:
@@ -1678,7 +1675,7 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
         this_binary_accuracy = custom_binary_accuracy
 
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
-                  loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model),
+                  loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op),
                   metrics=[custom_mse_metric, this_binary_accuracy, f1_metric])
                     # f1_metric
                     # metrics=[tf.keras.metrics.BinaryCrossentropy(),
@@ -1696,6 +1693,291 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
 
     return model
 
+def build_DBI_TCN_DorizonMixer(input_timepoints, input_chans=8, params=None):
+
+    # params
+    use_batch_norm = params['TYPE_REG'].find('BN')>-1
+    use_weight_norm = params['TYPE_REG'].find('WReg')>-1
+    use_layer_norm = params['TYPE_REG'].find('LN')>-1
+    # this_activation = 'relu'
+    this_activation = ELU(alpha=1)
+    if params['TYPE_REG'].find('Glo')>-1:
+        print('Using Glorot')
+        this_kernel_initializer = 'glorot_uniform'
+    elif params['TYPE_REG'].find('He')>-1:
+        print('Using He')
+        this_kernel_initializer = 'he_normal'
+    model_type = params['TYPE_MODEL']
+    n_filters = params['NO_FILTERS']
+    n_kernels = params['NO_KERNELS']
+    n_dilations = params['NO_DILATIONS']
+    if params['TYPE_ARCH'].find('Drop')>-1:
+        r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
+        print('Using Dropout')
+        print(r_drop)
+    else:
+        r_drop = 0.0
+
+    if params['TYPE_ARCH'].find('Dori')>-1:
+        print('Using Horizon Timesteps:')
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Dori')+4:params['TYPE_ARCH'].find('Dori')+6])/1000*params['SRATE'])
+        print(hori_shift)
+
+    if params['TYPE_ARCH'].find('Loss')>-1:
+        print('Using Loss Weight:')
+        loss_weight = (params['TYPE_ARCH'][params['TYPE_ARCH'].find('Loss')+4:params['TYPE_ARCH'].find('Loss')+7])
+        weight = 1 if int(loss_weight[0])==1 else -1
+        loss_weight = float(loss_weight[1])*10**(weight*float(loss_weight[2]))
+        print(loss_weight)
+
+    # load labels
+    # inputs = Input(shape=(None, input_chans), name='inputs')
+    inputs = Input(shape=(None, input_chans), name='inputs')
+
+
+    if params['TYPE_ARCH'].find('ZNorm')>-1:
+        print('Using ZNorm')
+        inputs = Normalization()(inputs)
+
+    if params['TYPE_ARCH'].find('CSD')>-1:
+        csd_inputs = CSDLayer()(inputs)
+        inputs_nets = Concatenate(axis=-1)([inputs, csd_inputs])
+    else:
+        inputs_nets = inputs
+    # pdb.set_trace()
+
+    # get TCN
+    if model_type=='Base':
+        from tcn import TCN
+        tcn_op = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        # dilations=(1, 2, 4, 8, 16), #, 32
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        # activation=this_activation,
+                        # kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=use_batch_norm,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+        print(tcn_op.receptive_field)
+        # nets = tcn_op(inputs)
+        tcn_clas = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        # dilations=(1, 2, 4, 8, 16), #, 32
+                        padding='causal',
+                        use_skip_connections=use_batch_norm,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        # activation=this_activation,
+                        # kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=use_batch_norm,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+        # horizon = 13
+        # horizon_targets = Lambda(lambda tt: tt[:, -50:, :], name='Slice_Inputs')(inputs)
+        nets = tcn_op(inputs_nets)
+
+        if params['TYPE_ARCH'].find('L2N')>-1:
+            nets = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(nets)
+        output_dim = 8
+        prediction_output = Conv1D(output_dim, kernel_size=1, use_bias=True, activation='linear', name='prediction_output')(nets)  # Output future values
+    
+        # pdb.set_trace()
+        prediction_out_class = tcn_clas(prediction_output)
+        if params['TYPE_ARCH'].find('L2N')>-1:
+            prediction_out_class = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(prediction_out_class)
+
+        if params['TYPE_ARCH'].find('Dual')>-1:
+            print('Using DualLoss')
+            out_class = tcn_clas(inputs)
+
+            if params['TYPE_ARCH'].find('L2N')>-1:
+                out_class = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(out_class)
+            prediction_out_class = Concatenate(axis=-1)([prediction_out_class, out_class])
+
+        # horizon_outputs = Lambda(lambda tt: tt[:, -input_timepoints+horizon:, :], name='Slice_Horizon')(nets)
+        pred_out = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Pred_Output')(prediction_output)
+        tcn_out = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Class_Output')(prediction_out_class)
+
+        if params['TYPE_ARCH'].find('L2N')>-1:
+            tcn_output = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(nets)
+        # tmp_class = Dense(32, activation=this_activation, name='tmp_class')(tcn_output)
+        # classification_output = Dense(1, activation='sigmoid', name='classification_output')(tcn_out)
+        classification_output = Conv1D(1, kernel_size=1, use_bias=True, activation='sigmoid', name='tmp_class')(tcn_out)
+
+        concat_outputs = Concatenate(axis=-1)([pred_out, classification_output])
+        # concat_outputs = Concatenate(axis=-1)([prediction_output, classification_output])
+
+    if params['mode']=='predict':
+        concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
+    # Define model with both outputs
+    f1_metric = MaxF1MetricHorizon()
+    model = Model(inputs=inputs, outputs=concat_outputs)
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
+                    loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model),
+                    metrics=[custom_mse_metric, custom_binary_accuracy, f1_metric]
+                  )
+                    # metrics=[tf.keras.metrics.BinaryCrossentropy(),
+                    #          tf.keras.metrics.BinaryAccuracy()])
+
+    if params['WEIGHT_FILE']:
+        print('load model')
+        model.load_weights(params['WEIGHT_FILE'])
+
+    return model
+
+
+def build_DBI_TCN_CorizonMixer(input_timepoints, input_chans=8, params=None):
+
+    # params
+    use_batch_norm = params['TYPE_REG'].find('BN')>-1
+    use_weight_norm = params['TYPE_REG'].find('WReg')>-1
+    use_layer_norm = params['TYPE_REG'].find('LN')>-1
+    # this_activation = 'relu'
+    this_activation = ELU(alpha=1)
+    if params['TYPE_REG'].find('Glo')>-1:
+        print('Using Glorot')
+        this_kernel_initializer = 'glorot_uniform'
+    elif params['TYPE_REG'].find('He')>-1:
+        print('Using He')
+        this_kernel_initializer = 'he_normal'
+    model_type = params['TYPE_MODEL']
+    n_filters = params['NO_FILTERS']
+    n_kernels = params['NO_KERNELS']
+    n_dilations = params['NO_DILATIONS']
+    if params['TYPE_ARCH'].find('Drop')>-1:
+        r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
+        print('Using Dropout')
+        print(r_drop)
+    else:
+        r_drop = 0.0
+
+    if params['TYPE_ARCH'].find('Cori')>-1:
+        print('Using Horizon Timesteps:')
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Cori')+4:params['TYPE_ARCH'].find('Cori')+6])/1000*params['SRATE'])
+        print(hori_shift)
+
+    if params['TYPE_ARCH'].find('Loss')>-1:
+        print('Using Loss Weight:')
+        loss_weight = (params['TYPE_ARCH'][params['TYPE_ARCH'].find('Loss')+4:params['TYPE_ARCH'].find('Loss')+7])
+        weight = 1 if int(loss_weight[0])==1 else -1
+        loss_weight = float(loss_weight[1])*10**(weight*float(loss_weight[2]))
+        print(loss_weight)
+
+    # load labels
+    # inputs = Input(shape=(None, input_chans), name='inputs')
+    inputs = Input(shape=(None, input_chans), name='inputs')
+
+
+    if params['TYPE_ARCH'].find('ZNorm')>-1:
+        print('Using ZNorm')
+        inputs = Normalization()(inputs)
+    # if params['TYPE_ARCH'].find('CSD')>-1:
+    csd_inputs = CSDLayer()(inputs)
+    inputs_nets = Concatenate(axis=-1)([inputs, csd_inputs])
+    # else:
+    #     inputs_nets = inputs
+    # pdb.set_trace()
+
+    # get TCN
+    if model_type=='Base':
+        from tcn import TCN
+        tcn_op = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        # dilations=(1, 2, 4, 8, 16), #, 32
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        # activation=this_activation,
+                        # kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=use_batch_norm,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+        print(tcn_op.receptive_field)
+        # nets = tcn_op(inputs)
+        tcn_clas = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        # dilations=(1, 2, 4, 8, 16), #, 32
+                        padding='causal',
+                        use_skip_connections=use_batch_norm,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        # activation=this_activation,
+                        # kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=use_batch_norm,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+        # horizon = 13
+        # horizon_targets = Lambda(lambda tt: tt[:, -50:, :], name='Slice_Inputs')(inputs)
+        nets = tcn_op(inputs_nets)
+        output_dim = 8
+        # tmp_pred = Dense(32, activation=this_activation, name='tmp_pred')(nets)  # Output future values
+        # prediction_output = Dense(output_dim, activation='linear', name='prediction_output')(nets)  # Output future values
+        prediction_output = Conv1D(output_dim, kernel_size=1, use_bias=True, activation='linear', name='prediction_output')(nets)  # Output future values
+
+
+        prediction_out_class = tcn_clas(prediction_output)
+        in_out_class = tcn_clas(inputs)
+        csd_out_class = tcn_clas(csd_inputs)
+        class_concat = Concatenate(axis=-1)([in_out_class, csd_out_class, prediction_out_class])
+        # horizon_outputs = Lambda(lambda tt: tt[:, -input_timepoints+horizon:, :], name='Slice_Horizon')(nets)
+        pred_out = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Pred_Output')(prediction_output)
+        tcn_out = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Class_Output')(class_concat)
+
+        if params['TYPE_ARCH'].find('L2N')>-1:
+            pred_out = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(pred_out)
+            tcn_out = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(tcn_out)
+
+        # tmp_class = Dense(32, activation=this_activation, name='tmp_class')(tcn_output)
+        # classification_output = Dense(1, activation='sigmoid', name='classification_output')(tcn_out)
+        classification_output = Conv1D(1, kernel_size=1, use_bias=True, activation='linear', name='tmp_class')(tcn_out)
+
+        concat_outputs = Concatenate(axis=-1)([pred_out, classification_output])
+
+    if params['mode']=='predict':
+        concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
+    model = Model(inputs=inputs, outputs=concat_outputs)
+
+            # mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out)) # multiply by labels
+    f1_metric = MaxF1MetricHorizon()
+    model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
+                    loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model),
+                    metrics=[custom_mse_metric, custom_binary_accuracy, f1_metric]
+                  )
+                    # metrics=[tf.keras.metrics.BinaryCrossentropy(),
+                    #          tf.keras.metrics.BinaryAccuracy()])
+    if params['WEIGHT_FILE']:
+        print('load model')
+        model.load_weights(params['WEIGHT_FILE'])
+
+    return model
 
 class CSDLayer(Layer):
     """
@@ -1819,6 +2101,24 @@ def tcml_loss(y_true, y_pred, threshold=0.5, margin=0.2):
 
     loss = tf.reduce_mean(pos_loss + neg_loss)
     return loss
+
+def barlow_twins_loss(embedding1, embedding2, lambda_param=0.005):
+    # Normalize embeddings
+    embedding1 = tf.nn.l2_normalize(embedding1, axis=1)
+    embedding2 = tf.nn.l2_normalize(embedding2, axis=1)
+
+    # Cross-correlation matrix
+    c = tf.matmul(embedding1, embedding2, transpose_a=True)
+    c /= tf.cast(tf.shape(embedding1)[0], tf.float32)  # Normalize by batch size
+
+    # On-diagonal: minimize difference from 1
+    on_diag = tf.reduce_sum(tf.square(tf.linalg.diag_part(c) - 1))
+
+    # Off-diagonal: minimize correlation
+    off_diag = tf.reduce_sum(tf.square(c)) - on_diag
+
+    # Total loss
+    return on_diag + lambda_param * off_diag
 
 def cosine_similarity(a, b):
     dot_product = tf.reduce_sum(a * b, axis=-1)
@@ -1967,7 +2267,6 @@ class MaxF1MetricHorizonMixer(tf.keras.metrics.Metric):
         self.fp.assign(tf.zeros_like(self.fp))
         self.fn.assign(tf.zeros_like(self.fn))
 
-
 class SelfAttentionPositional(tf.keras.layers.Layer):
     def __init__(self, embed_dim, num_heads, num_channels):
         super(SelfAttentionPositional, self).__init__()
@@ -2004,7 +2303,7 @@ class TwoStageAttentivePooling(tf.keras.layers.Layer):
         combined_attention = self.concat([deep_attention_output, superficial_attention_output])
         return self.norm(combined_attention)
 
-def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None):
+def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None):
     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
     def loss_fn(y_true, y_pred, loss_weight=loss_weight, horizon=horizon, flag_sigmoid=flag_sigmoid):
         print(y_true.shape)
@@ -2082,7 +2381,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None):
         if params['TYPE_LOSS'].find('Entropy')>-1:
             print('Entropy Loss')
             entropy_loss = -y_pred_exp * tf.math.log(y_pred_exp + tf.keras.backend.epsilon()) - (1 - y_pred_exp) * tf.math.log(1 - y_pred_exp + tf.keras.backend.epsilon())
-            total_loss += 1e-3 * tf.reduce_mean(entropy_loss)
+            total_loss += 1e-2 * tf.reduce_mean(entropy_loss)
         if params['TYPE_LOSS'].find('TMSE')>-1:
             print('Truncated MSE Loss')
             total_loss += 4e-2*truncated_mse_loss(y_true_exp, y_pred_exp, tau=4.0)
@@ -2095,6 +2394,11 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None):
         if params['TYPE_LOSS'].find('L2Reg')>-1:
             print('L2 Regularization Loss')
             total_loss += custom_l2_regularization_loss(model, l2_lambda=1e-3)
+        if params['TYPE_LOSS'].find('BarAug')>-1 and this_op is not None:
+            print('Barlow Augmentation Loss')
+            total_loss += 1e-3*barlow_twins_loss(this_op(prediction_out), this_op(prediction_targets))
+            
+
         # mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out)) # multiply by labels
         # mse_loss = tf.reduce_mean(y_true_exp[:,horizon:,:]*tf.square(prediction_targets-prediction_out)) # multiply by labels
 

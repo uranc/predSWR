@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=tensorflow_gpu
-#SBATCH --partition=16GBS
+#SBATCH --partition=16GB
 
 
 source /mnt/hpc/slurm/uranc/anacond/bin/activate
