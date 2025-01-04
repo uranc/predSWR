@@ -51,7 +51,7 @@ def train_pred(model,
                                       write_images=True,
                                       update_freq='epoch'))
     # callbacks.append(cb.ModelCheckpoint(save_dir + '/weights.last.keras',
-    callbacks.append(cb.ModelCheckpoint(save_dir + '/weights.last.h5',
+    callbacks.append(cb.ModelCheckpoint(save_dir + '/last.weights.h5',
                                         # monitor='val_custom_binary_accuracy', # val_ssim
                                         # monitor='val_loss',
                                         monitor=checkpoint_metric,
@@ -67,6 +67,7 @@ def train_pred(model,
 
     return model.fit(train_inputs,
                      epochs=n_epoch,
+                    #  steps_per_epoch=30,
                      validation_data=valid_inputs,
                      callbacks=callbacks,
                      verbose=1)

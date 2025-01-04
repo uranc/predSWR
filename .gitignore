@@ -13,4 +13,8 @@ allen_dataset/
 *.pdf
 summaries/
 frozen_models/
+studies/
+studies_1/
+studies_2/
 time_analysis/ROC_curves/*.png
+*.txt

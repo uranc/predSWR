@@ -10,10 +10,11 @@ from tensorflow import keras
 from keras.models import Sequential
 from keras import layers, optimizers
 from keras.initializers import GlorotUniform, Orthogonal
-from xgboost import XGBClassifier
-from imblearn.under_sampling import RandomUnderSampler
+# from xgboost import XGBClassifier
+# from imblearn.under_sampling import RandomUnderSampler
 import pdb
 from scipy.signal import decimate
+from scipy.signal import butter, filtfilt
 
 def fcn_save_pickle(name,x):
     '''
@@ -260,7 +261,14 @@ def downsample_data(data, sf, downsampled_fs):
 
     # Dowsampling
     if sf > downsampled_fs:
-        downsampled_data = decimate(data, int(sf/downsampled_fs), axis=0, zero_phase=True, ftype='fir', n=250)
+        # Apply bandpass FIR filter 0.1-500 Hz
+        nyquist = sf/2
+        n_taps = 251  # Filter order
+        fir_coeff = scipy.signal.firwin(n_taps, [0.5/nyquist, 500/nyquist], pass_zero=False, window='hamming')
+        filtered_data = scipy.signal.filtfilt(fir_coeff, [1.0], data, axis=0)
+        
+        # Downsample 
+        downsampled_data = decimate(filtered_data, int(sf/downsampled_fs), axis=0, zero_phase=True, ftype='fir', n=251)
 
     # Upsampling
     elif sf < downsampled_fs:

@@ -20,10 +20,11 @@ def random_scaling(data, min_scale=0.8, max_scale=1.2):
         Scaled data with one scale factor applied uniformly across all channels for each batch.
     """
     # Generate a single random scaling factor per batch
-    scale_factor = tf.random.uniform([], min_scale, max_scale)
+    # scale_factor = tf.random.uniform([], min_scale, max_scale)
+    scale_factors = tf.random.uniform((1, 1, 8), min_scale, max_scale)
 
     # Apply the scaling factor uniformly to all channels and samples within the batch
-    return data * scale_factor
+    return data * scale_factors
 
 def random_shift(data, max_shift_ms=2, sampling_rate=1250):
     """Random temporal shift for each channel, applied per batch and converted from milliseconds to samples."""
@@ -392,7 +393,7 @@ def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250
         if band == 'low':
             print('Filtering low band')
             lowcut = 0.5
-            highcut = 30.0
+            highcut = 10.0
         elif band == 'high':
             print('Filtering high band')
             lowcut = 120.0
