@@ -11,6 +11,7 @@ allen_dataset/
 *.png
 *.npy
 *.pdf
+ptxas
 summaries/
 frozen_models/
 studies/
