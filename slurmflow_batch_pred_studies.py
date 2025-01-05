@@ -9,7 +9,9 @@ import copy
 
 # model_lib = [45, 221, 215, 204, 183, 247, 238, 263, 613, 578, 631, 125, 474, 423, 321, 293, 639, 580, 634, 458]
 # model_lib = [27,32,34,31,15,26,73,19,8,23]
-model_lib = [19,8,23,350,197,261,250,131,225,303,244,247,198,245,278,240,348,182,221,290,170,126]
+# model_lib = [19,8,23,350,197,261,250,131,225,303,244,247,198,245,278,240,348,182,221,290,170,126]
+tag = 'FiltM'
+model_lib = [31]#,16,165,89,186,3,11,23,150,142,2,148
 n=0
 for im, model in enumerate(model_lib):
     # subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model])
@@ -23,7 +25,7 @@ for im, model in enumerate(model_lib):
         # subprocess.call(['sbatch', 'cpu_batch_16GBXS.sh', model, str(iv)])
         model_name = 'Tune_'+'{0}_'.format(model)
         print('submitting job for model: ', model_name, im, iv)
-        subprocess.call(['python', 'pred.py', '--mode', 'predict', '--model', model_name, '--val', str(iv)])
+        subprocess.call(['python', 'pred.py', '--mode', 'predict', '--model', model_name, '--val', str(iv), '--tag', tag])
         # subprocess.call(['sbatch', 'cpu_batch_16GBXS.sh', model_name, str(iv)])
     
         # # pr = '/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}_sf1250.npy'.format(iv, model)

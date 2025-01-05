@@ -342,9 +342,49 @@ def generate_overlapping_windows(data, window_size, stride, sf):
 
     return new_data
 
-# Detection functions
+def filter_LFP(LFP, sf=1250, band='low'):
+    """
+    Filters the LFP data in a specified frequency band using FIR filter.
 
-def process_LFP(LFP, ch=np.arange(0,8), sf=30000, new_sf=1250, use_zscore=True):
+    Args:
+        LFP: Input LFP data of shape [num_samples, num_channels].
+        sf: Sampling frequency of the data.
+        band: Frequency band to filter ('low' for below 100 Hz, 'high' for 100-300 Hz).
+
+    Returns:
+        Filtered LFP data.
+    """
+    from scipy import signal
+
+    # Set filter parameters based on band
+    if band == 'low':
+        print('Filtering low band')
+        lowcut = 1.0
+        highcut = 10.0
+    elif band == 'high':
+        print('Filtering high band')
+        lowcut = 120.0
+        highcut = 250.0
+    elif band == 'muax':
+        print('Filtering high band')
+        lowcut = 300.0
+        highcut = 6000.0
+    else:
+        raise ValueError("Invalid band. Choose 'low' or 'high'.")
+
+    # Design and apply FIR filter
+    nyquist = sf/2
+    n_taps = 251  # Filter order
+    fir_coeff = signal.firwin(n_taps, [lowcut/nyquist, highcut/nyquist], 
+                             pass_zero=False, window='hamming')
+    filtered_LFP = signal.filtfilt(fir_coeff, [1.0], LFP, axis=0)
+
+    if band == 'muax':
+        filtered_LFP = np.abs(filtered_LFP)
+
+    return filtered_LFP
+
+def process_LFP(LFP, ch=np.arange(0,8), sf=30000, new_sf=1250, use_zscore=True, use_band=None):
     '''
     This function processes the LFP before calling the detection algorithm.
     1. It extracts the desired channels from the original LFP, and interpolates where there is a value of -1.
@@ -363,6 +403,9 @@ def process_LFP(LFP, ch=np.arange(0,8), sf=30000, new_sf=1250, use_zscore=True):
     '''
     # data=interpolate_channels(LFP,channels)
     data = LFP
+    if use_band is not None:
+        data = filter_LFP(data, sf=sf, band=use_band)
+            
     if sf!=1250:
         print('Downsampling data at {} Hz...'.format(new_sf))
         data = downsample_data(data, sf, downsampled_fs=new_sf)
@@ -963,7 +1006,6 @@ def rec_signal(y):
         input:	(n_samples,n_windows) ground truth signal containing 0 or 1 indicating the presence of ripples
         outpur: (n_samples) collapsed ground truth, if any samples in the input window contains ripple, the collapsed
                 signal contains a 1
-
     '''
     len=np.shape(y)[0]
     print(np.shape(y))

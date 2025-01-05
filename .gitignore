@@ -17,5 +17,7 @@ frozen_models/
 studies/
 studies_1/
 studies_2/
+studies_3/
+studies_4/
 time_analysis/ROC_curves/*.png
 *.txt

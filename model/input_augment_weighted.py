@@ -1,5 +1,5 @@
 import tensorflow.keras.backend as K
-from model.cnn_ripple_utils import load_lab_data, process_LFP, split_data, load_info, load_raw_data
+from model.cnn_ripple_utils import load_lab_data, process_LFP, filter_LFP, split_data, load_info, load_raw_data
 import tensorflow as tf
 import numpy as np
 import pdb
@@ -376,39 +376,12 @@ def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250
     A Rubio LCN 2023
 
     '''
-    def filter_LFP(LFP, sf=1250, band='low'):
-        """
-        Filters the LFP data in a specified frequency band.
-
-        Args:
-            LFP: Input LFP data of shape [num_samples, num_channels].
-            sf: Sampling frequency of the data.
-            band: Frequency band to filter ('low' for below 100 Hz, 'high' for 100-300 Hz).
-
-        Returns:
-            Filtered LFP data.
-        """
-        from scipy import signal
-        from scipy.signal import butter, filtfilt
-        if band == 'low':
-            print('Filtering low band')
-            lowcut = 0.5
-            highcut = 10.0
-        elif band == 'high':
-            print('Filtering high band')
-            lowcut = 120.0
-            highcut = 250.0
-        else:
-            raise ValueError("Invalid band. Choose 'low' or 'high'.")
-
-        b, a = butter(5, [lowcut, highcut], btype='band', fs=new_sf)
-        filtered_LFP = filtfilt(b, a, LFP, axis=0)
-        return filtered_LFP
 
     assert len(train_LFPs) == len(train_GTs), "The number of train LFPs doesn't match the number of train GTs"
     assert len(val_LFPs) == len(val_GTs), "The number of test LFPs doesn't match the number of test GTs"
 
     assert len(train_LFPs)+len(val_LFPs) == len(sf), "The number of sampling frequencies doesn't match the number of sessions"
+    
     # All the training sessions data and GT will be concatenated in one data array and one GT array (2 x n events)
     counter_sf = 0
     retrain_LFP=[]
@@ -418,9 +391,7 @@ def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250
         print('Original training data shape: ',LFP.shape)
         print('Sampling frequency: ',sf[counter_sf])
         if len(retrain_LFP)==0:
-            retrain_LFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False)
-            if use_band is not None:
-                retrain_LFP = filter_LFP(retrain_LFP, sf=new_sf, band=use_band)
+            retrain_LFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False, use_band=use_band)
             if zscore:
                 retrain_LFP = (retrain_LFP - np.mean(retrain_LFP, axis=0))/np.std(retrain_LFP, axis=0)
             offset_sf = new_sf
@@ -432,9 +403,7 @@ def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250
         # Append the rest of the sessions, taking into account the length (in seconds)
         # of the previous sessions, to cocatenate the events' times
         else:
-            aux_LFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False)
-            if use_band is not None:
-                aux_LFP = filter_LFP(aux_LFP, sf=new_sf, band=use_band)
+            aux_LFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False, use_band=use_band)
             if zscore:
                 aux_LFP = (aux_LFP- np.mean(aux_LFP, axis=0))/np.std(aux_LFP, axis=0)
             retrain_LFP=np.vstack([retrain_LFP,aux_LFP])
@@ -448,9 +417,7 @@ def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250
     for LFP in val_LFPs:
         print('Original validation data shape: ',LFP.shape)
         print('Sampling frequency: ',sf[counter_sf])
-        tmpLFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False)
-        if use_band is not None:
-            tmpLFP = filter_LFP(tmpLFP, sf=new_sf, band=use_band)
+        tmpLFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False, use_band=use_band)
         if zscore:
             tmpLFP = (tmpLFP - np.mean(tmpLFP, axis=0))/np.std(tmpLFP, axis=0)
         norm_val_GT.append(tmpLFP)
@@ -702,13 +669,13 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
     )
 
     # Apply layer normalization to LFPs
-    def layer_normalize(data):
+    def channel_normalize(data):
         mean, variance = tf.nn.moments(data, axes=[1], keepdims=True)
         normalized_data = (data - mean) / tf.sqrt(variance + 1e-6)
         return normalized_data
 
-    train_x = train_x.map(lambda x: (layer_normalize(x)))
-    test_x = test_x.map(lambda x: (layer_normalize(x)))
+    train_x = train_x.map(lambda x: (channel_normalize(x)))
+    test_x = test_x.map(lambda x: (channel_normalize(x)))
 
     # train_y = train_y.map(lambda x: tf.pad(x, [[0, 0], [50, 0], [0, 0]], 'CONSTANT', constant_values=0.0))
     train_xy = train_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])

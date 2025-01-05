@@ -37,12 +37,15 @@ parser.add_argument('--mode', type=str, nargs=1,
                     help='mode training/predict', default='train')
 parser.add_argument('--val', type=str, nargs=1,
                     help='val_id 0,1,2,3', default='10')
+parser.add_argument('--tag', type=str, nargs=1,
+                    help='tag for running multiple studies in parallel', default='base')
 
 args = parser.parse_args()
 print(parser.parse_args())
 mode = args.mode[0]
 model_name = args.model[0]
 val_id = int(args.val[0])
+tag = args.tag[0]
 print(val_id)
 # pdb.set_trace()
 # Parameters
@@ -55,25 +58,30 @@ params['mode'] = mode
 
 
 class OptunaPruningCallback(tf.keras.callbacks.Callback):
-    def __init__(self, trial, monitor='val_robust_f1'):  # Change monitor
+    def __init__(self, trial, monitor='val_max_f1_metric_horizon'):
         super().__init__()
         self.trial = trial
         self.monitor = monitor
+        self.prev_value = float('-inf')
+        self.early_epoch_grace = 30  # Don't prune before this many epochs
 
     def on_epoch_end(self, epoch, logs=None):
-        # Retrieve the metric from logs. E.g., 'val_loss', 'val_accuracy'
+        # Don't prune during early epochs
+        if epoch < self.early_epoch_grace:
+            return
+            
         current_score = logs.get(self.monitor)
         if current_score is None:
-            # If the monitor metric isn't found, you might want to default or raise an error.
             return
-
-        # Report the intermediate value to Optuna
+            
         self.trial.report(current_score, step=epoch)
-
-        # If the pruner says we should stop this trial early
-        if self.trial.should_prune():
-            # Raise the prune exception to halt this trial
-            raise optuna.TrialPruned()
+        
+        # Only consider pruning if we're not improving
+        if current_score <= self.prev_value:
+            if self.trial.should_prune():
+                raise optuna.TrialPruned()
+        
+        self.prev_value = current_score
 
 # Define objective function before mode selection
 def create_study_name(trial):
@@ -204,6 +212,19 @@ def objective(trial):
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}EntropyTMSE'.format(ax, gx)
     
+    use_freq = 'FiltM'
+    if use_freq == 'FiltL':
+        params['TYPE_LOSS'] += 'FiltL'
+        tag = 'FiltL'
+    elif use_freq == 'FiltH':
+        params['TYPE_LOSS'] += 'FiltH'
+        tag = 'FiltH'
+    elif use_freq == 'FiltM':
+        params['TYPE_LOSS'] += 'FiltM'
+        tag = 'FiltM'
+    else:
+        tag = 'Base'
+        
     # init_lib = ['He', 'Glo']
     # par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
     par_init = 'He'
@@ -271,7 +292,9 @@ def objective(trial):
 
 
     # pdb.set_trace()
-    study_dir = f"./studies/{create_study_name(trial)}"
+    tag = args.tag[0]
+    param_dir = f"params_{tag}"
+    study_dir = f"studies/{param_dir}/study_{trial.number}_{trial.datetime_start.strftime('%Y%m%d_%H%M%S')}"
     os.makedirs(study_dir, exist_ok=True)
     
     # Copy pred.py and model/ directory
@@ -318,7 +341,10 @@ def objective(trial):
     ))        
     
     # Pruning callback
-    callbacks.append(OptunaPruningCallback(trial, 'val_max_f1_metric_horizon'))
+    callbacks.append(OptunaPruningCallback(
+        trial, 
+        monitor='val_max_f1_metric_horizon'  # Primary metric we want to optimize
+    ))
 
     # Train and evaluate
     history = model.fit(
@@ -466,6 +492,8 @@ if mode == 'train':
         train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, use_band='low', preprocess=preproc)
     elif 'FiltH' in params['TYPE_LOSS']:
         train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, use_band='high', preprocess=preproc)
+    elif 'FiltM' in params['TYPE_LOSS']:
+        train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, use_band='muax', preprocess=preproc)
     else:
         train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
     train_size = len(list(train_dataset))
@@ -523,7 +551,9 @@ elif mode == 'predict':
         # Find the study directory
         import glob
         # study_dirs = glob.glob(f'studies_1/study_{study_num}_*')
-        study_dirs = glob.glob(f'studies/study_{study_num}_*')
+        tag = args.tag[0]
+        param_dir = f"params_{tag}"
+        study_dirs = glob.glob(f'studies/{param_dir}/study_{study_num}_*')
         if not study_dirs:
             raise ValueError(f"No study directory found for study number {study_num}")
         study_dir = study_dirs[0]  # Take the first matching directory
@@ -596,6 +626,7 @@ elif mode == 'predict':
         #     model = kr.models.load_model(params['WEIGHT_FILE'])
         # except:
         # get model parameters
+        pdb.set_trace()
         print(model_name)
         param_lib = model_name.split('_')
         # pdb.set_trace()
@@ -640,6 +671,8 @@ elif mode == 'predict':
         else:
             params['SRATE'] = 1250
 
+        # tag = ''  # MUAX, LP, 
+        
         # get model
         # a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
         a_model = importlib.import_module('model.model_fn')
@@ -721,9 +754,15 @@ elif mode == 'predict':
     # from model.input_fn import rippleAI_load_dataset
 
     preproc = False if model_name=='RippleNet' else True
-    # rippleAI_load_dataset(params, use_band='low', preprocess=preproc)
-    val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
-
+    if 'FiltL' in params['NAME']:
+        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='low', preprocess=preproc)
+    elif 'FiltH' in params['NAME']:
+        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='high', preprocess=preproc)
+    elif 'FiltM' in params['NAME']:
+        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='muax', preprocess=preproc)
+    else:
+        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
+    
     print('val_id: ', val_id)
     LFP = val_datasets[val_id]
     labels = val_labels[val_id]
@@ -732,8 +771,10 @@ elif mode == 'predict':
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/labels_val{0}_sf{1}.npy'.format(val_id, params['SRATE']), labels)
 
     # for j, signals in enumerate(val_datasets):
-    np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/signals_val{0}_sf{1}.npy'.format(val_id, params['SRATE']), LFP)
+    np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/signals{2}_val{0}_sf{1}.npy'.format(val_id, params['SRATE'], tag), LFP)
 
+    import pdb
+    pdb.set_trace()
     from model.cnn_ripple_utils import get_predictions_index, get_performance
 
     # get predictions
@@ -1446,13 +1487,15 @@ elif mode == 'tune_server':
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    param_dir = 'base_params'
+    tag = args.tag[0]
+    param_dir = f'params_{tag}'
+    
     if not os.path.exists(f'studies/{param_dir}'):
         os.makedirs(f'studies/{param_dir}')
         
     # Configure storage with more resilient settings
     storage = optuna.storages.RDBStorage(
-        url="sqlite:///studies/{0}/{0}.db".format(param_dir),
+        url=f"sqlite:///studies/{param_dir}/{param_dir}.db",
         heartbeat_interval=1,
         grace_period=600,  # Increased grace period
         failed_trial_callback=lambda study_id, trial_id: True,  # Auto-fail dead trials
@@ -1469,16 +1512,16 @@ elif mode == 'tune_server':
         direction='maximize', 
         load_if_exists=True,
         sampler=optuna.samplers.TPESampler(
-            n_startup_trials=24,    # Increased for 8 GPUs
-            n_ei_candidates=24,     # Increased for better parallel optimization
-            multivariate=True,
-            seed=42,
-            constant_liar=True      # For parallel optimization
+            n_startup_trials=24,    # Increased for better exploration
+            n_ei_candidates=24,     # More candidates for parallel optimization
+            multivariate=True,      # Enable multivariate sampling
+            seed=42,               
+            constant_liar=True      # Better parallel optimization
         ),
         pruner=optuna.pruners.MedianPruner(
-            n_startup_trials=16,     # Increased for 8 GPUs
-            n_warmup_steps=30,      # Start pruning after 30 epochs
-            interval_steps=5,        # Check more frequently for pruning
+            n_startup_trials=16,     # Allow more trials before pruning starts
+            n_warmup_steps=30,       # Don't prune before 30 epochs
+            interval_steps=5,         # Check more frequently for pruning
         )
     )
     
@@ -1487,8 +1530,9 @@ elif mode == 'tune_server':
     print("Storage:", study._storage)
 
 elif mode == 'tune_worker':
-    param_dir = 'base_params'
-    
+    tag = args.tag[0]
+    param_dir = f'params_{tag}'
+
 
     import json
     import logging
@@ -1498,7 +1542,7 @@ elif mode == 'tune_worker':
     # Configure worker with auto-retry
     study = optuna.load_study(
         study_name=param_dir,
-        storage="sqlite:///studies/{0}/{0}.db".format(param_dir)
+        storage=f"sqlite:///studies/{param_dir}/{param_dir}.db"
     )
 
     study.optimize(
@@ -1513,72 +1557,68 @@ elif mode == 'tune_worker':
     )
 
 elif mode == 'tune_viz':
-    param_dir = 'base_params'
+    tag = args.tag[0]
+    param_dir = f'params_{tag}'
 
     # Load study for visualization
     study = optuna.load_study(
         study_name=param_dir,
-        storage="sqlite:///studies/{0}/{0}.db".format(param_dir),
+        storage=f"sqlite:///studies/{param_dir}/{param_dir}.db",
     )
     
-    # Create visualization directory
-    os.makedirs("studies/visualizations", exist_ok=True)
+    # Create visualization directory under the param_dir
+    os.makedirs(f"studies/{param_dir}/visualizations", exist_ok=True)
     
-    # Original visualizations
-    # Plot optimization history
+    # Update paths to store under param_dir
     fig = plot_optimization_history(study)
-    fig.write_html("studies/visualizations/{}_optimization_history.html".format(param_dir))
+    fig.write_html(f"studies/{param_dir}/visualizations/optimization_history.html")
     
-    # Plot parameter importances
     fig = plot_param_importances(study)
-    fig.write_html("studies/visualizations/{}_param_importances.html".format(param_dir))
+    fig.write_html(f"studies/{param_dir}/visualizations/param_importances.html")
     
-    # Plot parallel coordinate plot
     fig = optuna.visualization.plot_parallel_coordinate(study)
-    fig.write_html("studies/visualizations/{}_parallel_coordinate.html".format(param_dir))
+    fig.write_html(f"studies/{param_dir}/visualizations/parallel_coordinate.html")
     
     # Save study statistics
     stats = {
         "number_of_trials": len(study.trials),
-        "best_value": study.best_value,  # Now just a single value
+        "best_value": study.best_value,
         "best_params": study.best_params,
         "best_trial": study.best_trial.number,
         "completed_trials": len(study.get_trials(states=[optuna.trial.TrialState.COMPLETE])),
         "pruned_trials": len(study.get_trials(states=[optuna.trial.TrialState.PRUNED])),
-        "failed_trials": len(study.get_trials(states=[optuna.trial.TrialState.FAIL]))    }    
-    with open("studies/visualizations/{}_study_stats.json".format(param_dir), "w") as f:
+        "failed_trials": len(study.get_trials(states=[optuna.trial.TrialState.FAIL]))
+    }
+    
+    with open(f"studies/{param_dir}/visualizations/study_stats.json", "w") as f:
         json.dump(stats, f, indent=4)
     
-    print("Visualization results saved to studies/visualizations/")
+    print(f"Visualization results saved to studies/{param_dir}/visualizations/")
     print("\nStudy Statistics:")
     print(json.dumps(stats, indent=2))
     
-    # New visualization for top N trials
-    N = 30  # Number of top trials to analyze
+    # Top N trials analysis
+    N = 30
     trials = study.trials
-    # Sort trials by score (assuming first objective is the main one)
     sorted_trials = sorted(trials, key=lambda t: t.value if t.value is not None else float('-inf'), reverse=True)
-    # Get top N trials
     top_trials = sorted_trials[:N]
-    # Create a DataFrame with parameters and scores
-    import pandas as pd
     
+    import pandas as pd
     data = []
     for trial in top_trials:
-        if trial.values:  # Check if trial has completed
+        if trial.values:
             row = {
                 'trial_number': trial.number,
                 'score': trial.values[0],
-                **trial.params  # Unpack all parameters
+                **trial.params
             }
             data.append(row)
     
     df = pd.DataFrame(data)
     
-    # Save to CSV for easy viewing
-    df.to_csv("studies/visualizations/{}_top_{}_trials.csv".format(param_dir, N), index=False)
+    # Save analysis files under param_dir
+    df.to_csv(f"studies/{param_dir}/visualizations/top_{N}_trials.csv", index=False)
     
-    # Create a more focused HTML visualization
     html_content = """
     <html>
     <head>
@@ -1597,16 +1637,12 @@ elif mode == 'tune_viz':
     </html>
     """.format(N, N, df.to_html())
     
-    with open("studies/visualizations/{}_top_{}_trials.html".format(param_dir, N), "w") as f:
+    with open(f"studies/{param_dir}/visualizations/top_{N}_trials.html", "w") as f:
         f.write(html_content)
     
-    # Create parameter distribution plots for top trials
     import matplotlib.pyplot as plt
-    
-    # Plot parameter distributions for numerical parameters
     numerical_params = df.select_dtypes(include=['float64', 'int64']).columns
     fig, axes = plt.subplots(len(numerical_params), 1, figsize=(10, 4*len(numerical_params)))
-    
     for i, param in enumerate(numerical_params):
         if param != 'score' and param != 'trial_number':
             ax = axes[i] if len(numerical_params) > 1 else axes
@@ -1614,10 +1650,11 @@ elif mode == 'tune_viz':
             ax.set_title(f'Score vs {param}')
     
     plt.tight_layout()
-    plt.savefig("studies/visualizations/{}_top_{}_parameter_distributions.png".format(param_dir, N))
+    plt.savefig(f"studies/{param_dir}/visualizations/top_{N}_parameter_distributions.png")
     
-    print(f"\nTop {N} trials analysis saved to studies/visualizations/")
-    print(f"Check the following files:")
-    print(f"- {param_dir}_top_{N}_trials.csv")
-    print(f"- {param_dir}_top_{N}_trials.html")
-    print(f"- {param_dir}_top_{N}_parameter_distributions.png")
+    print(f"\nTop {N} trials analysis saved to studies/{param_dir}/visualizations/")
+    print("Check the following files:")
+    print(f"- top_{N}_trials.csv")
+    print(f"- top_{N}_trials.html")
+    print(f"- top_{N}_parameter_distributions.png")
+ 
