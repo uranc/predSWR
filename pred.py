@@ -157,7 +157,8 @@ def objective(trial):
     
     arch_lib = ['MixerHori', 'MixerDori', 'DualMixerDori', 'MixerCori']
     # Model architecture parameters - Fix the categorical suggestion
-    arch_ind = trial.suggest_int('IND_ARCH', 0, len(arch_lib)-1)
+    # arch_ind = trial.suggest_int('IND_ARCH', 0, len(arch_lib)-1)
+    arch_ind = 0
     params['TYPE_ARCH'] = arch_lib[arch_ind]
     # params['TYPE_ARCH'] = 'MixerHori'
     
@@ -176,7 +177,7 @@ def objective(trial):
     params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
     
     # Timing parameters remain the same
-    params['HORIZON_MS'] = 4#trial.suggest_int('HORIZON_MS', 1, 5)
+    params['HORIZON_MS'] = 4 #trial.suggest_int('HORIZON_MS', 1, 5)
     params['SHIFT_MS'] = 0
     
     
@@ -212,19 +213,10 @@ def objective(trial):
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}EntropyTMSE'.format(ax, gx)
     
-    use_freq = 'FiltM'
-    if use_freq == 'FiltL':
-        params['TYPE_LOSS'] += 'FiltL'
-        tag = 'FiltL'
-    elif use_freq == 'FiltH':
-        params['TYPE_LOSS'] += 'FiltH'
-        tag = 'FiltH'
-    elif use_freq == 'FiltM':
-        params['TYPE_LOSS'] += 'FiltM'
-        tag = 'FiltM'
-    else:
-        tag = 'Base'
-        
+    # Remove the hardcoded use_freq and derive it from tag instead
+    tag = args.tag[0]
+    params['TYPE_LOSS'] += tag
+    print
     # init_lib = ['He', 'Glo']
     # par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
     par_init = 'He'
@@ -303,8 +295,21 @@ def objective(trial):
         shutil.rmtree(f"{study_dir}/model")
     shutil.copytree('./model', f"{study_dir}/model")
     
+    preproc = True
     # Load data and build model
-    train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params)
+    print(params['TYPE_LOSS'])
+    if 'FiltL' in params['TYPE_LOSS']:
+        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='low', preprocess=preproc)
+    elif 'FiltH' in params['TYPE_LOSS']:
+        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='high', preprocess=preproc)
+    elif 'FiltM' in params['TYPE_LOSS']:
+        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='muax', preprocess=preproc)
+    else:
+        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
+    
+    
+    
+    
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     
     # Setup callbacks
@@ -773,8 +778,8 @@ elif mode == 'predict':
     # for j, signals in enumerate(val_datasets):
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/signals{2}_val{0}_sf{1}.npy'.format(val_id, params['SRATE'], tag), LFP)
 
-    import pdb
-    pdb.set_trace()
+    # import pdb
+    # pdb.set_trace()
     from model.cnn_ripple_utils import get_predictions_index, get_performance
 
     # get predictions
@@ -1657,4 +1662,3 @@ elif mode == 'tune_viz':
     print(f"- top_{N}_trials.csv")
     print(f"- top_{N}_trials.html")
     print(f"- top_{N}_parameter_distributions.png")
- 

@@ -366,7 +366,7 @@ def filter_LFP(LFP, sf=1250, band='low'):
         lowcut = 120.0
         highcut = 250.0
     elif band == 'muax':
-        print('Filtering high band')
+        print('Filtering muax band')
         lowcut = 300.0
         highcut = 6000.0
     else:

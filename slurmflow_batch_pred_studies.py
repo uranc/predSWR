@@ -7,11 +7,10 @@ import time
 import copy
 
 
-# model_lib = [45, 221, 215, 204, 183, 247, 238, 263, 613, 578, 631, 125, 474, 423, 321, 293, 639, 580, 634, 458]
-# model_lib = [27,32,34,31,15,26,73,19,8,23]
-# model_lib = [19,8,23,350,197,261,250,131,225,303,244,247,198,245,278,240,348,182,221,290,170,126]
-tag = 'FiltM'
-model_lib = [31]#,16,165,89,186,3,11,23,150,142,2,148
+tag = 'FiltH' # FiltL, FiltH, FiltM
+# model_lib = [1,10]#,16,165,89,186,3,11,23,150,142,2,148
+# model_lib = [3,2,4]# FiltL
+model_lib = [3,12,4] #FiltH
 n=0
 for im, model in enumerate(model_lib):
     # subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model])
