@@ -1651,6 +1651,7 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
 
     # get TCN
     if model_type=='Base':
+        print('Using Base TCN')
         from tcn import TCN
         tcn_op = TCN(nb_filters=n_filters,
                         kernel_size=n_kernels,
@@ -1669,6 +1670,30 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
                         return_state=False)
         print(tcn_op.receptive_field)
         nets = tcn_op(inputs_nets)
+        nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+    elif model_type=='SingleCh':
+        print('Using Single Channel TCN')
+        from tcn import TCN
+        tcn_op = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=use_batch_norm,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+        single_outputs = []
+        for c in range(input_chans):
+            ch_slice = Lambda(lambda x: x[:, :, c:c+1])(inputs)
+            single_outputs.append(tcn_op(ch_slice))
+        nets = Concatenate(axis=-1)(single_outputs)
         nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
 
     if params['TYPE_ARCH'].find('L2N')>-1:

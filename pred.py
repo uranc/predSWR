@@ -102,33 +102,7 @@ def objective(trial):
             'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
             }
     params['mode'] = 'train'  
-    # Configure GPU at the start
-    # gpus = tf.config.list_physical_devices('GPU')
-    # if gpus:
-    #     try:
-    #         # Configure the first (and only) GPU
-    #         tf.config.set_logical_device_configuration(
-    #             gpus[0],
-    #             [tf.config.LogicalDeviceConfiguration(memory_limit=13312)])
-    #         print("GPU configured with memory limit: 14336MB")
-    #     except RuntimeError as e:
-    #         print(f"GPU setup error: {e}")
-    #         print("Falling back to CPU")
-    # else:
-    #     print("No GPUs found - running on CPU")
 
-    # # Add TPE sampler for more efficient hyperparameter search
-    # sampler = optuna.samplers.TPESampler(
-    #     n_startup_trials=10,
-    #     multivariate=True,
-    #     seed=42
-    # )
-    
-    # Optional hyperparameters
-    # use_dropout = trial.suggest_categorical('use_dropout', [True, False])
-    # if use_dropout:
-    #     dropout_rate = trial.suggest_float('dropout_rate', 0.1, 0.5)
-    
     # Dynamic learning rate range
     # learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-1, log=True)
     learning_rate = 1e-3
@@ -144,16 +118,13 @@ def objective(trial):
     import logging
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
-    
     from model.input_augment_weighted import rippleAI_load_dataset
-    
-
     
     # Base parameters
     params['SRATE'] = 2500
     params['NO_EPOCHS'] = 300
-    params['TYPE_MODEL'] = 'Base'
-    
+    # params['TYPE_MODEL'] = 'Base'
+    params['TYPE_MODEL'] = 'SingleCh'
     
     arch_lib = ['MixerHori', 'MixerDori', 'DualMixerDori', 'MixerCori']
     # Model architecture parameters - Fix the categorical suggestion
@@ -307,9 +278,7 @@ def objective(trial):
     else:
         train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
     
-    
-    
-    
+
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     
     # Setup callbacks
