@@ -219,8 +219,8 @@ def objective(trial):
     if params['USE_Aug']:
         params['TYPE_ARCH'] += 'Aug'
         
-    if not 'Cori' in params['TYPE_ARCH']:
-        params['TYPE_LOSS'] += 'BarAug'
+    # if not 'Cori' in params['TYPE_ARCH']:
+    #     params['TYPE_LOSS'] += 'BarAug'
         
     # params['USE_CSD'] = trial.suggest_categorical('USE_CSD', [True, False])
     # if params['USE_CSD']:
@@ -279,6 +279,9 @@ def objective(trial):
         train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
     
 
+    # if params['TYPE_MODEL'] == 'SingleCh':
+    #     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params, input_chans=1)
+    # else:
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     
     # Setup callbacks
