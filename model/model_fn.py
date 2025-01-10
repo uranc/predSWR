@@ -2199,6 +2199,31 @@ def tcm_loss(y_true, y_pred, m_pos=0.5, m_neg=0.5, lambda_pos=1.0, lambda_neg=1.
 
     return tcm_loss_value
 
+def early_rising_monotonicity_loss(y_true, y_pred, early_threshold=0.2):
+    """
+    Custom loss for encouraging early rising predictions and enforcing monotonic transitions.
+    
+    y_true: Ground truth labels, shape (batch_size, time_steps, 1)
+    y_pred: Model predictions, shape (batch_size, time_steps, 1)
+    early_threshold: Minimum probability threshold for early detection.
+    """
+    # Identify pre-onset region (where y_true == 0)
+    pre_onset_mask = tf.cast(y_true == 0, tf.float32)  # Shape: (batch_size, time_steps, 1)
+
+    # Penalize predictions below the early threshold before onsetG
+    early_rising_penalty = tf.nn.relu(early_threshold - y_pred) * pre_onset_mask
+    
+    # Compute difference between consecutive predictions (for monotonicity)
+    diff = y_pred[:, :-1, :] - y_pred[:, 1:, :]
+
+    # Ensure pre_onset_mask is sliced correctly and has compatible shape
+    pre_onset_mask_sliced = pre_onset_mask[:, :-1, :]  # Shape: (batch_size, time_steps - 1, 1)
+
+    # Apply monotonicity penalty
+    monotonicity_penalty = tf.nn.relu(diff) * pre_onset_mask_sliced
+
+    return total_loss
+
 def adaptive_early_onset_loss(y_true, y_pred, threshold=0.5, onset_confidence=3):
     early_loss = early_onset_preference_loss(y_true, y_pred, threshold=threshold)
     dynamic_threshold = tf.Variable(threshold)
@@ -2583,13 +2608,20 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
         if params['TYPE_LOSS'].find('L2Reg')>-1:
             print('L2 Regularization Loss')
             total_loss += tf.add_n([tf.reduce_sum(tf.square(w)) for w in model.trainable_weights])#custom_l2_regularization_loss(model, l2_lambda=1e-3)
+        if params['TYPE_LOSS'].find('Mono')>-1:
+            print('Monotonocity Loss')
+            if 'HYPER_MONO' in params:
+                w_mono = float(params['HYPER_MONO'])
+            else:
+                w_mono = 1e-3
+            total_loss += w_mono * early_rising_monotonicity_loss(y_true_exp, y_pred_exp)
         if params['TYPE_LOSS'].find('BarAug')>-1 and this_op is not None:
             print('Barlow Augmentation Loss')
             if 'HYPER_BARLOW' in params:
                 w_barlow = float(params['HYPER_BARLOW'])
             else:
                 w_barlow = 1e-2
-            total_loss += w_barlow*barlow_twins_loss(this_op(prediction_out), this_op(prediction_targets))
+            total_loss += w_barlow * barlow_twins_loss(this_op(prediction_out), this_op(prediction_targets))
 
         print('rec_weights')
         # rec_weights = sample_weight[:,horizon:]

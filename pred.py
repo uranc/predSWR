@@ -123,8 +123,8 @@ def objective(trial):
     # Base parameters
     params['SRATE'] = 2500
     params['NO_EPOCHS'] = 300
-    # params['TYPE_MODEL'] = 'Base'
-    params['TYPE_MODEL'] = 'SingleCh'
+    params['TYPE_MODEL'] = 'Base'
+    # params['TYPE_MODEL'] = 'SingleCh'
     
     arch_lib = ['MixerHori', 'MixerDori', 'DualMixerDori', 'MixerCori']
     # Model architecture parameters - Fix the categorical suggestion
@@ -158,7 +158,10 @@ def objective(trial):
     
     params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.000001, 10.0, log=True)
     params['HYPER_TMSE'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
-    params['HYPER_BARLOW'] = 2e-5#trial.suggest_float('HYPER_BARLOW', 0.000001, 10.0, log=True)
+    params['HYPER_BARLOW'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
+    params['HYPER_MONO'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
+
+    # params['HYPER_BARLOW'] = 2e-5
     # params['HYPER_TMSE'] = 1e-5
     
     # Model parameters matching training format
@@ -211,16 +214,16 @@ def objective(trial):
     # if params['USE_L2N']:
     params['TYPE_ARCH'] += 'L2N'
         
-    params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
-    if params['USE_ZNorm']:
-        params['TYPE_ARCH'] += 'ZNorm'
+    # params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
+    # if params['USE_ZNorm']:
+    #     params['TYPE_ARCH'] += 'ZNorm'
         
     params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
     if params['USE_Aug']:
         params['TYPE_ARCH'] += 'Aug'
         
-    # if not 'Cori' in params['TYPE_ARCH']:
-    #     params['TYPE_LOSS'] += 'BarAug'
+    if (not 'Cori' in params['TYPE_ARCH']) and  (not 'SingleCh' in params['TYPE_MODEL']):
+        params['TYPE_LOSS'] += 'BarAug'
         
     # params['USE_CSD'] = trial.suggest_categorical('USE_CSD', [True, False])
     # if params['USE_CSD']:
@@ -1455,6 +1458,520 @@ elif mode == 'embedding':
         # save activations
         for il in range(len(tmp_act)):
             np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/activations/{0}_act{1}.npy'.format(model_name, il), tmp_act[il])
+
+    def get_embeddings(model, data):
+        """Extract embeddings from the model's penultimate layer"""
+        embedding_model = tf.keras.Model(inputs=model.input, 
+                                       outputs=model.get_layer('global_average_pooling1d').output)
+        return embedding_model.predict(data)
+
+    def extract_centered_events(data, labels, params):
+        """Extract events centered exactly on SWR peaks"""
+        window_size = params['NO_TIMEPOINTS']
+        pos_events = []
+        
+        for start, end in labels:
+            # Calculate the center point of the ripple
+            center_time = (start + end) / 2
+            center_idx = int(center_time * params['SRATE'])
+            
+            # Only include if we have enough padding on both sides
+            if center_idx - window_size//2 >= 0 and center_idx + window_size//2 < data.shape[0]:
+                event = data[center_idx - window_size//2:center_idx + window_size//2]
+                pos_events.append(event)
+        
+        return np.array(pos_events)
+
+    # Process each validation set
+    for val_id in range(len(val_datasets)):
+        LFP = val_datasets[val_id]
+        labels = val_labels[val_id]
+        
+        # Extract centered ripple events
+        ripple_events = extract_centered_events(LFP, labels, params)
+        print(f"Extracted {len(ripple_events)} centered ripple events")
+        
+        # Get embeddings
+        embeddings = get_embeddings(model, ripple_events)
+        
+        # Calculate pairwise distances between all ripple events
+        from scipy.spatial.distance import pdist, squareform
+        pairwise_distances = squareform(pdist(embeddings))
+        
+        # Basic statistics
+        stats = {
+            'mean_distance': np.mean(pairwise_distances),
+            'std_distance': np.std(pairwise_distances),
+            'min_distance': np.min(pairwise_distances[pairwise_distances > 0]),
+            'max_distance': np.max(pairwise_distances),
+            'embedding_mean': np.mean(embeddings, axis=0),
+            'embedding_std': np.std(embeddings, axis=0),
+        }
+        
+        # Dimensionality reduction for visualization
+        import umap
+        reducer = umap.UMAP(random_state=42)
+        embedding_2d = reducer.fit_transform(embeddings)
+        
+        # Clustering to identify potential subtypes
+        from sklearn.cluster import DBSCAN
+        clustering = DBSCAN(eps=0.5, min_samples=5).fit(embeddings)
+        
+        # Save results
+        np.savez(f'embeddings_val{val_id}_analysis.npz',
+                 ripple_events=ripple_events,
+                 embeddings=embeddings,
+                 embedding_2d=embedding_2d,
+                 clusters=clustering.labels_,
+                 stats=stats)
+        
+        # Visualization
+        plt.figure(figsize=(15, 5))
+        
+        # Plot UMAP embedding colored by cluster
+        plt.subplot(131)
+        scatter = plt.scatter(embedding_2d[:, 0], embedding_2d[:, 1], 
+                            c=clustering.labels_, cmap='Spectral')
+        plt.colorbar(scatter)
+        plt.title('UMAP Visualization\nColored by Cluster')
+        
+        # Plot average waveform with std
+        plt.subplot(132)
+        mean_waveform = np.mean(ripple_events, axis=0)
+        std_waveform = np.std(ripple_events, axis=0)
+        t = np.arange(mean_waveform.shape[0]) / params['SRATE']
+        for ch in range(mean_waveform.shape[1]):
+            plt.plot(t, mean_waveform[:, ch] + ch*0.5, 'k', alpha=0.8)
+            plt.fill_between(t, 
+                           mean_waveform[:, ch] - std_waveform[:, ch] + ch*0.5,
+                           mean_waveform[:, ch] + std_waveform[:, ch] + ch*0.5,
+                           alpha=0.2)
+        plt.title('Average Waveform\nwith Standard Deviation')
+        
+        # Plot distance distribution
+        plt.subplot(133)
+        plt.hist(pairwise_distances.flatten(), bins=50)
+        plt.title('Distribution of\nPairwise Distances')
+        
+        plt.tight_layout()
+        plt.savefig(f'embeddings_val{val_id}_analysis.png')
+        plt.close()
+        
+        # Print statistics
+        print(f"\nValidation set {val_id} embedding statistics:")
+        print(f"Number of events: {len(ripple_events)}")
+        print(f"Mean pairwise distance: {stats['mean_distance']:.4f}")
+        print(f"Std pairwise distance: {stats['std_distance']:.4f}")
+        print(f"Number of clusters: {len(np.unique(clustering.labels_))}")
+
+elif mode == 'embedding_analysis':
+    # modelname
+    model = args.model[0]
+    model_name = model
+    import importlib
+
+    if model_name.startswith('Tune'):
+        # Extract study number from model name (e.g., 'Tune_45_' -> '45') 
+        study_num = model_name.split('_')[1]
+        print(f"Loading tuned model from study {study_num}")
+        
+        # params['SRATE'] = 2500
+        # Find the study directory
+        import glob
+        # study_dirs = glob.glob(f'studies_1/study_{study_num}_*')
+        tag = args.tag[0]
+        param_dir = f"params_{tag}"
+        study_dirs = glob.glob(f'studies/{param_dir}/study_{study_num}_*')
+        if not study_dirs:
+            raise ValueError(f"No study directory found for study number {study_num}")
+        study_dir = study_dirs[0]  # Take the first matching directory
+        
+        # Load trial info to get parameters
+        with open(f"{study_dir}/trial_info.json", 'r') as f:
+            trial_info = json.load(f)
+            params.update(trial_info['parameters'])
+        
+        # pdb.set_trace()
+        # Import required modules
+        if 'MixerHori' in params['TYPE_ARCH']:
+            from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
+        elif 'MixerDori' in params['TYPE_ARCH']:
+            from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
+        elif 'MixerCori' in params['TYPE_ARCH']:
+            from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
+        from model.model_fn import CSDLayer 
+        from tcn import TCN
+        from keras.models import load_model
+        
+        params['mode'] = 'predict'
+        # Build model with trial parameters
+        model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+        
+        # Load weights
+        # weight_file = f"{study_dir}/last.weights.h5"
+        weight_file = f"{study_dir}/max.weights.h5"
+        print(f"Loading weights from: {weight_file}")
+        model.load_weights(weight_file)
+        
+    elif model_name == 'RippleNet':
+        import sys, pickle, keras, h5py
+        sys.path.insert(0, '/cs/projects/OWVinckSWR/DL/RippleNet/')
+        from ripplenet.common import *
+        params['TYPE_ARCH'] = 'RippleNet'
+
+        # load info on best model (path, threhsold settings)
+        with open('/cs/projects/OWVinckSWR/DL/RippleNet/best_model.pkl', 'rb') as f:
+            best_model = pickle.load(f)
+            print(best_model)
+
+        # load the 'best' performing model on the validation sets
+        model = keras.models.load_model(best_model['model_file'])
+
+    elif model_name == 'CNN1D':
+        from tensorflow import keras
+        new_model = None
+        model_number = 1
+        arch = model_name
+        params['TYPE_ARCH'] = arch
+        for filename in os.listdir('/mnt/hpc/projects/OWVinckSWR/Carmen/DBI2/rippl-AI/optimized_models/'):
+            if f'{arch}_{model_number}' in filename:
+                break
+        print(filename)
+        sp=filename.split('_')
+        n_channels=int(sp[2][2])
+        timesteps=int(sp[4][2:])
+
+        optimizer = keras.optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=False)
+        if new_model==None:
+            model = keras.models.load_model(os.path.join('/mnt/hpc/projects/OWVinckSWR/Carmen/DBI2/rippl-AI/optimized_models',filename), compile=False)
+        else:
+            model=new_model
+        model.compile(loss="binary_crossentropy", optimizer=optimizer)
+    else:
+        # try:
+        #     import tensorflow.keras as kr
+        #     params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+        #     model = kr.models.load_model(params['WEIGHT_FILE'])
+        # except:
+        # get model parameters
+        pdb.set_trace()
+        print(model_name)
+        param_lib = model_name.split('_')
+        # pdb.set_trace()
+        assert(len(param_lib)==12)
+        params['TYPE_MODEL'] = param_lib[0]
+        print(params['TYPE_MODEL'])
+        assert(param_lib[1][0]=='K')
+        params['NO_KERNELS'] = int(param_lib[1][1:])
+        print(params['NO_KERNELS'])
+        assert(param_lib[2][0]=='T')
+        params['NO_TIMEPOINTS'] = int(param_lib[2][1:])
+        print(params['NO_TIMEPOINTS'])
+        assert(param_lib[3][0]=='D')
+        params['NO_DILATIONS'] = int(param_lib[3][1:])
+        print(params['NO_DILATIONS'])
+        assert(param_lib[4][0]=='N')
+        params['NO_FILTERS'] = int(param_lib[4][1:])
+        print(params['NO_FILTERS'])
+        assert(param_lib[5][0]=='L')
+        params['LEARNING_RATE'] = (1e-1)**int(param_lib[5][1:])
+        print(params['LEARNING_RATE'])
+        assert(param_lib[6][0]=='E')
+        params['NO_EPOCHS'] = int(param_lib[6][1:])
+        print(params['NO_EPOCHS'])
+        assert(param_lib[7][0]=='B')
+        params['BATCH_SIZE'] = int(param_lib[7][1:])
+        print(params['BATCH_SIZE'])
+        assert(param_lib[8][0]=='S')
+        params['NO_STRIDES'] = int(param_lib[8][1:])
+        print(params['NO_STRIDES'])
+        params['TYPE_LOSS'] = param_lib[9]
+        print(params['TYPE_LOSS'])
+        params['TYPE_REG'] = param_lib[10]
+        print(params['TYPE_REG'])
+        params['TYPE_ARCH'] = param_lib[11]
+        print(params['TYPE_ARCH'])
+
+        # get sampling rate # little dangerous assumes 4 digits
+        if 'Samp' in params['TYPE_LOSS']:
+            sind = params['TYPE_LOSS'].find('Samp')
+            params['SRATE'] = int(params['TYPE_LOSS'][sind+4:sind+8])
+        else:
+            params['SRATE'] = 1250
+
+        # tag = ''  # MUAX, LP, 
+        
+        # get model
+        # a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        a_model = importlib.import_module('model.model_fn')
+        # if model.find('CSD') != -1:
+        #     build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
+
+        if model_name.find('Tune') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_HorizonMixer')
+            from keras.utils import custom_object_scope
+            from model.model_fn import CSDLayer
+            from tcn import TCN
+            from keras.models import load_model
+            
+            
+            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_f1_model.h5'
+            print((params['WEIGHT_FILE']))
+            with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+                model = load_model(params['WEIGHT_FILE'])            
+        elif model_name.find('MixerHori') != -1:
+            from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
+        elif model_name.find('MixerDori') != -1:
+            from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
+        elif model_name.find('MixerCori') != -1:
+            from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
+        elif model_name.find('Barlow') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_HorizonBarlow')
+            from keras.utils import custom_object_scope
+            from model.model_fn import CSDLayer
+            from tcn import TCN
+            from keras.models import load_model
+            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_f1_model.h5'
+            print((params['WEIGHT_FILE']))
+            with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+                model = load_model(params['WEIGHT_FILE'])
+            # model.summary()            
+        elif model.find('Hori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon')
+        elif model.find('Dori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Dorizon')
+        elif model.find('Cori') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Corizon')
+        elif model_name.find('Proto') != -1:
+            from keras.utils import custom_object_scope
+            from model.model_fn import CSDLayer
+            from tcn import TCN
+            from keras.models import load_model
+            # with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_f1_model.h5'
+            print((params['WEIGHT_FILE']))
+            with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+                model = load_model(params['WEIGHT_FILE'])
+            # model.summary()
+            # model.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/{0}/'.format(model_name)+'best_model.h5')
+            # import pdb
+            # build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon_Updated')
+            # model, train_model = build_DBI_TCN_Horizon_Updated(input_timepoints=params['NO_TIMEPOINTS'], input_chans=8, embedding_dim=params['NO_FILTERS'], params=params)
+        else:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+        # pdb.set_trace()
+        # # from model.model_fn import build_DBI_TCN
+        # # from model.model_fn import build_DBI_TCN
+        # # from model.model_fn import build_DBI_TCN_CSD as build_DBI_TCN
+
+        if (model_name.find('Proto') == -1) and (model_name.find('Barlow') == -1):
+            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+            # params['WEIGHT_FILE'] = ''
+            model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+        # from keras.utils import custom_object_scope
+        # from model.model_fn import CSDLayer
+        # from tcn import TCN
+        # from keras.models import load_model
+        # with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
+        #     model = load_model(params['WEIGHT_FILE'])
+    model.summary()
+
+    params['BATCH_SIZE'] = 512*2
+    from model.input_augment_weighted import rippleAI_load_dataset
+    # from model.input_aug import rippleAI_load_dataset
+    # from model.input_fn import rippleAI_load_dataset
+
+    preproc = False if model_name=='RippleNet' else True
+    if 'FiltL' in params['NAME']:
+        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='low', preprocess=preproc)
+    elif 'FiltH' in params['NAME']:
+        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='high', preprocess=preproc)
+    elif 'FiltM' in params['NAME']:
+        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='muax', preprocess=preproc)
+    else:
+        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
+        
+
+    def extract_events(data, labels, params, window_size=128):
+        """Extract positive and negative events with domain-specific considerations"""
+        pos_events = []
+        neg_events = []
+        neg_far_events = []  # Events very far from SWRs
+        neg_edge_events = [] # Events just outside SWR boundaries
+        
+        # Calculate ripple duration statistics for scaling
+        ripple_durations = [(end - start) for start, end in labels]
+        avg_duration = np.mean(ripple_durations)
+        
+        forbidden_windows = []  # Track regions we can't use for negative samples
+        for start, end in labels:
+            start_idx = int(start * params['SRATE'])
+            end_idx = int(end * params['SRATE'])
+            mid_idx = (start_idx + end_idx) // 2
+            
+            # Add ripple window to forbidden regions (with safety margin)
+            margin = int(0.1 * params['SRATE'])  # 100ms margin
+            forbidden_windows.append((start_idx - margin, end_idx + margin))
+            
+            # Extract positive event centered on ripple
+            if mid_idx - window_size//2 >= 0 and mid_idx + window_size//2 < data.shape[0]:
+                pos_events.append(data[mid_idx - window_size//2:mid_idx + window_size//2])
+                
+                # Get edge events (just outside ripple)
+                pre_edge_start = start_idx - window_size - margin
+                if pre_edge_start >= 0:
+                    neg_edge_events.append(data[pre_edge_start:pre_edge_start + window_size])
+                
+                post_edge_start = end_idx + margin
+                if post_edge_start + window_size < data.shape[0]:
+                    neg_edge_events.append(data[post_edge_start:post_edge_start + window_size])
+        
+        # Get negative events far from any ripple (>2 seconds)
+        far_margin = int(2.0 * params['SRATE'])
+        potential_regions = []
+        last_end = 0
+        for start, _ in forbidden_windows:
+            if start - last_end > window_size + 2*far_margin:
+                potential_regions.append((last_end + far_margin, start - far_margin))
+            last_end = max(last_end, start)
+            
+        # Randomly sample from allowed regions
+        n_samples = len(pos_events)
+        for region_start, region_end in potential_regions:
+            if region_end - region_start > window_size:
+                for _ in range(n_samples // len(potential_regions)):
+                    start_idx = np.random.randint(region_start, region_end - window_size)
+                    neg_far_events.append(data[start_idx:start_idx + window_size])
+        
+        return np.array(pos_events), np.array(neg_edge_events), np.array(neg_far_events)
+
+    def create_variations(events, params):
+        """Create physiologically relevant variations of events"""
+        variations = []
+        labels = []
+        
+        # Amplitude scaling (mimicking distance from probe variations)
+        scales = np.linspace(0.5, 2.0, 5)
+        for scale in scales:
+            scaled = events * scale
+            variations.append(scaled)
+            labels.extend([f'amp_{scale:.1f}'] * len(events))
+            
+        # Frequency-specific noise (targeting different bands)
+        from scipy import signal
+        
+        def add_band_noise(data, band, noise_level=0.2):
+            nyq = params['SRATE'] / 2
+            b, a = signal.butter(3, band/nyq, btype='bandpass')
+            noise = np.random.normal(0, noise_level, data.shape)
+            filtered_noise = signal.filtfilt(b, a, noise, axis=1)
+            return data + filtered_noise
+        
+        # Add ripple band noise (150-250 Hz)
+        variations.append(add_band_noise(events, [150, 250]))
+        labels.extend(['ripple_noise'] * len(events))
+        
+        # Add gamma band noise (30-80 Hz)
+        variations.append(add_band_noise(events, [30, 80]))
+        labels.extend(['gamma_noise'] * len(events))
+        
+        # Add theta band noise (4-12 Hz)
+        variations.append(add_band_noise(events, [4, 12]))
+        labels.extend(['theta_noise'] * len(events))
+        
+        # Temporal jitter (small shifts)
+        jitter_samples = [-4, -2, 2, 4]  # Small temporal shifts
+        for shift in jitter_samples:
+            if shift > 0:
+                jittered = np.pad(events, ((0,0), (shift,0), (0,0)))[:, :-shift, :]
+            else:
+                jittered = np.pad(events, ((0,0), (0,-shift), (0,0)))[:, -shift:, :]
+            variations.append(jittered)
+            labels.extend([f'jitter_{shift}'] * len(events))
+        
+        # Channel dropout (simulating electrode issues)
+        n_channels = events.shape[-1]
+        for i in range(2):  # Drop 1-2 random channels
+            channel_dropout = events.copy()
+            drop_channels = np.random.choice(n_channels, i+1, replace=False)
+            channel_dropout[:, :, drop_channels] = 0
+            variations.append(channel_dropout)
+            labels.extend([f'drop_{i+1}ch'] * len(events))
+            
+        return np.vstack(variations), labels
+
+    # Process each validation set
+    for val_id in range(len(val_datasets)):
+        print(f"Processing validation set {val_id}")
+        
+        # Extract different types of events
+        pos_events, neg_edge_events, neg_far_events = extract_events(
+            val_datasets[val_id], val_labels[val_id], params)
+        
+        # Create variations
+        pos_variations, pos_var_labels = create_variations(pos_events, params)
+        neg_edge_variations, neg_edge_var_labels = create_variations(neg_edge_events, params)
+        neg_far_variations, neg_far_var_labels = create_variations(neg_far_events, params)
+        
+        # Get embeddings
+        pos_embeddings = get_embeddings(model, pos_variations)
+        neg_edge_embeddings = get_embeddings(model, neg_edge_variations)
+        neg_far_embeddings = get_embeddings(model, neg_far_variations)
+        
+        # Calculate embedding statistics
+        stats = {
+            'pos_centroid': np.mean(pos_embeddings, axis=0),
+            'neg_edge_centroid': np.mean(neg_edge_embeddings, axis=0),
+            'neg_far_centroid': np.mean(neg_far_embeddings, axis=0),
+            'pos_variance': np.var(pos_embeddings, axis=0),
+            'neg_edge_variance': np.var(neg_edge_embeddings, axis=0),
+            'neg_far_variance': np.var(neg_far_embeddings, axis=0),
+            'edge_distance': np.linalg.norm(
+                np.mean(pos_embeddings, axis=0) - np.mean(neg_edge_embeddings, axis=0)),
+            'far_distance': np.linalg.norm(
+                np.mean(pos_embeddings, axis=0) - np.mean(neg_far_embeddings, axis=0))
+        }
+        
+        # Save detailed analysis
+        np.savez(f'embedding_analysis_val{val_id}.npz',
+                 pos_embeddings=pos_embeddings,
+                 neg_edge_embeddings=neg_edge_embeddings,
+                 neg_far_embeddings=neg_far_embeddings,
+                 pos_labels=pos_var_labels,
+                 neg_edge_labels=neg_edge_var_labels,
+                 neg_far_labels=neg_far_var_labels,
+                 stats=stats)
+        
+        # Plotting
+        plt.figure(figsize=(15, 10))
+        
+        # PCA visualization
+        pca = PCA(n_components=2)
+        all_embeddings = np.vstack([pos_embeddings, neg_edge_embeddings, neg_far_embeddings])
+        all_labels = (['positive'] * len(pos_embeddings) + 
+                     ['negative_edge'] * len(neg_edge_embeddings) +
+                     ['negative_far'] * len(neg_far_embeddings))
+        all_variations = pos_var_labels + neg_edge_var_labels + neg_far_var_labels
+        
+        pca_result = pca.fit_transform(all_embeddings)
+        
+        plt.subplot(2, 2, 1)
+        sns.scatterplot(x=pca_result[:, 0], y=pca_result[:, 1],
+                       hue=all_labels, style=all_variations)
+        plt.title('PCA Visualization')
+        
+        # Print statistics
+        print(f"\nValidation set {val_id} statistics:")
+        print(f"Edge boundary distance: {stats['edge_distance']:.4f}")
+        print(f"Far negative distance: {stats['far_distance']:.4f}")
+        print(f"Positive variance: {np.mean(stats['pos_variance']):.4f}")
+        print(f"Edge negative variance: {np.mean(stats['neg_edge_variance']):.4f}")
+        print(f"Far negative variance: {np.mean(stats['neg_far_variance']):.4f}")
+        
+        plt.tight_layout()
+        plt.savefig(f'embedding_analysis_val{val_id}.png')
+        plt.close()
+
 
 elif mode == 'tune_server':
     import optuna

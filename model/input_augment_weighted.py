@@ -668,14 +668,14 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         batch_size=params["BATCH_SIZE"]
     )
 
-    # # Apply layer normalization to LFPs
-    # def channel_normalize(data):
-    #     mean, variance = tf.nn.moments(data, axes=[1], keepdims=True)
-    #     normalized_data = (data - mean) / tf.sqrt(variance + 1e-6)
-    #     return normalized_data
+    # Apply layer normalization to LFPs
+    def channel_normalize(data):
+        mean, variance = tf.nn.moments(data, axes=[1], keepdims=True)
+        normalized_data = (data - mean) / tf.sqrt(variance + 1e-6)
+        return normalized_data
 
-    # train_x = train_x.map(lambda x: (channel_normalize(x)))
-    # test_x = test_x.map(lambda x: (channel_normalize(x)))
+    train_x = train_x.map(lambda x: (channel_normalize(x)))
+    test_x = test_x.map(lambda x: (channel_normalize(x)))
 
     # train_y = train_y.map(lambda x: tf.pad(x, [[0, 0], [50, 0], [0, 0]], 'CONSTANT', constant_values=0.0))
     train_xy = train_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
