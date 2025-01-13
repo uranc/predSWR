@@ -1742,11 +1742,12 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
     else:
         f1_metric = MaxF1MetricHorizon()
         r1_metric = RobustF1Metric()
+        latency_metric = LatencyMetric()
         this_binary_accuracy = custom_binary_accuracy
 
     model.compile(optimizer=tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE']),
                   loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op),
-                  metrics=[custom_mse_metric, this_binary_accuracy, f1_metric, r1_metric])#, this_embd=tcn_output
+                  metrics=[custom_mse_metric, this_binary_accuracy, f1_metric, r1_metric, latency_metric])#, this_embd=tcn_output
 
     if params['WEIGHT_FILE']:
         print('load model')
@@ -2122,6 +2123,32 @@ def early_onset_preference_loss(y_true, y_pred, threshold=0.5, early_onset_thres
 
     return tf.reduce_mean(onset_loss)
 
+def dynamic_threshold(y_pred, confidence, base_threshold=0.5, decay_rate=0.01, min_threshold=0.2):
+    """
+    Dynamically adjusts the threshold based on confidence and time decay.
+    
+    y_pred: Model predictions (batch_size, time_steps, 1)
+    confidence: Confidence scores (batch_size, time_steps, 1)
+    base_threshold: Initial threshold value.
+    decay_rate: Rate at which threshold decays over time.
+    min_threshold: Minimum allowable threshold.
+    
+    Returns:
+    dynamic_thresh_mask: Binary mask where y_pred exceeds dynamic threshold.
+    """
+    time_steps = tf.shape(y_pred)[1]
+    
+    # Create a decay factor over time
+    time_decay = tf.linspace(0.0, decay_rate * tf.cast(time_steps, tf.float32), time_steps)
+    threshold = tf.maximum(base_threshold - time_decay, min_threshold)
+    
+    # Adjust threshold based on confidence
+    adjusted_threshold = tf.maximum(threshold, confidence)  # Higher of decay threshold or confidence
+    
+    # Create binary mask where predictions exceed the dynamic threshold
+    dynamic_thresh_mask = tf.cast(y_pred >= adjusted_threshold, tf.float32)
+    
+    return dynamic_thresh_mask
 
 def truncated_mse_loss(y_true, y_pred, tau=4.0):
     # Log probabilities
@@ -2199,30 +2226,47 @@ def tcm_loss(y_true, y_pred, m_pos=0.5, m_neg=0.5, lambda_pos=1.0, lambda_neg=1.
 
     return tcm_loss_value
 
-def early_rising_monotonicity_loss(y_true, y_pred, early_threshold=0.2):
+def early_rising_monotonicity_loss(y_true, y_pred, gap_margin=40):
     """
-    Custom loss for encouraging early rising predictions and enforcing monotonic transitions.
-    
-    y_true: Ground truth labels, shape (batch_size, time_steps, 1)
-    y_pred: Model predictions, shape (batch_size, time_steps, 1)
-    early_threshold: Minimum probability threshold for early detection.
-    """
-    # Identify pre-onset region (where y_true == 0)
-    pre_onset_mask = tf.cast(y_true == 0, tf.float32)  # Shape: (batch_size, time_steps, 1)
+    Custom loss to encourage early rising predictions before onset (0 → 1 transition) 
+    and enforce monotonic increase within a specified gap period.
 
-    # Penalize predictions below the early threshold before onsetG
-    early_rising_penalty = tf.nn.relu(early_threshold - y_pred) * pre_onset_mask
+    Args:
+        y_true: Ground truth labels, shape (batch_size, time_steps, 1)
+        y_pred: Model predictions, shape (batch_size, time_steps, 1)
+        gap_margin: Maximum number of time steps before onset to apply monotonicity loss.
     
-    # Compute difference between consecutive predictions (for monotonicity)
+    Returns:
+        A scalar loss value encouraging early rising and smooth transitions.
+    """
+    batch_size = tf.shape(y_true)[0]
+    time_steps = tf.shape(y_true)[1]
+
+    # Step 1: Find onset indices (first 0 → 1 transition for each batch)
+    shifted_y_true = tf.concat([tf.zeros((batch_size, 1, 1)), y_true[:, :-1, :]], axis=1)
+    onset_mask = tf.logical_and(shifted_y_true < 0.5, y_true >= 0.5)  # Detect 0 → 1 transition
+    onset_indices = tf.argmax(tf.cast(onset_mask, tf.int32), axis=1)  # Shape: (batch_size,)
+
+    # Step 2: Create gap_mask relative to onset_indices
+    gap_start = tf.maximum(onset_indices - gap_margin, 0)  # Ensure no negative indices
+    gap_end = onset_indices
+
+    gap_mask = tf.sequence_mask(gap_end, maxlen=time_steps, dtype=tf.float32) - \
+               tf.sequence_mask(gap_start, maxlen=time_steps, dtype=tf.float32)
+    gap_mask = tf.expand_dims(gap_mask, axis=-1)  # Shape: (batch_size, time_steps, 1)
+
+    # Step 3: Compute monotonicity penalty (differences between consecutive predictions)
     diff = y_pred[:, :-1, :] - y_pred[:, 1:, :]
+    diff = tf.pad(diff, [[0, 0], [0, 1], [0, 0]])  # Pad to match y_pred shape
 
-    # Ensure pre_onset_mask is sliced correctly and has compatible shape
-    pre_onset_mask_sliced = pre_onset_mask[:, :-1, :]  # Shape: (batch_size, time_steps - 1, 1)
+    # Apply penalty for negative differences in the gap period
+    monotonicity_penalty = tf.nn.relu(diff) * gap_mask
 
-    # Apply monotonicity penalty
-    monotonicity_penalty = tf.nn.relu(diff) * pre_onset_mask_sliced
+    # Step 4: Compute the mean monotonicity loss
+    loss = tf.reduce_mean(monotonicity_penalty)
+    
+    return loss
 
-    return total_loss
 
 def adaptive_early_onset_loss(y_true, y_pred, threshold=0.5, onset_confidence=3):
     early_loss = early_onset_preference_loss(y_true, y_pred, threshold=threshold)
@@ -2290,60 +2334,49 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
         self.fp.assign(tf.zeros_like(self.fp))
         self.fn.assign(tf.zeros_like(self.fn))
 
+class LatencyMetric(tf.keras.metrics.Metric):
+    def __init__(self, name='latency_metric', threshold=0.5, max_early_detection=50, **kwargs):
+        super(LatencyMetric, self).__init__(name=name, **kwargs)
+        self.threshold = threshold
+        self.max_early_detection = max_early_detection
+        self.total_latency = self.add_weight(name='total_latency', initializer='zeros')
+        self.valid_batches = self.add_weight(name='valid_batches', initializer='zeros')
 
-class MaxF1MetricHorizonMixer(tf.keras.metrics.Metric):
-    def __init__(self, thresholds=tf.linspace(0.0, 1.0, 5), **kwargs):#tf.linspace(0.0, 1.0, 11)
-        super(MaxF1MetricHorizonMixer, self).__init__(**kwargs)
-        self.thresholds = thresholds
-        # Initialize accumulators for tp, fp, fn for each threshold
-        self.tp = self.add_weight(
-            shape=(len(thresholds),), initializer='zeros', name='tp')
-        self.fp = self.add_weight(
-            shape=(len(thresholds),), initializer='zeros', name='fp')
-        self.fn = self.add_weight(
-            shape=(len(thresholds),), initializer='zeros', name='fn')
-
+    @tf.function
     def update_state(self, y_true, y_pred, sample_weight=None):
-        # Cast to float32
-        y_true = tf.cast(y_true[:, :, 8], tf.float32)
-        y_pred = tf.math.sigmoid(tf.cast(y_pred[:, :, 8], tf.float32))
+        batch_size = tf.shape(y_true)[0]
+        time_steps = tf.shape(y_true)[1]
 
-        def compute_metrics(threshold):
-            y_pred_thresh = tf.cast(tf.reduce_any(y_pred >= threshold, axis=1), tf.float32)
-            y_true_bin = tf.cast(tf.reduce_any(y_true==1, axis=1), tf.float32)
+        # Find onset times (first 0 to 1 transition in y_true)
+        true_sequence_shifted = tf.concat([tf.zeros((batch_size, 1)), y_true[:, :-1, 0]], axis=1)
+        onset_mask = tf.logical_and(true_sequence_shifted < 0.5, y_true[:, :, 0] >= 0.5)
+        onset_times = tf.argmax(onset_mask, axis=1, output_type=tf.int32)
 
-            # Calculate batch TP, FP, FN
-            tp = tf.reduce_sum(y_pred_thresh * y_true_bin)
-            fp = tf.reduce_sum(y_pred_thresh * (1 - y_true_bin))
-            fn = tf.reduce_sum((1 - y_pred_thresh) * y_true_bin)
+        # Find detection times (first time y_pred exceeds threshold)
+        detection_mask = y_pred[:, :, 0] >= self.threshold
+        detection_times = tf.argmax(detection_mask, axis=1, output_type=tf.int32)
 
-            return tp, fp, fn
+        # Calculate latency (can be negative)
+        latency = detection_times - onset_times
 
-        # Use tf.map_fn to compute metrics for all thresholds
-        def threshold_metrics(threshold):
-            return compute_metrics(threshold)
+        # Apply max early detection correction (clip negative latencies to -max_early_detection)
+        valid_latency = tf.clip_by_value(latency, -self.max_early_detection, time_steps)
 
-        metrics = tf.map_fn(threshold_metrics, self.thresholds, dtype=(tf.float32, tf.float32, tf.float32))
-        tp_all, fp_all, fn_all = metrics
+        # Mask invalid batches (where no onset is found in y_true)
+        valid_batches_mask = tf.reduce_any(onset_mask, axis=1)
+        valid_latency = tf.boolean_mask(valid_latency, valid_batches_mask)
 
-        # Update accumulators using vectorized operations
-        self.tp.assign_add(tp_all)
-        self.fp.assign_add(fp_all)
-        self.fn.assign_add(fn_all)
+        # Update state
+        self.total_latency.assign_add(tf.reduce_sum(tf.cast(valid_latency, tf.float32)))
+        self.valid_batches.assign_add(tf.reduce_sum(tf.cast(valid_batches_mask, tf.float32)))
 
     def result(self):
-        # Calculate F1 scores using accumulated metrics
-        precision = self.tp / (self.tp + self.fp + tf.keras.backend.epsilon())
-        recall = self.tp / (self.tp + self.fn + tf.keras.backend.epsilon())
-        f1_scores = 2 * (precision * recall) / (precision + recall + tf.keras.backend.epsilon())
-
-        return tf.reduce_max(f1_scores)
+        # Return average latency, avoiding division by zero
+        return self.total_latency / (self.valid_batches + tf.keras.backend.epsilon())
 
     def reset_state(self):
-        # Reset all accumulators to zero
-        self.tp.assign(tf.zeros_like(self.tp))
-        self.fp.assign(tf.zeros_like(self.fp))
-        self.fn.assign(tf.zeros_like(self.fn))
+        self.total_latency.assign(tf.zeros_like(self.total_latency))
+        self.valid_batches.assign(tf.zeros_like(self.valid_batches))
 
 class SelfAttentionPositional(tf.keras.layers.Layer):
     def __init__(self, embed_dim, num_heads, num_channels):
