@@ -572,7 +572,9 @@ elif mode == 'predict':
 
         # Load weights
         # weight_file = f"{study_dir}/last.weights.h5"
-        weight_file = f"{study_dir}/max.weights.h5"
+        # weight_file = f"{study_dir}/max.weights.h5"
+        weight_file = f"{study_dir}/robust.weights.h5"
+
         print(f"Loading weights from: {weight_file}")
         model.load_weights(weight_file)
 

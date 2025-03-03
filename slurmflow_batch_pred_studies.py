@@ -12,7 +12,8 @@ tag = 'latency' # FiltL, FiltH, FiltM, SingleCh
 # model_lib = [3,2,4]# FiltL
 # model_lib = [99,113,20,123,122] #FiltH
 # model_lib = [94,81,44,71,95,89,66,34,50] #latency
-model_lib = [137,150,135,123,107,108]
+# model_lib = [137,150,135,123,107,108]
+model_lib = [448]
 n=0
 for im, model in enumerate(model_lib):
     # subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model])
