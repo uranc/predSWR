@@ -495,10 +495,12 @@ def build_DBI_TCN_DorizonMixer(input_timepoints, input_chans=8, params=None):
     # Define model with both outputs
     f1_metric = MaxF1MetricHorizon()
     r1_metric = RobustF1Metric()
+    latency_metric = LatencyMetric()
+    
     model = Model(inputs=inputs, outputs=concat_outputs)
     model.compile(optimizer=this_optimizer,
                     loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op),
-                    metrics=[custom_mse_metric, custom_binary_accuracy, f1_metric, r1_metric]
+                    metrics=[custom_mse_metric, custom_binary_accuracy, f1_metric, r1_metric, latency_metric]
                   )
 
     if params['WEIGHT_FILE']:
@@ -641,9 +643,11 @@ def build_DBI_TCN_CorizonMixer(input_timepoints, input_chans=8, params=None):
 
     f1_metric = MaxF1MetricHorizon()
     r1_metric = RobustF1Metric()
+    latency_metric = LatencyMetric()
+
     model.compile(optimizer=this_optimizer,
                     loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op),
-                    metrics=[custom_mse_metric, custom_binary_accuracy, f1_metric, r1_metric]
+                    metrics=[custom_mse_metric, custom_binary_accuracy, f1_metric, r1_metric, latency_metric]
                   )
 
     if params['WEIGHT_FILE']:

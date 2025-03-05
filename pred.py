@@ -98,7 +98,7 @@ def objective(trial):
     arch_lib = ['MixerOnly', 'MixerHori', 'MixerDori', 'DualMixerDori', 'MixerCori', 'SingleCh']
     # Model architecture parameters - Fix the categorical suggestion
     # arch_ind = trial.suggest_int('IND_ARCH', 0, len(arch_lib)-1)
-    arch_ind = 1
+    arch_ind = 2
     params['TYPE_ARCH'] = arch_lib[arch_ind]
     # params['TYPE_ARCH'] = 'MixerHori'
     # pdb.set_trace()

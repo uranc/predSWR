@@ -85,7 +85,9 @@ class MultiObjectivePruningCallback(tf.keras.callbacks.Callback):
             self.wait += 1
             if self.wait >= self.patience:
                 self.model.stop_training = True
-                self.trial.storage.set_trial_state(self.trial._trial_id, optuna.trial.TrialState.PRUNED)
+                # Correct way to prune a trial in Optuna - raise exception
+                import optuna
+                raise optuna.TrialPruned(f"Trial pruned at epoch {epoch}")
 
 
 class OptunaPruningCallback(tf.keras.callbacks.Callback):
