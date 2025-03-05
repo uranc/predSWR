@@ -291,55 +291,26 @@ def add_pre_onset_noise(data, onset_indices, noise_duration=50, noise_factor=0.0
 def augment_data(data, labels, event_indices=None, apply_mixup=False, mixup_data=None, params=None, sampling_rate=1250):
     """
     Full augmentation pipeline combining all strategies for ripple detection.
-    Accepts data, labels, and weights and applies augmentations.
-    Returns augmented data, unaltered labels, and updated weights.
+    Accepts data, labels, and applies augmentations.
+    Returns augmented data, unaltered labels.
     """
-    # Ensure all operations are TensorFlow operations
-    batch_size = tf.shape(data)[0]
-
-    # Dynamic masking: Use tf.map_fn for dynamic masking across batches
-    # def update_weights_per_sample(i):
-    #     return dynamic_mask_weights(labels[i], weights[i], params)
-
-    # # Use tf.map_fn to apply the masking across the entire batch (no Python loops)
-    # weights = tf.map_fn(update_weights_per_sample, tf.range(batch_size), fn_output_signature=tf.float32)
-
-    # # Add burst noise (simulate artifacts)
-    # data = add_optimized_burst_noise(data, sampling_rate=sampling_rate, params=params)
-
-    # Add pink noise (low-frequency noise)
-    print(data.shape)
-
-    # if tf.random.uniform([]) < 0.1:
-    #     data = add_pink_noise(data)
-
-    if tf.random.uniform([]) < 0.2:
-        data = random_scaling(data)
-
-    # Add simple white noise with appropriate scale since inputs are normalized
-    # if tf.random.uniform([]) < 0.2:  # 20% chance to apply noise
-    #     noise = tf.random.normal(tf.shape(data), mean=0.0, stddev=0.1)  # small stddev since data is normalized
-    #     data = data + noise
+    # Ensure data has 3 dimensions [batch, time, channels]
+    if len(tf.shape(data)) < 3:
+        data = tf.expand_dims(data, axis=-1)
     
-    # if tf.random.uniform([]) < 0.2:
-    #     data = add_varying_noise(data)
-
-    # if tf.random.uniform([]) < 0.1:
-    #     data = random_channel_shuffle(data)
-
-    # if tf.random.uniform([]) < 0.1:
-    #     data = replace_channels_with_noise(data)
-    # # data = apply_frequency_masking(data)
-
-    # if event_indices is not None:
-    #     data = event_dropout(data, event_indices)
-    #     data = add_pre_onset_noise(data, event_indices)
-
-    # data = misalign_channels(data)
-
-    # if apply_mixup and mixup_data is not None:
-    #     data = mixup(data, mixup_data)
-
+    # Ensure labels has at least 2 dimensions [batch, time]
+    if len(tf.shape(labels)) < 2:
+        labels = tf.expand_dims(labels, axis=-1)
+    
+    # Apply random scaling 20% of the time
+    if tf.random.uniform([]) < 0.2:
+        try:
+            data = random_scaling(data)
+        except tf.errors.InvalidArgumentError:
+            # Gracefully handle dimension errors
+            pass
+        
+    # Return the augmented data and original labels
     return data, labels
 
 
@@ -674,27 +645,39 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         normalized_data = (data - mean) / tf.sqrt(variance + 1e-6)
         return normalized_data
 
-    train_x = train_x.map(lambda x: (channel_normalize(x)))
-    test_x = test_x.map(lambda x: (channel_normalize(x)))
+    # train_x = train_x.map(lambda x: (channel_normalize(x)))
+    # test_x = test_x.map(lambda x: (channel_normalize(x)))
 
-    # train_y = train_y.map(lambda x: tf.pad(x, [[0, 0], [50, 0], [0, 0]], 'CONSTANT', constant_values=0.0))
-    train_xy = train_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
-    test_xy = test_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
-    
-    # Concatenate train_x and train_y per batch
-    test_c = tf.data.Dataset.zip((test_xy, test_y))
-    train_c = tf.data.Dataset.zip((train_xy, train_y, train_w))
+    if params['TYPE_ARCH'].find('Only')>-1:    
+        print('NOT PREDICTING LFPs')
+        # Concatenate train_x and train_y per batch
+        test_c = test_y #tf.data.Dataset.zip((test_xy, test_y))
+        train_c = tf.data.Dataset.zip((train_y, train_w))
 
-    @tf.autograph.experimental.do_not_convert
-    def concat_lfps_labels_weights(lfps, labels, weights):
-        return tf.concat([lfps, labels, weights], axis=-1)  # Concatenate along the last axis (channels)ZZ
-    train_d = train_c.map(lambda x, y, z: concat_lfps_labels_weights(x, y, z))
+        @tf.autograph.experimental.do_not_convert
+        def concat_lfps_labels_weights(labels, weights):
+            return tf.concat([labels, weights], axis=-1)  # Concatenate along the last axis (channels)ZZ
+        train_d = train_c.map(lambda x, y: concat_lfps_labels_weights(x, y))
+        test_d = test_c
+    else:
+        # train_y = train_y.map(lambda x: tf.pad(x, [[0, 0], [50, 0], [0, 0]], 'CONSTANT', constant_values=0.0))
+        train_xy = train_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
+        test_xy = test_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
+        
+        # Concatenate train_x and train_y per batch
+        test_c = tf.data.Dataset.zip((test_xy, test_y))
+        train_c = tf.data.Dataset.zip((train_xy, train_y, train_w))
 
-    @tf.autograph.experimental.do_not_convert
-    def concat_lfps_labels(lfps, labels):
-        return tf.concat([lfps, labels], axis=-1)  # Concatenate along the last axis (channels)ZZ
-    test_d = test_c.map(lambda x, y: concat_lfps_labels(x, y))
-    
+        @tf.autograph.experimental.do_not_convert
+        def concat_lfps_labels_weights(lfps, labels, weights):
+            return tf.concat([lfps, labels, weights], axis=-1)  # Concatenate along the last axis (channels)ZZ
+        train_d = train_c.map(lambda x, y, z: concat_lfps_labels_weights(x, y, z))
+
+        @tf.autograph.experimental.do_not_convert
+        def concat_lfps_labels(lfps, labels):
+            return tf.concat([lfps, labels], axis=-1)  # Concatenate along the last axis (channels)ZZ
+        test_d = test_c.map(lambda x, y: concat_lfps_labels(x, y))        
+
     # Combine the dataset with weights
     train_dataset = tf.data.Dataset.zip((train_x, train_d))
     test_dataset = tf.data.Dataset.zip((test_x, test_d)).prefetch(tf.data.experimental.AUTOTUNE)

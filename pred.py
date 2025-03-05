@@ -23,6 +23,10 @@ import joblib
 import json
 import logging
 import gc
+import pandas as pd
+import sys
+import glob
+import importlib
 
 # import tensorflow_models as tfm
 
@@ -56,52 +60,24 @@ params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
           }
 params['mode'] = mode
 
-
-class OptunaPruningCallback(tf.keras.callbacks.Callback):
-    def __init__(self, trial, monitor='val_max_f1_metric_horizon'):
-        super().__init__()
-        self.trial = trial
-        self.monitor = monitor
-        self.prev_value = float('-inf')
-        self.early_epoch_grace = 30  # Don't prune before this many epochs
-
-    def on_epoch_end(self, epoch, logs=None):
-        # Don't prune during early epochs
-        if epoch < self.early_epoch_grace:
-            return
-
-        current_score = logs.get(self.monitor)
-        if current_score is None:
-            return
-
-        self.trial.report(current_score, step=epoch)
-
-        # Only consider pruning if we're not improving
-        if current_score <= self.prev_value:
-            if self.trial.should_prune():
-                raise optuna.TrialPruned()
-
-        self.prev_value = current_score
-
 # Define objective function before mode selection
 def create_study_name(trial):
     """Create unique study name based on trial parameters"""
     return f"study_{trial.number}_{trial.datetime_start.strftime('%Y%m%d_%H%M%S')}"
 
 def objective(trial):
-    # try:
-    # Better memory cleanup
-    K.clear_session()
+    """Objective function for Optuna optimization"""
     tf.compat.v1.reset_default_graph()
     if tf.config.list_physical_devices('GPU'):
         tf.keras.backend.clear_session()
-
+    
+    # Start with base parameters
     params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
             'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
             'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
             'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
+            'mode': 'train'
             }
-    params['mode'] = 'train'
 
     # Dynamic learning rate range
     # learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-1, log=True)
@@ -112,72 +88,68 @@ def objective(trial):
     # batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
     batch_size = 64
     params['BATCH_SIZE'] = batch_size
-
     # ...rest of existing objective function code...
-    import json
-    import logging
-    logging.basicConfig(level=logging.INFO)
-    logger = logging.getLogger(__name__)
-    from model.input_augment_weighted import rippleAI_load_dataset
 
     # Base parameters
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 300
+    params['NO_EPOCHS'] = 250
     params['TYPE_MODEL'] = 'Base'
-    # params['TYPE_MODEL'] = 'SingleCh'
 
-    arch_lib = ['MixerHori', 'MixerDori', 'DualMixerDori', 'MixerCori']
+    arch_lib = ['MixerOnly', 'MixerHori', 'MixerDori', 'DualMixerDori', 'MixerCori', 'SingleCh']
     # Model architecture parameters - Fix the categorical suggestion
     # arch_ind = trial.suggest_int('IND_ARCH', 0, len(arch_lib)-1)
-    arch_ind = 0
+    arch_ind = 1
     params['TYPE_ARCH'] = arch_lib[arch_ind]
     # params['TYPE_ARCH'] = 'MixerHori'
-
     # pdb.set_trace()
     # Update model import based on architecture choice
     if 'MixerHori' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
         from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
     elif 'MixerDori' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
         from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
     elif 'MixerCori' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
         from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
+    elif 'MixerOnly' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
+        from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
 
-
+    # Timing parameters remain the same
     # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
     params['NO_TIMEPOINTS'] = 128
     params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
 
     # Timing parameters remain the same
-    params['HORIZON_MS'] = 4 #trial.suggest_int('HORIZON_MS', 1, 5)
+    params['HORIZON_MS'] = trial.suggest_int('HORIZON_MS', 1, 10)
     params['SHIFT_MS'] = 0
 
-
+    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.000001, 10.0, log=True)
     # Loss weighting parameter
     # params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.0001, 10.0, log=True)
     params['LOSS_WEIGHT'] = 7.5e-4
 
     params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.000001, 10.0, log=True)
     params['HYPER_TMSE'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
+    # params['HYPER_BARLOW'] = 2e-5
     params['HYPER_BARLOW'] = trial.suggest_float('HYPER_BARLOW', 0.000001, 10.0, log=True)
     # params['HYPER_MONO'] = trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
     params['HYPER_MONO'] = 0 #trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
 
-    # params['HYPER_BARLOW'] = 2e-5
-    # params['HYPER_TMSE'] = 1e-5
-
     # Model parameters matching training format
-    # params['NO_KERNELS'] = trial.suggest_int('NO_KERNELS', 2, 6)
+    # params['NO_KERNELS'] = trial.suggest_int('NO_KERNELS', 2, 6) # for kernels 2,3,4,5,6
     params['NO_KERNELS'] = 4
     if params['NO_TIMEPOINTS'] == 32:
         dil_lib = [4,3,2,2,2]           # for kernels 2,3,4,5,6
     elif params['NO_TIMEPOINTS'] == 64:
         dil_lib = [5,4,3,3,3]           # for kernels 2,3,4,5,6
     elif params['NO_TIMEPOINTS'] == 128:
-        dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6
+        dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]
     elif params['NO_TIMEPOINTS'] == 196:
         dil_lib = [7,6,5,5,5]           # for kernels 2,3,4,5,6
     elif params['NO_TIMEPOINTS'] == 384:
-        dil_lib = [8,7,6,6,6]           # for kernels 2,3,4
+        dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
     # params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
@@ -191,7 +163,7 @@ def objective(trial):
     # Remove the hardcoded use_freq and derive it from tag instead
     tag = args.tag[0]
     params['TYPE_LOSS'] += tag
-    print
+    print(params['TYPE_LOSS'])
     # init_lib = ['He', 'Glo']
     # par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
     par_init = 'He'
@@ -201,47 +173,47 @@ def objective(trial):
     # act_lib = ['RELU', 'ELU', 'GELU']
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
     par_act = 'ELU'
-    params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}")
-
+    
+    opt_lib = ['Adam', 'AdamW', 'SGD']
+    par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
+    
+    params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}")
     # Build architecture string with timing parameters (adjust format)
     arch_str = (f"{params['TYPE_ARCH']}"  # Take first 4 chars: Hori/Dori/Cori
                 f"{int(params['HORIZON_MS']):02d}")
-
     print(arch_str)
     params['TYPE_ARCH'] = arch_str
 
     # Use multiple binary flags for a combinatorial categorical parameter
+    params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
+    if params['USE_ZNorm']:
+        params['TYPE_ARCH'] += 'ZNorm'
     # params['USE_L2N'] = trial.suggest_categorical('USE_L2N', [True, False])
     # if params['USE_L2N']:
     params['TYPE_ARCH'] += 'L2N'
 
-    # params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
-    # if params['USE_ZNorm']:
-    #     params['TYPE_ARCH'] += 'ZNorm'
 
     params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
     if params['USE_Aug']:
         params['TYPE_ARCH'] += 'Aug'
-
+        
     if (not 'Cori' in params['TYPE_ARCH']) and  (not 'SingleCh' in params['TYPE_MODEL']):
         params['TYPE_LOSS'] += 'BarAug'
-
+    # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
     # params['USE_CSD'] = trial.suggest_categorical('USE_CSD', [True, False])
     # if params['USE_CSD']:
     #     params['TYPE_ARCH'] += 'CSD'
-
+    # params['Dropout'] = trial.suggest_int('Dropout', 0, 10)
     # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
     # if params['USE_L2Reg']:
     #     params['TYPE_LOSS'] += 'L2Reg'
 
     # params['Dropout'] = trial.suggest_int('Dropout', 0, 10)
     # params['TYPE_ARCH'] += f"Drop{params['Dropout']:02d}"
-
     params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
 
-
     # Build name in correct format
-    run_name = (f"{params['TYPE_MODEL']}_"
+    run_name = (f"{params['TYPE_MODEL']}_" 
                 f"K{params['NO_KERNELS']}_"
                 f"T{params['NO_TIMEPOINTS']}_"
                 f"D{params['NO_DILATIONS']}_"
@@ -253,10 +225,9 @@ def objective(trial):
                 f"{params['TYPE_LOSS']}_"
                 f"{params['TYPE_REG']}_"
                 f"{params['TYPE_ARCH']}")
-
+    # pdb.set_trace()
     params['NAME'] = run_name
     print(params['NAME'])
-
 
     # pdb.set_trace()
     tag = args.tag[0]
@@ -269,7 +240,6 @@ def objective(trial):
     if os.path.exists(f"{study_dir}/model"):
         shutil.rmtree(f"{study_dir}/model")
     shutil.copytree('./model', f"{study_dir}/model")
-
     preproc = True
     # Load data and build model
     print(params['TYPE_LOSS'])
@@ -282,25 +252,45 @@ def objective(trial):
     else:
         train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
 
-
     # if params['TYPE_MODEL'] == 'SingleCh':
     #     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params, input_chans=1)
     # else:
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-
-    # Setup callbacks
+    # Early stopping with tunable patience
     callbacks = []
     # patience = trial.suggest_int('patience', 10, 30)  # Make patience tunable
 
     # Early stopping with tunable patience
-    callbacks.append(cb.EarlyStopping(
-        monitor='val_max_f1_metric_horizon',  # Change monitor
-        patience=20,
-        mode='max',
-        verbose=1,
-        restore_best_weights=True
-    ))
+    # callbacks.append(cb.EarlyStopping(
+    #     monitor='val_max_f1_metric_horizon',  # Change monitor
+    #     patience=20,
+    #     mode='max',
+    #     verbose=1,
+    #     restore_best_weights=True
+    # ))
+    
+    # Import the new multi-objective callback
+    from model.training import MultiObjectivePruningCallback, WeightDecayCallback, lr_scheduler
+    
+    use_LR = trial.suggest_categorical('USE_LR', [True, False])
+    if use_LR:
+        params['TYPE_REG'] += 'LR'
+        callbacks.append(tf.keras.callbacks.LearningRateScheduler(lr_scheduler, verbose=1))
 
+    if par_opt == 'AdamW':
+        params['TYPE_REG'] += 'WD'
+        callbacks.append(WeightDecayCallback())
+    # callbacks.append(cb.EarlyStopping(monitor='val_loss',
+    #                                 min_delta=0.0001,
+    #                                 patience=25,  # Adjusted patience
+    #                                 verbose=1))
+    
+    # callbacks.append(WeightDecayCallback())
+    from tensorflow.keras import callbacks as cb
+    callbacks.append(cb.TensorBoard(log_dir=f"{study_dir}/",
+                                      write_graph=True,
+                                      write_images=True,
+                                      update_freq='epoch'))
     # Better model checkpoint
     callbacks.append(cb.ModelCheckpoint(
         f"{study_dir}/max.weights.h5",
@@ -311,13 +301,14 @@ def objective(trial):
         mode='max'
     ))
 
+    # Better model checkpoint
     callbacks.append(cb.ModelCheckpoint(
         f"{study_dir}/latency.weights.h5",
         monitor='val_latency_metric',  # Change monitor
         verbose=1,
         save_best_only=True,
         save_weights_only=True,
-        mode='min'
+        mode='min',
     ))
 
     # Better model checkpoint
@@ -330,16 +321,19 @@ def objective(trial):
         mode='max'
     ))
 
-    # # Pruning callback
-    # callbacks.append(OptunaPruningCallback(
-    #     trial,
-    #     monitor='val_max_f1_metric_horizon'  # Primary metric we want to optimize
-    # ))
+    # Replace the standard pruning callback with the multi-objective version
+    callbacks.append(MultiObjectivePruningCallback(
+        trial,
+        monitor='val_max_f1_metric_horizon',  # Primary metric we want to optimize
+        patience=15,                         # Allow 15 epochs without improvement before pruning
+        greater_is_better=True              # Higher F1 is better
+    ))    
 
     # Train and evaluate
     history = model.fit(
         train_dataset,
         validation_data=val_dataset,
+        # steps_per_epoch=3,
         epochs=params['NO_EPOCHS'],
         callbacks=callbacks,
         verbose=1
@@ -348,7 +342,7 @@ def objective(trial):
     # val_loss = 0
     # Get best validation metrics
     # pdb.set_trace()
-    val_accuracy = (max(history.history['val_robust_f1'])+max(history.history['val_max_f1_metric_horizon']))/2
+    val_accuracy = (np.mean(history.history['val_robust_f1'])+max(history.history['val_max_f1_metric_horizon']))/2
     val_latency = np.mean(history.history['val_latency_metric'])
     # Log results
     logger.info(f"Trial {trial.number} finished with val_accuracy: {val_accuracy:.4f}, val_latency: {val_latency:.4f}")
@@ -371,15 +365,7 @@ def objective(trial):
 
     return val_accuracy, val_latency
 
-    # except Exception as e:
-    #     logger.error(f"Trial {trial.number} failed with error: {str(e)}")
-    #     # Ensure cleanup happens even on failure
-    #     gc.collect()
-    #     tf.keras.backend.clear_session()
-    #     raise optuna.TrialPruned()
-
 if mode == 'train':
-
     # update params
     print(model_name)
     param_lib = model_name.split('_')
@@ -419,7 +405,6 @@ if mode == 'train':
     params['TYPE_ARCH'] = param_lib[11]
     print(params['TYPE_ARCH'])
 
-
     if params['TYPE_ARCH'].find('Loss')>-1:
         print('Using Loss Weight:')
         loss_weight = (params['TYPE_ARCH'][params['TYPE_ARCH'].find('Loss')+4:params['TYPE_ARCH'].find('Loss')+7])
@@ -442,8 +427,12 @@ if mode == 'train':
         from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
         from model.input_augment_weighted import rippleAI_load_dataset
     elif model_name.find('MixerCori') != -1:
-        from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
+        from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN  
         from model.input_augment_weighted import rippleAI_load_dataset
+    elif model_name.find('MixerOnly') != -1:
+        print('Using MixerOnly')
+        from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
+        from model.input_augment_weighted import rippleAI_load_dataset       
     elif model_name.find('Barlow') != -1:
         from model.model_fn import build_DBI_TCN_HorizonBarlow
         from model.input_augment_weighted import rippleAI_load_dataset
@@ -467,7 +456,7 @@ if mode == 'train':
     else:
         from model.model_fn import build_DBI_TCN
         from model.input_aug import rippleAI_load_dataset
-
+    # input
     if ('Proto' not in model_name) and ('Barlow' not in model_name):
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         model.summary()
@@ -490,11 +479,8 @@ if mode == 'train':
     train_size = len(list(train_dataset))
     params['RIPPLE_RATIO'] = label_ratio
 
-    # import pdb
-    # pdb.set_trace()
     # Calculate model FLOPs using TensorFlow Profiler
     import tensorflow as tf
-
     @tf.function
     def get_flops(model, batch_size=1):
         concrete_func = tf.function(lambda x: model(x))
@@ -522,8 +508,7 @@ if mode == 'train':
         print('Training model with keras')
         from model.training import train_pred
         if 'SigmoidFoc' in params['TYPE_LOSS']:
-            # hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'], checkpoint_metric='val_max_f1_metric_horizon_mixer')
-            hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
+            hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'], checkpoint_metric='val_max_f1_metric_horizon_mixer')
         else:
             hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
 
@@ -565,33 +550,29 @@ elif mode == 'predict':
         from model.model_fn import CSDLayer
         from tcn import TCN
         from keras.models import load_model
-
-        params['mode'] = 'predict'
-        # Build model with trial parameters
-        model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-
         # Load weights
+        params['mode'] = 'predict'
         # weight_file = f"{study_dir}/last.weights.h5"
-        # weight_file = f"{study_dir}/max.weights.h5"
-        weight_file = f"{study_dir}/robust.weights.h5"
-
+        weight_file = f"{study_dir}/max.weights.h5"
+        # weight_file = f"{study_dir}/robust.weights.h5"
         print(f"Loading weights from: {weight_file}")
+        model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         model.load_weights(weight_file)
-
     elif model_name == 'RippleNet':
         import sys, pickle, keras, h5py
+        # load info on best model (path, threhsold settings)
         sys.path.insert(0, '/cs/projects/OWVinckSWR/DL/RippleNet/')
         from ripplenet.common import *
         params['TYPE_ARCH'] = 'RippleNet'
 
         # load info on best model (path, threhsold settings)
+        # load the 'best' performing model on the validation sets
         with open('/cs/projects/OWVinckSWR/DL/RippleNet/best_model.pkl', 'rb') as f:
             best_model = pickle.load(f)
             print(best_model)
 
         # load the 'best' performing model on the validation sets
         model = keras.models.load_model(best_model['model_file'])
-
     elif model_name == 'CNN1D':
         from tensorflow import keras
         new_model = None
@@ -605,7 +586,6 @@ elif mode == 'predict':
         sp=filename.split('_')
         n_channels=int(sp[2][2])
         timesteps=int(sp[4][2:])
-
         optimizer = keras.optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=False)
         if new_model==None:
             model = keras.models.load_model(os.path.join('/mnt/hpc/projects/OWVinckSWR/Carmen/DBI2/rippl-AI/optimized_models',filename), compile=False)
@@ -619,10 +599,8 @@ elif mode == 'predict':
         #     model = kr.models.load_model(params['WEIGHT_FILE'])
         # except:
         # get model parameters
-        pdb.set_trace()
         print(model_name)
         param_lib = model_name.split('_')
-        # pdb.set_trace()
         assert(len(param_lib)==12)
         params['TYPE_MODEL'] = param_lib[0]
         print(params['TYPE_MODEL'])
@@ -665,87 +643,22 @@ elif mode == 'predict':
             params['SRATE'] = 1250
 
         # tag = ''  # MUAX, LP,
-
         # get model
-        # a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
-        a_model = importlib.import_module('model.model_fn')
-        # if model.find('CSD') != -1:
-        #     build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
-
-        if model_name.find('Tune') != -1:
-            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_HorizonMixer')
-            from keras.utils import custom_object_scope
-            from model.model_fn import CSDLayer
-            from tcn import TCN
-            from keras.models import load_model
-
-
-            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_f1_model.h5'
-            print((params['WEIGHT_FILE']))
-            with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
-                model = load_model(params['WEIGHT_FILE'])
-        elif model_name.find('MixerHori') != -1:
-            from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
-        elif model_name.find('MixerDori') != -1:
-            from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
-        elif model_name.find('MixerCori') != -1:
-            from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
-        elif model_name.find('Barlow') != -1:
-            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_HorizonBarlow')
-            from keras.utils import custom_object_scope
-            from model.model_fn import CSDLayer
-            from tcn import TCN
-            from keras.models import load_model
-            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_f1_model.h5'
-            print((params['WEIGHT_FILE']))
-            with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
-                model = load_model(params['WEIGHT_FILE'])
-            # model.summary()
-        elif model.find('Hori') != -1:
-            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon')
-        elif model.find('Dori') != -1:
-            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Dorizon')
-        elif model.find('Cori') != -1:
-            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Corizon')
-        elif model_name.find('Proto') != -1:
-            from keras.utils import custom_object_scope
-            from model.model_fn import CSDLayer
-            from tcn import TCN
-            from keras.models import load_model
-            # with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
-            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'best_f1_model.h5'
-            print((params['WEIGHT_FILE']))
-            with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
-                model = load_model(params['WEIGHT_FILE'])
-            # model.summary()
-            # model.load('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/{0}/'.format(model_name)+'best_model.h5')
-            # import pdb
-            # build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon_Updated')
-            # model, train_model = build_DBI_TCN_Horizon_Updated(input_timepoints=params['NO_TIMEPOINTS'], input_chans=8, embedding_dim=params['NO_FILTERS'], params=params)
+        a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        if model.find('CSD') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
         else:
             build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
-        # pdb.set_trace()
-        # # from model.model_fn import build_DBI_TCN
-        # # from model.model_fn import build_DBI_TCN
-        # # from model.model_fn import build_DBI_TCN_CSD as build_DBI_TCN
+        # from model.model_fn import build_DBI_TCN
 
-        if (model_name.find('Proto') == -1) and (model_name.find('Barlow') == -1):
-            params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
-            # params['WEIGHT_FILE'] = ''
-            model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-        # from keras.utils import custom_object_scope
-        # from model.model_fn import CSDLayer
-        # from tcn import TCN
-        # from keras.models import load_model
-        # with custom_object_scope({'CSDLayer': CSDLayer, 'TCN': TCN}):
-        #     model = load_model(params['WEIGHT_FILE'])
+        params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
+        model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
 
     params['BATCH_SIZE'] = 512*2
     from model.input_augment_weighted import rippleAI_load_dataset
     # from model.input_aug import rippleAI_load_dataset
     # from model.input_fn import rippleAI_load_dataset
-
     preproc = False if model_name=='RippleNet' else True
     if 'FiltL' in params['NAME']:
         val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='low', preprocess=preproc)
@@ -755,28 +668,21 @@ elif mode == 'predict':
         val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='muax', preprocess=preproc)
     else:
         val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
-
     print('val_id: ', val_id)
     LFP = val_datasets[val_id]
     labels = val_labels[val_id]
     print(LFP.shape)
-    # for j, labels in enumerate(val_labels):
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/labels_val{0}_sf{1}.npy'.format(val_id, params['SRATE']), labels)
-
-    # for j, signals in enumerate(val_datasets):
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/signals{2}_val{0}_sf{1}.npy'.format(val_id, params['SRATE'], tag), LFP)
-
+    # get predictions
     # import pdb
     # pdb.set_trace()
     from model.cnn_ripple_utils import get_predictions_index, get_performance
-
-    # get predictions
     th_arr=np.linspace(0.0,1.0,11)
     n_channels = params['NO_CHANNELS']
     timesteps = params['NO_TIMEPOINTS']
     samp_freq = params['SRATE']
 
-    # Validation plot in the second ax
     all_pred_events = []
     precision=np.zeros(shape=(1,len(th_arr)))
     recall=np.zeros(shape=(1,len(th_arr)))
@@ -785,8 +691,6 @@ elif mode == 'predict':
     FN=np.zeros(shape=(1,len(th_arr)))
     IOU=np.zeros(shape=(1,len(th_arr)))
     from keras.utils import timeseries_dataset_from_array
-
-    # get predictions
     if model_name == 'RippleNet':
         sample_length = params['NO_TIMEPOINTS']
         all_probs = []
@@ -823,7 +727,6 @@ elif mode == 'predict':
             probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
         else:
             probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
-
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}_sf{2}.npy'.format(val_id, model_name, params['SRATE']), probs)
     # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}_{3}_sf{2}.npy'.format(val_id, model_name, params['SRATE'], tag), probs)
     if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1 or model_name.startswith('Tune') != -1:
