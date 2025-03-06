@@ -75,7 +75,7 @@ def objective(trial):
     params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
             'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
             'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
-            'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
+            'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
             'mode': 'train'
             }
 
@@ -98,7 +98,7 @@ def objective(trial):
     arch_lib = ['MixerOnly', 'MixerHori', 'MixerDori', 'DualMixerDori', 'MixerCori', 'SingleCh']
     # Model architecture parameters - Fix the categorical suggestion
     # arch_ind = trial.suggest_int('IND_ARCH', 0, len(arch_lib)-1)
-    arch_ind = 2
+    arch_ind = 1
     params['TYPE_ARCH'] = arch_lib[arch_ind]
     # params['TYPE_ARCH'] = 'MixerHori'
     # pdb.set_trace()
@@ -125,9 +125,6 @@ def objective(trial):
     params['HORIZON_MS'] = trial.suggest_int('HORIZON_MS', 1, 10)
     params['SHIFT_MS'] = 0
 
-    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.000001, 10.0, log=True)
-    # Loss weighting parameter
-    # params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.0001, 10.0, log=True)
     params['LOSS_WEIGHT'] = 7.5e-4
 
     params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.000001, 10.0, log=True)
@@ -270,7 +267,7 @@ def objective(trial):
     # ))
     
     # Import the new multi-objective callback
-    from model.training import MultiObjectivePruningCallback, WeightDecayCallback, lr_scheduler
+    from model.training import F1PruningCallback, WeightDecayCallback, lr_scheduler
     
     use_LR = trial.suggest_categorical('USE_LR', [True, False])
     if use_LR:
@@ -321,49 +318,72 @@ def objective(trial):
         mode='max'
     ))
 
+    # callbacks.append(F1PruningCallback(
+    #     trial=trial,
+    #     monitor='val_max_f1_metric_horizon',
+    #     patience=10,             # Adjust based on your training dynamics.
+    #     greater_is_better=True   # Since you want to maximize F1.
+    # ))
+    # callbacks.append(MultiObjectivePruningCallback(
+    #     trial=trial,
+    #     monitor='val_max_f1_metric_horizon',  # Use your chosen metric name.
+    #     patience=10,                         # Adjust as needed.
+    #     greater_is_better=True               # True since you maximize F1.
+    # ))
     # Replace the standard pruning callback with the multi-objective version
-    callbacks.append(MultiObjectivePruningCallback(
-        trial,
-        monitor='val_max_f1_metric_horizon',  # Primary metric we want to optimize
-        patience=15,                         # Allow 15 epochs without improvement before pruning
-        greater_is_better=True              # Higher F1 is better
-    ))    
+    # callbacks.append(MultiObjectivePruningCallback(
+    #     trial,
+    #     monitor='val_max_f1_metric_horizon',  # Primary metric we want to optimize
+    #     patience=15,                         # Allow 15 epochs without improvement before pruning
+    #     greater_is_better=True              # Higher F1 is better
+    # ))    
 
-    # Train and evaluate
-    history = model.fit(
-        train_dataset,
-        validation_data=val_dataset,
-        # steps_per_epoch=3,
-        epochs=params['NO_EPOCHS'],
-        callbacks=callbacks,
-        verbose=1
-    )
-    # val_accuracy = 10
-    # val_loss = 0
-    # Get best validation metrics
-    # pdb.set_trace()
-    val_accuracy = (np.mean(history.history['val_robust_f1'])+max(history.history['val_max_f1_metric_horizon']))/2
-    val_latency = np.mean(history.history['val_latency_metric'])
-    # Log results
-    logger.info(f"Trial {trial.number} finished with val_accuracy: {val_accuracy:.4f}, val_latency: {val_latency:.4f}")
+    
+    try:
+        history = model.fit(
+            train_dataset,
+            validation_data=val_dataset,
+            epochs=params['NO_EPOCHS'],
+            callbacks=callbacks,  # this includes your F1PruningCallback
+            verbose=1
+        )
+    except optuna.TrialPruned as e:
+        # Optionally extract intermediate metrics from history if available.
+        # Note: In many cases, history might not be complete.
+        intermediate_f1 = None
+        intermediate_latency = None
+        if history is not None and 'val_max_f1_metric_horizon' in history.history:
+            intermediate_f1 = max(history.history['val_max_f1_metric_horizon'])
+        if history is not None and 'val_latency_metric' in history.history:
+            intermediate_latency = np.mean(history.history['val_latency_metric'])
+        
+        trial_info = {
+            'parameters': params,
+            'metrics': {
+                'val_accuracy': intermediate_f1,
+                'val_latency': intermediate_latency
+            }
+        }
+        with open(f"{study_dir}/trial_info.json", 'w') as f:
+            json.dump(trial_info, f, indent=4)
+        # Re-raise to mark the trial as pruned.
+        raise e
 
-    # Save trial information
+    # If the trial completes, compute the final metrics.
+    final_f1 = (np.mean(history.history['val_robust_f1']) + 
+                max(history.history['val_max_f1_metric_horizon'])) / 2
+    final_latency = np.mean(history.history['val_latency_metric'])
     trial_info = {
         'parameters': params,
         'metrics': {
-        'val_accuracy': val_accuracy,
-        'val_latency': val_latency
+            'val_accuracy': final_f1,
+            'val_latency': final_latency
         }
     }
     with open(f"{study_dir}/trial_info.json", 'w') as f:
         json.dump(trial_info, f, indent=4)
-
-    # Proper cleanup after training
-    del model
-    gc.collect()
-    tf.keras.backend.clear_session()
-
-    return val_accuracy, val_latency
+    
+    return final_f1, final_latency
 
 if mode == 'train':
     # update params
@@ -1943,15 +1963,19 @@ elif mode == 'tune_server':
     directions=["maximize", "minimize"],  # Maximize F1, minimize latency
     load_if_exists=True,
     sampler=NSGAIISampler(
-        population_size=30,  # Number of parallel solutions evolved
+        population_size=50,  # Number of parallel solutions evolved
         crossover_prob=0.9,  # Probability of crossover between solutions
         mutation_prob=0.1,   # Probability of mutating a solution
         seed=42
     ),
-    pruner=optuna.pruners.MedianPruner(
-        n_startup_trials=16,
-        n_warmup_steps=30,
-        interval_steps=5,
+    pruner=optuna.pruners.PatientPruner(
+        optuna.pruners.MedianPruner(
+            n_startup_trials=20,
+            n_warmup_steps=50,
+            interval_steps=10,
+        ),
+    patience=3,
+    min_delta=0.0
     )
 )
 

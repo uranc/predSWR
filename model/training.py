@@ -6,6 +6,7 @@ import tensorflow as tf
 from tensorflow.keras import callbacks as cb
 from tensorflow.keras import backend as K
 import numpy as np
+import optuna
 
 def lr_scheduler(epoch, lr):
     min_lr = 1e-4
@@ -35,98 +36,58 @@ class WeightDecayCallback(cb.Callback):
         decay = get_weight_decay(epoch, self.max_epochs)
         self.model.optimizer.weight_decay = tf.cast(decay, dtype=tf.float32)
 
-class MultiObjectivePruningCallback(tf.keras.callbacks.Callback):
-    """Callback for Optuna to prune unpromising trials for multi-objective optimization.
-    
-    This callback is designed to work with multi-objective studies where trial.report()
-    is not supported. Instead, it tracks the monitored metrics and prunes the trial
-    if the performance doesn't improve for a specified number of epochs.
+
+class F1PruningCallback(tf.keras.callbacks.Callback):
     """
+    A pruning callback for multi-objective studies that prunes based solely on the F1 metric.
     
-    def __init__(self, trial, monitor='val_loss', patience=10, greater_is_better=False):
-        """Initialize the callback.
-        
-        Args:
-            trial: A trial corresponding to the current optimization trial.
-            monitor: The metric to monitor for pruning decisions.
-            patience: Number of epochs with no improvement before pruning.
-            greater_is_better: Whether higher values of the metric are better.
+    Since trial.report is not supported for multi-objective studies in Optuna,
+    this callback uses its own internal logic to track the monitored metric (e.g. validation F1)
+    and raises a TrialPruned exception if no improvement is observed for a specified number of epochs.
+    """
+    def __init__(self, trial, monitor='val_max_f1_metric_horizon', patience=30, greater_is_better=True):
         """
-        super(MultiObjectivePruningCallback, self).__init__()
+        Args:
+            trial: The Optuna trial object.
+            monitor: Name of the metric to monitor from training logs.
+            patience: Number of epochs to wait for improvement before pruning.
+            greater_is_better: True if a higher metric is better.
+        """
+        super().__init__()
         self.trial = trial
         self.monitor = monitor
         self.patience = patience
         self.greater_is_better = greater_is_better
         self.best_value = -np.inf if greater_is_better else np.inf
         self.wait = 0
-        
+
     def on_epoch_end(self, epoch, logs=None):
         logs = logs or {}
         current_value = logs.get(self.monitor)
-        
         if current_value is None:
-            return
-            
-        # Check if we need to prune the trial
-        improved = False
-        
+            return  # Metric not available in logs.
+
+        # Check if there is improvement.
         if self.greater_is_better:
             if current_value > self.best_value:
                 self.best_value = current_value
-                improved = True
+                self.wait = 0
+            else:
+                self.wait += 1
         else:
             if current_value < self.best_value:
                 self.best_value = current_value
-                improved = True
-                
-        if improved:
-            self.wait = 0
-        else:
-            self.wait += 1
-            if self.wait >= self.patience:
-                self.model.stop_training = True
-                # Correct way to prune a trial in Optuna - raise exception
-                import optuna
-                raise optuna.TrialPruned(f"Trial pruned at epoch {epoch}")
+                self.wait = 0
+            else:
+                self.wait += 1
 
+        if self.wait >= self.patience:
+            self.model.stop_training = True
+            raise optuna.TrialPruned(
+                f"Trial pruned at epoch {epoch}: no improvement in {self.monitor} "
+                f"(best: {self.best_value}, current: {current_value}) for {self.patience} epochs."
+            )
 
-class OptunaPruningCallback(tf.keras.callbacks.Callback):
-    def __init__(self, trial, monitor=['val_max_f1_metric_horizon', 'val_latency_metric']):
-        super(OptunaPruningCallback, self).__init__()
-        self.trial = trial
-        # Support monitoring multiple metrics for multi-objective optimization
-        self.monitor = monitor if isinstance(monitor, list) else [monitor]
-        self.best_values = {m: float('-inf') for m in self.monitor}
-
-    def on_epoch_end(self, epoch, logs=None):
-        logs = logs or {}
-        
-        # Calculate combined objective for pruning
-        current_values = []
-        for metric in self.monitor:
-            value = logs.get(metric)
-            if value is None:
-                return
-            
-            # For latency metric, we want to minimize it
-            if 'latency' in metric:
-                value = -value  # Convert to maximization problem
-            
-            current_values.append(value)
-            self.trial.set_user_attr(f"best_{metric}", max(self.best_values[metric], value))
-            self.best_values[metric] = max(self.best_values[metric], value)
-
-        # For multi-objective optimization, report all values
-        if len(current_values) > 1:
-            self.trial.report(current_values, epoch)
-        else:
-            self.trial.report(current_values[0], epoch)
-            
-        # Prune if trial should be pruned
-        if self.trial.should_prune():
-            raise optuna.TrialPruned(f"Trial pruned at epoch {epoch}")
-        
-        
 def train_pred(model,
                train_inputs,
                valid_inputs,

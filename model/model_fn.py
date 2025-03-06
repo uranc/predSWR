@@ -64,6 +64,7 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
     if params['TYPE_ARCH'].find('Only')>-1:
         hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Only')+4:params['TYPE_ARCH'].find('Only')+6])/1000*params['SRATE'])
         print('Using Horizon Timesteps:', hori_shift)
+        is_classification_only = True
 
     print('Using Loss Weight:', params['LOSS_WEIGHT'])
     loss_weight = params['LOSS_WEIGHT']
@@ -154,13 +155,13 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
     if flag_sigmoid:
         # f1_metric = MaxF1MetricHorizonMixer()
         # this_binary_accuracy = custom_binary_accuracy_mixer
-        f1_metric = MaxF1MetricHorizon()
-        r1_metric = RobustF1Metric()
+        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
+        r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
         # this_binary_accuracy = custom_binary_accuracy
     else:
-        f1_metric = MaxF1MetricHorizon()
-        r1_metric = RobustF1Metric()
-        latency_metric = LatencyMetric()
+        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
+        r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
+        latency_metric = LatencyMetric(is_classification_only=is_classification_only)
         # this_binary_accuracy = custom_binary_accuracy
 
     model.compile(optimizer=this_optimizer,
@@ -227,6 +228,7 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
     if params['TYPE_ARCH'].find('Hori')>-1:
         hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Hori')+4:params['TYPE_ARCH'].find('Hori')+6])/1000*params['SRATE'])
         print('Using Horizon Timesteps:', hori_shift)
+        is_classification_only = False
 
     print('Using Loss Weight:', params['LOSS_WEIGHT'])
     loss_weight = params['LOSS_WEIGHT']
@@ -333,13 +335,13 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
     if flag_sigmoid:
         # f1_metric = MaxF1MetricHorizonMixer()
         # this_binary_accuracy = custom_binary_accuracy_mixer
-        f1_metric = MaxF1MetricHorizon()
-        r1_metric = RobustF1Metric()
+        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
+        r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
         this_binary_accuracy = custom_binary_accuracy
     else:
-        f1_metric = MaxF1MetricHorizon()
-        r1_metric = RobustF1Metric()
-        latency_metric = LatencyMetric()
+        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
+        r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
+        latency_metric = LatencyMetric(is_classification_only=is_classification_only)
         this_binary_accuracy = custom_binary_accuracy
 
     model.compile(optimizer=this_optimizer,
@@ -407,6 +409,7 @@ def build_DBI_TCN_DorizonMixer(input_timepoints, input_chans=8, params=None):
     if params['TYPE_ARCH'].find('Dori')>-1:
         hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Dori')+4:params['TYPE_ARCH'].find('Dori')+6])/1000*params['SRATE'])
         print('Using Horizon Timesteps:', hori_shift)
+        is_classification_only = False
 
     print('Using Loss Weight:', params['LOSS_WEIGHT'])
     loss_weight = params['LOSS_WEIGHT']
@@ -493,10 +496,10 @@ def build_DBI_TCN_DorizonMixer(input_timepoints, input_chans=8, params=None):
     if params['mode']=='predict':
         concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
     # Define model with both outputs
-    f1_metric = MaxF1MetricHorizon()
-    r1_metric = RobustF1Metric()
-    latency_metric = LatencyMetric()
-    
+    f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
+    r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
+    latency_metric = LatencyMetric(is_classification_only=is_classification_only)
+
     model = Model(inputs=inputs, outputs=concat_outputs)
     model.compile(optimizer=this_optimizer,
                     loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op),
@@ -565,6 +568,7 @@ def build_DBI_TCN_CorizonMixer(input_timepoints, input_chans=8, params=None):
     if params['TYPE_ARCH'].find('Cori')>-1:
         hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Cori')+4:params['TYPE_ARCH'].find('Cori')+6])/1000*params['SRATE'])
         print('Using Horizon Timesteps:', hori_shift)
+        is_classification_only = False
 
     print('Using Loss Weight:', params['LOSS_WEIGHT'])
     loss_weight = params['LOSS_WEIGHT']
@@ -641,9 +645,9 @@ def build_DBI_TCN_CorizonMixer(input_timepoints, input_chans=8, params=None):
         concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
     model = Model(inputs=inputs, outputs=concat_outputs)
 
-    f1_metric = MaxF1MetricHorizon()
-    r1_metric = RobustF1Metric()
-    latency_metric = LatencyMetric()
+    f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
+    r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
+    latency_metric = LatencyMetric(is_classification_only=is_classification_only)
 
     model.compile(optimizer=this_optimizer,
                     loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op),
@@ -737,24 +741,17 @@ def truncated_mse_loss(y_true, y_pred, tau=4.0):
     return t_mse
 
 class MaxF1MetricHorizon(tf.keras.metrics.Metric):
-    def __init__(self, name='max_f1_metric_horizon', thresholds=tf.linspace(0.0, 1.0, 11), **kwargs):
+    def __init__(self, name='max_f1_metric_horizon', thresholds=tf.linspace(0.0, 1.0, 11), is_classification_only=False, **kwargs):
         super(MaxF1MetricHorizon, self).__init__(name=name, **kwargs)
         self.thresholds = thresholds
         self.tp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='tp')
         self.fp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='fp')
         self.fn = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='fn')
 
-    def update_state(self, y_true, y_pred, sample_weight=None):
-        # Assume you know the mode from a static parameter
-        is_classification_only = True  # Set this based on your model configuration
-
-        def extract_labels():
-            if not is_classification_only:
-                return y_true[..., 8], y_pred[..., 8]
-            else:
-                return y_true[..., 0], y_pred[..., 0]
-
-        y_true_labels, y_pred_labels = extract_labels()
+    def update_state(self, y_true, y_pred, sample_weight=None, is_classification_only=is_classification_only):
+        # Extract labels based on mode
+        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
+        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
 
         def process_threshold(threshold):
             pred_events = tf.cast(y_pred_labels >= threshold, tf.float32)
@@ -795,16 +792,15 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
         self.fn.assign(tf.zeros_like(self.fn))
 
 class LatencyMetric(tf.keras.metrics.Metric):
-    def __init__(self, name='latency_metric', threshold=0.5, max_early_detection=50, **kwargs):
+    def __init__(self, name='latency_metric', threshold=0.5, max_early_detection=50, is_classification_only=False, **kwargs):
         super(LatencyMetric, self).__init__(name=name, **kwargs)
         self.threshold = threshold
         self.max_early_detection = max_early_detection
         self.total_latency = self.add_weight(name='total_latency', initializer='zeros')
         self.valid_events = self.add_weight(name='valid_events', initializer='zeros')
 
-    def update_state(self, y_true, y_pred, sample_weight=None):
+    def update_state(self, y_true, y_pred, sample_weight=None, is_classification_only=is_classification_only):
         # Extract labels based on mode
-        is_classification_only = True
         y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
         y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
 
@@ -844,7 +840,7 @@ class LatencyMetric(tf.keras.metrics.Metric):
         self.valid_events.assign(0.)
 
 class RobustF1Metric(tf.keras.metrics.Metric):
-    def __init__(self, name='robust_f1', thresholds=tf.linspace(0.0, 1.0, 11), **kwargs):
+    def __init__(self, name='robust_f1', thresholds=tf.linspace(0.0, 1.0, 11), is_classification_only=False, **kwargs):
         super(RobustF1Metric, self).__init__(name=name, **kwargs)
         self.thresholds = thresholds
         self.tp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='tp')
@@ -854,9 +850,8 @@ class RobustF1Metric(tf.keras.metrics.Metric):
         self.pred_count = self.add_weight(name='pred_count', initializer='zeros')
         self.temp_diff_sum = self.add_weight(name='temp_diff_sum', initializer='zeros')
 
-    def update_state(self, y_true, y_pred, sample_weight=None):
+    def update_state(self, y_true, y_pred, sample_weight=None, is_classification_only=is_classification_only):
         # Extract labels based on mode
-        is_classification_only = True
         y_true_labels = tf.cast(y_true[..., 0] if is_classification_only else y_true[..., 8], tf.float32)
         y_pred_labels = tf.cast(y_pred[..., 0] if is_classification_only else y_pred[..., 8], tf.float32)
 
@@ -905,10 +900,10 @@ class RobustF1Metric(tf.keras.metrics.Metric):
         temp_consistency = 1.0 - (self.temp_diff_sum / (self.pred_count + tf.keras.backend.epsilon()))
 
         # Combine metrics with weights
-        return (0.4 * mean_f1 +
-                0.2 * f1_stability +
-                0.2 * noise_penalty +
-                0.2 * temp_consistency)
+        return (0.7 * mean_f1 +
+                0.1 * f1_stability +
+                0.1 * noise_penalty +
+                0.1 * temp_consistency)
 
     def reset_state(self):
         self.tp.assign(tf.zeros_like(self.tp))
