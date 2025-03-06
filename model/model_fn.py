@@ -159,15 +159,17 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
         r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
         # this_binary_accuracy = custom_binary_accuracy
     else:
-        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
-        r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
-        latency_metric = LatencyMetric(is_classification_only=is_classification_only)
+        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+        r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+        latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
         # this_binary_accuracy = custom_binary_accuracy
 
+    # Create loss function without calling it
+    loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
+    
     model.compile(optimizer=this_optimizer,
-                  loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op),
-                  metrics=[MaxF1MetricHorizon(thresholds=tf.linspace(0.0, 1.0, 11)), # Increase threshold granularity
-                           RobustF1Metric(), LatencyMetric(max_early_detection=25)])  # Reduce max early detection windowcustom_mse_metric, this_binary_accuracy,
+                  loss=loss_fn,  # Pass the function itself, not the result of calling it
+                  metrics=[f1_metric, r1_metric, latency_metric])
 
     if params['WEIGHT_FILE']:
         print('load model')
@@ -339,14 +341,16 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
         r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
         this_binary_accuracy = custom_binary_accuracy
     else:
-        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
-        r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
-        latency_metric = LatencyMetric(is_classification_only=is_classification_only)
-        this_binary_accuracy = custom_binary_accuracy
+        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+        r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+        latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
 
+    # Create loss function without calling it
+    loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
+    
     model.compile(optimizer=this_optimizer,
-                  loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op),
-                  metrics=[custom_mse_metric, this_binary_accuracy, f1_metric, r1_metric, latency_metric])#, this_embd=tcn_output
+                  loss=loss_fn,
+                  metrics=[f1_metric, r1_metric, latency_metric])#, this_embd=tcn_output
 
     if params['WEIGHT_FILE']:
         print('load model')
@@ -496,14 +500,18 @@ def build_DBI_TCN_DorizonMixer(input_timepoints, input_chans=8, params=None):
     if params['mode']=='predict':
         concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
     # Define model with both outputs
-    f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
-    r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
-    latency_metric = LatencyMetric(is_classification_only=is_classification_only)
-
+    f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+    r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+    latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
+    
     model = Model(inputs=inputs, outputs=concat_outputs)
+    
+    # Create loss function without calling it
+    loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
+    
     model.compile(optimizer=this_optimizer,
-                    loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op),
-                    metrics=[custom_mse_metric, custom_binary_accuracy, f1_metric, r1_metric, latency_metric]
+                    loss=loss_fn,
+                    metrics=[f1_metric, r1_metric, latency_metric]
                   )
 
     if params['WEIGHT_FILE']:
@@ -644,14 +652,16 @@ def build_DBI_TCN_CorizonMixer(input_timepoints, input_chans=8, params=None):
     if params['mode']=='predict':
         concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
     model = Model(inputs=inputs, outputs=concat_outputs)
-
-    f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
-    r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
-    latency_metric = LatencyMetric(is_classification_only=is_classification_only)
-
+    f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+    r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+    latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
+    
+    # Create loss function without calling it
+    loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
+    
     model.compile(optimizer=this_optimizer,
-                    loss=custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op),
-                    metrics=[custom_mse_metric, custom_binary_accuracy, f1_metric, r1_metric, latency_metric]
+                    loss=loss_fn,
+                    metrics=[f1_metric, r1_metric, latency_metric]
                   )
 
     if params['WEIGHT_FILE']:
@@ -747,11 +757,13 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
         self.tp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='tp')
         self.fp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='fp')
         self.fn = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='fn')
+        self.is_classification_only = is_classification_only
+        print('is_classification_only:', is_classification_only)
 
-    def update_state(self, y_true, y_pred, sample_weight=None, is_classification_only=is_classification_only):
+    def update_state(self, y_true, y_pred, sample_weight=None):
         # Extract labels based on mode
-        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
-        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
+        y_true_labels = y_true[..., 0] if self.is_classification_only else y_true[..., 8]
+        y_pred_labels = y_pred[..., 0] if self.is_classification_only else y_pred[..., 8]
 
         def process_threshold(threshold):
             pred_events = tf.cast(y_pred_labels >= threshold, tf.float32)
@@ -798,11 +810,13 @@ class LatencyMetric(tf.keras.metrics.Metric):
         self.max_early_detection = max_early_detection
         self.total_latency = self.add_weight(name='total_latency', initializer='zeros')
         self.valid_events = self.add_weight(name='valid_events', initializer='zeros')
+        self.is_classification_only = is_classification_only
+        print('is_classification_only:', is_classification_only)
 
-    def update_state(self, y_true, y_pred, sample_weight=None, is_classification_only=is_classification_only):
+    def update_state(self, y_true, y_pred, sample_weight=None):
         # Extract labels based on mode
-        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
-        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
+        y_true_labels = y_true[..., 0] if self.is_classification_only else y_true[..., 8]
+        y_pred_labels = y_pred[..., 0] if self.is_classification_only else y_pred[..., 8]
 
         # Calculate onset times using cumsum trick instead of where
         true_shifts = tf.pad(y_true_labels[:, :-1], [[0, 0], [1, 0]], constant_values=0.0)
@@ -849,11 +863,13 @@ class RobustF1Metric(tf.keras.metrics.Metric):
         self.pred_sum = self.add_weight(name='pred_sum', initializer='zeros')
         self.pred_count = self.add_weight(name='pred_count', initializer='zeros')
         self.temp_diff_sum = self.add_weight(name='temp_diff_sum', initializer='zeros')
+        self.is_classification_only = is_classification_only
+        print('is_classification_only:', is_classification_only)
 
-    def update_state(self, y_true, y_pred, sample_weight=None, is_classification_only=is_classification_only):
+    def update_state(self, y_true, y_pred, sample_weight=None):
         # Extract labels based on mode
-        y_true_labels = tf.cast(y_true[..., 0] if is_classification_only else y_true[..., 8], tf.float32)
-        y_pred_labels = tf.cast(y_pred[..., 0] if is_classification_only else y_pred[..., 8], tf.float32)
+        y_true_labels = tf.cast(y_true[..., 0] if self.is_classification_only else y_true[..., 8], tf.float32)
+        y_pred_labels = tf.cast(y_pred[..., 0] if self.is_classification_only else y_pred[..., 8], tf.float32)
 
         def process_threshold(threshold):
             pred_events = tf.cast(y_pred_labels >= threshold, tf.float32)

@@ -27,6 +27,7 @@ import pandas as pd
 import sys
 import glob
 import importlib
+from tensorflow.keras import callbacks as cb
 
 # import tensorflow_models as tfm
 
@@ -98,7 +99,7 @@ def objective(trial):
     arch_lib = ['MixerOnly', 'MixerHori', 'MixerDori', 'DualMixerDori', 'MixerCori', 'SingleCh']
     # Model architecture parameters - Fix the categorical suggestion
     # arch_ind = trial.suggest_int('IND_ARCH', 0, len(arch_lib)-1)
-    arch_ind = 1
+    arch_ind = 0
     params['TYPE_ARCH'] = arch_lib[arch_ind]
     # params['TYPE_ARCH'] = 'MixerHori'
     # pdb.set_trace()
@@ -255,35 +256,28 @@ def objective(trial):
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     # Early stopping with tunable patience
     callbacks = []
-    # patience = trial.suggest_int('patience', 10, 30)  # Make patience tunable
 
     # Early stopping with tunable patience
-    # callbacks.append(cb.EarlyStopping(
-    #     monitor='val_max_f1_metric_horizon',  # Change monitor
-    #     patience=20,
-    #     mode='max',
-    #     verbose=1,
-    #     restore_best_weights=True
-    # ))
+    callbacks.append(cb.EarlyStopping(
+        monitor='val_max_f1_metric_horizon',  # Change monitor
+        patience=50,
+        mode='max',
+        verbose=1,
+        restore_best_weights=True
+    ))
     
     # Import the new multi-objective callback
-    from model.training import F1PruningCallback, WeightDecayCallback, lr_scheduler
+    from model.training import WeightDecayCallback, lr_scheduler
     
     use_LR = trial.suggest_categorical('USE_LR', [True, False])
     if use_LR:
         params['TYPE_REG'] += 'LR'
-        callbacks.append(tf.keras.callbacks.LearningRateScheduler(lr_scheduler, verbose=1))
+        callbacks.append(cb.LearningRateScheduler(lr_scheduler, verbose=1))
 
     if par_opt == 'AdamW':
         params['TYPE_REG'] += 'WD'
         callbacks.append(WeightDecayCallback())
-    # callbacks.append(cb.EarlyStopping(monitor='val_loss',
-    #                                 min_delta=0.0001,
-    #                                 patience=25,  # Adjusted patience
-    #                                 verbose=1))
     
-    # callbacks.append(WeightDecayCallback())
-    from tensorflow.keras import callbacks as cb
     callbacks.append(cb.TensorBoard(log_dir=f"{study_dir}/",
                                       write_graph=True,
                                       write_images=True,
@@ -318,27 +312,6 @@ def objective(trial):
         mode='max'
     ))
 
-    # callbacks.append(F1PruningCallback(
-    #     trial=trial,
-    #     monitor='val_max_f1_metric_horizon',
-    #     patience=10,             # Adjust based on your training dynamics.
-    #     greater_is_better=True   # Since you want to maximize F1.
-    # ))
-    # callbacks.append(MultiObjectivePruningCallback(
-    #     trial=trial,
-    #     monitor='val_max_f1_metric_horizon',  # Use your chosen metric name.
-    #     patience=10,                         # Adjust as needed.
-    #     greater_is_better=True               # True since you maximize F1.
-    # ))
-    # Replace the standard pruning callback with the multi-objective version
-    # callbacks.append(MultiObjectivePruningCallback(
-    #     trial,
-    #     monitor='val_max_f1_metric_horizon',  # Primary metric we want to optimize
-    #     patience=15,                         # Allow 15 epochs without improvement before pruning
-    #     greater_is_better=True              # Higher F1 is better
-    # ))    
-
-    
     try:
         history = model.fit(
             train_dataset,
