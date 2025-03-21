@@ -337,7 +337,7 @@ def sample_triplets_for_batch(data, labels, window_size=256, min_negative_distan
     anchors = []
     positives = []
     
-    n_samples_per_event = 200  # Increased samples per event
+    n_samples_per_event = 100  # Increased samples per event
     
     # Generate windows for each event
     for idx, (start, end) in enumerate(events):
@@ -417,9 +417,6 @@ def sample_triplets_for_batch(data, labels, window_size=256, min_negative_distan
     sampled_positives = random.sample(positives, batch_size)
     sampled_negatives = random.sample(negative_regions, batch_size)
 
-    # print(np.sort(sampled_anchors, axis=0))
-    # print(np.sort(sampled_positives, axis=0))
-    # print(np.sort(sampled_negatives, axis=0))
     anchor_samples = np.zeros((batch_size, window_size, data.shape[1]), dtype=np.float32)
     positive_samples = np.zeros_like(anchor_samples)
     negative_samples = np.zeros_like(anchor_samples)

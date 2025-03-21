@@ -865,28 +865,40 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         )
         
     else:
-        # For inference or evaluation, use the standard model
-        signal_input = Input(shape=(None, input_chans), name='inputs')
-        output = tcn_backbone(signal_input)
-        model = Model(inputs=signal_input, outputs=output)
+        all_inputs = Input(shape=(None, input_chans), name='all_inputs')
         
-        # Metrics for evaluation
+        
+        batch_size = tf.shape(all_inputs)[0] // 3
+        
+        # Split tensors using tf.split instead of unpacking
+        # anchor_input, positive_input, negative_input = tf.split(all_inputs, 3, axis=0)
+        # anchor_true, positive_true, negative_true = tf.split(y_true, 3, axis=0)
+        anchor_input = all_inputs
+        # Process inputs through shared TCN model
+        anchor_output = tcn_backbone(anchor_input)
+        # positive_output = tcn_backbone(positive_input)
+        # negative_output = tcn_backbone(negative_input)
+        all_outputs = anchor_output
+        # all_outputs = Concatenate(axis=0)([anchor_output, positive_output, negative_output])
+        # Create the training model with dictionary inputs and outputs
+        model = Model(
+            inputs = all_inputs,
+            outputs = all_outputs
+        )
+            
+        # Metrics - only applied to anchor output for metric tracking
         model._is_classification_only = True
+        
         f1_metric = MaxF1MetricHorizon(model=model)
         r1_metric = RobustF1Metric(model=model)
         latency_metric = LatencyMetric(model=model)
            
-        # Custom loss function for evaluation
-        loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params)
-    
-        # Compile the model
         model.compile(
             optimizer=this_optimizer,
-            loss=loss_fn,
+            loss='mse',
             metrics=[f1_metric, r1_metric, latency_metric]
         )
-    
-    # Load weights if provided
+        
     if params['WEIGHT_FILE']:
         print('load model')
         model.load_weights(params['WEIGHT_FILE'])

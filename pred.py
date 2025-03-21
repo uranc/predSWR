@@ -410,7 +410,7 @@ def objective_triplet(trial):
 
     # Optional batch size tuning
     # batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
-    batch_size = 32
+    batch_size = 64
     params['BATCH_SIZE'] = batch_size
     # ...rest of existing objective function code...
 
@@ -616,7 +616,8 @@ def objective_triplet(trial):
    
     # Early stopping parameters
     best_metric = float('-inf')
-    patience = 30
+    best_metric2 = float('-inf')
+    patience = 50
     min_delta = 0.0001
     patience_counter = 0
     
@@ -671,8 +672,11 @@ def objective_triplet(trial):
                     
         # Early stopping check after each epoch
         current_metric = epoch_history.history.get('val_max_f1_metric_horizon', [float('-inf')])[0]
-        if current_metric > (best_metric + min_delta):
+        current_metric2 = epoch_history.history.get('val_robust_f1', [float('-inf')])[0]
+        if (current_metric > (best_metric + min_delta)) or (current_metric2 > (best_metric2 + min_delta)):
             best_metric = current_metric
+            best_metric2 = current_metric2
+            print(f"New best metric: {best_metric}, New best metric2: {best_metric2}")
             patience_counter = 0
         else:
             patience_counter += 1
@@ -913,6 +917,8 @@ elif mode == 'predict':
             from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
         elif 'MixerCori' in params['TYPE_ARCH']:
             from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
+        elif 'TripletOnly' in params['TYPE_ARCH']:
+            from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
         from model.model_fn import CSDLayer
         from tcn import TCN
         from keras.models import load_model
@@ -1076,7 +1082,7 @@ elif mode == 'predict':
         sample_length = params['NO_TIMEPOINTS']
         train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
         windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
-
+        pdb.set_trace()
         # different outputs
         if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
             if len(windowed_signal.shape) == 3:
