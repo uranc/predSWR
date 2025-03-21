@@ -1,3 +1,4 @@
+import tensorflow as tf
 from tensorflow.keras.layers import Conv1D, Conv2D, ELU, Input, LSTM, Dense, Dropout, Layer, MultiHeadAttention, LayerNormalization, Normalization
 from tensorflow.keras.layers import BatchNormalization, Activation, Flatten, Concatenate, Lambda
 from tensorflow.keras.initializers import GlorotUniform, Orthogonal
@@ -9,7 +10,8 @@ from tensorflow.keras.regularizers import l1, l2
 from tensorflow.keras import backend as K
 from tensorflow.keras.models import Model
 from tensorflow.keras import applications
-import tensorflow as tf
+from model.patchAD.patch_ad import PatchAD
+from model.patchAD.loss import PatchADLoss
 import pdb
 
 def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
@@ -145,9 +147,11 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
 
     # compute probability
     concat_outputs = tmp_class
-
-    # Define model with both outputs
-    if params['mode']!='train':
+    
+    # Define model with both outputs 
+    if params['mode']=='embedding':
+        concat_outputs = Concatenate(axis=-1)([concat_outputs, tcn_output])
+    elif params['mode']=='predict':
         concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
 
     model = Model(inputs=inputs, outputs=concat_outputs)
@@ -329,7 +333,10 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
     concat_outputs = Concatenate(axis=-1)([prediction_output, classification_output])
     # concat_outputs = Lambda(lambda tt: tt[:, -50:, :], name='Slice_Output')(concat_outputs)
     # Define model with both outputs
-    if params['mode']!='train':
+
+    if params['mode']=='embedding':
+        concat_outputs = Concatenate(axis=-1)([concat_outputs, tcn_output])
+    elif params['mode']=='predict':
         concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
 
     model = Model(inputs=inputs, outputs=concat_outputs)
@@ -497,8 +504,11 @@ def build_DBI_TCN_DorizonMixer(input_timepoints, input_chans=8, params=None):
 
         concat_outputs = Concatenate(axis=-1)([pred_out, classification_output])
 
-    if params['mode']=='predict':
+    if params['mode']=='embedding':
+        concat_outputs = Concatenate(axis=-1)([concat_outputs, tcn_output])
+    elif params['mode']!='train':
         concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
+
     # Define model with both outputs
     f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
     r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
@@ -649,8 +659,11 @@ def build_DBI_TCN_CorizonMixer(input_timepoints, input_chans=8, params=None):
 
         concat_outputs = Concatenate(axis=-1)([pred_out, classification_output])
 
-    if params['mode']=='predict':
+    if params['mode']=='embedding':
+        concat_outputs = Concatenate(axis=-1)([concat_outputs, tcn_output])
+    elif params['mode']=='predict':
         concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
+
     model = Model(inputs=inputs, outputs=concat_outputs)
     f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
     r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
@@ -670,6 +683,302 @@ def build_DBI_TCN_CorizonMixer(input_timepoints, input_chans=8, params=None):
 
     return model
 
+
+def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
+    # logit or sigmoid
+    flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
+    print('Using Sigmoid:', flag_sigmoid)
+    
+    # params
+    use_batch_norm = params['TYPE_REG'].find('BN')>-1
+    use_weight_norm = params['TYPE_REG'].find('WN')>-1
+    use_layer_norm = params['TYPE_REG'].find('LN')>-1
+    use_group_norm = params['TYPE_REG'].find('GN')>-1
+
+    # this_activation = 'relu'
+    if params['TYPE_REG'].find('RELU')>-1:
+        this_activation = 'relu'
+    elif params['TYPE_REG'].find('GELU')>-1:
+        this_activation = gelu
+    elif params['TYPE_REG'].find('ELU')>-1:
+        this_activation = ELU(alpha=1)
+    else:
+        this_activation = 'linear'
+
+    # optimizer
+    if params['TYPE_REG'].find('AdamW')>-1:
+        initial_lr = params['LEARNING_RATE'] * 2.0
+        this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, clipnorm=1.0)
+    elif params['TYPE_REG'].find('Adam')>-1:
+        this_optimizer = tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE'])
+    elif params['TYPE_REG'].find('SGD')>-1:
+        this_optimizer = tf.keras.optimizers.SGD(learning_rate=params['LEARNING_RATE'], momentum=0.9)
+
+    if params['TYPE_REG'].find('Glo')>-1:
+        print('Using Glorot')
+        this_kernel_initializer = 'glorot_uniform'
+    elif params['TYPE_REG'].find('He')>-1:
+        print('Using He')
+        this_kernel_initializer = 'he_normal'
+    
+    model_type = params['TYPE_MODEL']
+    n_filters = params['NO_FILTERS']
+    n_kernels = params['NO_KERNELS']
+    n_dilations = params['NO_DILATIONS']
+    
+    if params['TYPE_ARCH'].find('Drop')>-1:
+        r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
+        print('Using Dropout')
+        print(r_drop)
+    else:
+        r_drop = 0.0
+
+    hori_shift = 0
+    if params['TYPE_ARCH'].find('Only')>-1:
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Only')+4:params['TYPE_ARCH'].find('Only')+6])/1000*params['SRATE'])
+        print('Using Horizon Timesteps:', hori_shift)
+    is_classification_only = True
+
+    print('Using Loss Weight:', params['LOSS_WEIGHT'])
+    loss_weight = params['LOSS_WEIGHT']
+    
+    # Function to create the TCN backbone for processing LFP signals
+    def create_tcn_model():
+        signal_input = Input(shape=(None, input_chans))
+        
+        # Apply normalization if needed
+        if params['TYPE_ARCH'].find('ZNorm')>-1:
+            print('Using ZNorm')
+            normalized = Lambda(lambda x: (x - tf.reduce_mean(x, axis=1, keepdims=True)) / 
+                            (tf.math.reduce_std(x, axis=1, keepdims=True) + 1e-6))(signal_input)
+        else:
+            normalized = signal_input
+            
+        # Apply CSD if needed
+        if params['TYPE_ARCH'].find('CSD')>-1:
+            csd_inputs = CSDLayer()(normalized)
+            inputs_nets = Concatenate(axis=-1)([normalized, csd_inputs])
+        else:
+            inputs_nets = normalized
+            
+        # Apply TCN
+        if model_type=='Base':
+            print('Using Base TCN')
+            from tcn import TCN
+            tcn_op = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=use_batch_norm,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+            print(tcn_op.receptive_field)
+            nets = tcn_op(inputs_nets)
+            nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+        elif model_type=='SingleCh':
+            print('Using Single Channel TCN')
+            from tcn import TCN
+            tcn_op = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=use_batch_norm,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+            single_outputs = []
+            for c in range(input_chans):
+                ch_slice = Lambda(lambda x: x[:, :, c:c+1])(signal_input)
+                single_outputs.append(tcn_op(ch_slice))
+            nets = Concatenate(axis=-1)(single_outputs)
+            nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
+            
+        # Apply L2 normalization if needed
+        if params['TYPE_ARCH'].find('L2N')>-1:
+            tcn_output = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(nets)
+        else:
+            tcn_output = nets
+        
+        classification_output = Conv1D(1, kernel_size=1, kernel_initializer='glorot_uniform', use_bias=True, activation='sigmoid', name='tmp_class')(tcn_output)
+        tcn_output = Concatenate(axis=-1)([classification_output, tcn_output])
+        return Model(inputs=signal_input, outputs=tcn_output)
+    
+    # Create the shared TCN model for triplet learning
+    tcn_backbone = create_tcn_model()
+    
+    # For training with triplet loss
+    if params['mode'] == 'train':
+        # Define inputs for anchor, positive, and negative samples
+        # anchor_input = Input(shape=(None, input_chans), name='anchor')
+        # positive_input = Input(shape=(None, input_chans), name='positive')
+        # negative_input = Input(shape=(None, input_chans), name='negative')
+        all_inputs = Input(shape=(None, input_chans), name='all_inputs')
+        
+        
+        batch_size = tf.shape(all_inputs)[0] // 3
+        
+        # Split tensors using tf.split instead of unpacking
+        anchor_input, positive_input, negative_input = tf.split(all_inputs, 3, axis=0)
+        # anchor_true, positive_true, negative_true = tf.split(y_true, 3, axis=0)
+        
+        # Process inputs through shared TCN model
+        anchor_output = tcn_backbone(anchor_input)
+        positive_output = tcn_backbone(positive_input)
+        negative_output = tcn_backbone(negative_input)
+        
+        all_outputs = Concatenate(axis=0)([anchor_output, positive_output, negative_output])
+        # Create the training model with dictionary inputs and outputs
+        model = Model(
+            inputs = all_inputs,
+            outputs = all_outputs
+        )
+            
+        # Metrics - only applied to anchor output for metric tracking
+        model._is_classification_only = True
+        
+        f1_metric = MaxF1MetricHorizon(model=model)
+        r1_metric = RobustF1Metric(model=model)
+        latency_metric = LatencyMetric(model=model)
+           
+        # Create loss function and compile model
+        loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        
+        model.compile(
+            optimizer=this_optimizer,
+            loss=loss_fn,
+            metrics=[f1_metric, r1_metric, latency_metric]
+        )
+        
+    else:
+        # For inference or evaluation, use the standard model
+        signal_input = Input(shape=(None, input_chans), name='inputs')
+        output = tcn_backbone(signal_input)
+        model = Model(inputs=signal_input, outputs=output)
+        
+        # Metrics for evaluation
+        model._is_classification_only = True
+        f1_metric = MaxF1MetricHorizon(model=model)
+        r1_metric = RobustF1Metric(model=model)
+        latency_metric = LatencyMetric(model=model)
+           
+        # Custom loss function for evaluation
+        loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params)
+    
+        # Compile the model
+        model.compile(
+            optimizer=this_optimizer,
+            loss=loss_fn,
+            metrics=[f1_metric, r1_metric, latency_metric]
+        )
+    
+    # Load weights if provided
+    if params['WEIGHT_FILE']:
+        print('load model')
+        model.load_weights(params['WEIGHT_FILE'])
+        
+    return model
+
+def build_model_PatchAD(input_timepoints, input_chans=8, patch_sizes=[2, 4, 8, 16],
+                             d_model=256, num_layers=3, classifier_hidden_dim=64, params=None):
+    """
+    Builds a Pure PatchAD-based model.
+    
+    Architecture:
+    Input -> Preprocessing -> Patch Extraction -> PatchAD Module -> 
+    Aggregation of patch-based representations -> Classifier Head (MLP)
+    
+    Returns a model with a single classification output.
+    """
+    inputs = Input(shape=(input_timepoints, input_chans), name='inputs')
+    normalized = Lambda(lambda x: (x - tf.reduce_mean(x, axis=1, keepdims=True)) /
+                        (tf.math.reduce_std(x, axis=1, keepdims=True) + 1e-6),
+                        name='norm')(inputs)
+
+    # Lists to collect outputs from different scales.
+    proj_inter_list = []
+    proj_intra_list = []
+    rec_inter_list = []
+    rec_intra_list = []
+    inter_list = []   # Raw encoder outputs (inter view)
+    intra_list = []   # Raw encoder outputs (intra view)
+
+    patchad_module = PatchAD(
+        8, input_timepoints, [2, 4, 8, 16],
+        d_model=d_model,
+        num_layers=num_layers
+    )
+    outputs = patchad_module(normalized, training=True)
+    
+    
+    import pdb
+    pdb.set_trace()
+    # get classification loss
+    concat_feats = tf.concat((outputs['x_inter'], outputs['x_intra']), axis=-1)
+    classification_output = Dense(classifier_hidden_dim, activation='sigmoid')(concat_feats)
+    
+    # Get horizon shift if specified
+    is_classification_only = True
+    hori_shift = 0
+    if params and 'TYPE_ARCH' in params and params['TYPE_ARCH'].find('PatchAD') > -1:
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('PatchAD')+4:params['TYPE_ARCH'].find('PatchAD')+6])/1000*params['SRATE'])
+        print('Using Horizon Timesteps:', hori_shift)
+        is_classification_only = False
+    
+    loss_weight = 1.0
+    if params and 'LOSS_WEIGHT' in params:
+        loss_weight = params['LOSS_WEIGHT']
+    
+    # Handle prediction mode
+    if params and 'mode' in params and params['mode'] == 'predict':
+        classification_output = Lambda(lambda tt: tt[:, -1:], name='Last_Output')(classification_output)
+    
+    # Setup metrics
+    f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+    r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+    latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
+    
+    # Optimizer
+    if params and 'TYPE_REG' in params:
+        if params['TYPE_REG'].find('AdamW') > -1:
+            initial_lr = params['LEARNING_RATE'] * 2.0 if 'LEARNING_RATE' in params else 0.001 * 2.0
+            this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, clipnorm=1.0)
+        elif params['TYPE_REG'].find('Adam') > -1:
+            this_optimizer = tf.keras.optimizers.Adam(learning_rate=params.get('LEARNING_RATE', 0.001))
+        else:
+            this_optimizer = tf.keras.optimizers.Adam(learning_rate=params.get('LEARNING_RATE', 0.001))
+    else:
+        this_optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+    
+    # # Create loss function - use standard BCE for classification-only model
+    patch_ad_loss = PatchADLoss()
+    custom_fbfce = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params) + patch_ad_loss(outputs)
+    
+    model.compile(optimizer=this_optimizer,
+                  loss=custom_fbfce,
+                  metrics=[f1_metric, r1_metric, latency_metric])
+
+    if params and 'WEIGHT_FILE' in params and params['WEIGHT_FILE']:
+        print('load model')
+        model.load_weights(params['WEIGHT_FILE'])
+
+    return model
+
+#################### Custom Layers ####################
 class CSDLayer(Layer):
     """
     A custom Keras layer that computes Current Source Density (CSD)
@@ -705,7 +1014,7 @@ class CSDLayer(Layer):
         config = super(CSDLayer, self).get_config()
         return config
 
-###### Loss Functions ######
+#################### METRICS and LOSSES ####################
 
 def custom_binary_accuracy_mixer(y_true, y_pred):
     # Calculate Binary Accuracy for the last channel
@@ -751,19 +1060,21 @@ def truncated_mse_loss(y_true, y_pred, tau=4.0):
     return t_mse
 
 class MaxF1MetricHorizon(tf.keras.metrics.Metric):
-    def __init__(self, name='max_f1_metric_horizon', thresholds=tf.linspace(0.0, 1.0, 11), is_classification_only=False, **kwargs):
+    def __init__(self, name='max_f1_metric_horizon', thresholds=tf.linspace(0.0, 1.0, 11), model=None, **kwargs):
         super(MaxF1MetricHorizon, self).__init__(name=name, **kwargs)
         self.thresholds = thresholds
         self.tp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='tp')
         self.fp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='fp')
         self.fn = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='fn')
-        self.is_classification_only = is_classification_only
-        print('is_classification_only:', is_classification_only)
+        self.model = model
 
     def update_state(self, y_true, y_pred, sample_weight=None):
+        # Get classification mode from model property
+        is_classification_only = getattr(self.model, '_is_classification_only', True)
+        
         # Extract labels based on mode
-        y_true_labels = y_true[..., 0] if self.is_classification_only else y_true[..., 8]
-        y_pred_labels = y_pred[..., 0] if self.is_classification_only else y_pred[..., 8]
+        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
+        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
 
         def process_threshold(threshold):
             pred_events = tf.cast(y_pred_labels >= threshold, tf.float32)
@@ -804,19 +1115,22 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
         self.fn.assign(tf.zeros_like(self.fn))
 
 class LatencyMetric(tf.keras.metrics.Metric):
-    def __init__(self, name='latency_metric', threshold=0.5, max_early_detection=50, is_classification_only=False, **kwargs):
+    def __init__(self, name='latency_metric', threshold=0.5, max_early_detection=50, model=None, **kwargs):
         super(LatencyMetric, self).__init__(name=name, **kwargs)
         self.threshold = threshold
         self.max_early_detection = max_early_detection
-        self.total_latency = self.add_weight(name='total_latency', initializer='zeros')
+        # Initialize with a large positive value so any real latency will be an improvement
+        self.total_latency = self.add_weight(name='total_latency', initializer=lambda shape, dtype: tf.constant(1000.0, dtype=dtype))
         self.valid_events = self.add_weight(name='valid_events', initializer='zeros')
-        self.is_classification_only = is_classification_only
-        print('is_classification_only:', is_classification_only)
+        self.model = model
 
     def update_state(self, y_true, y_pred, sample_weight=None):
+        # Get classification mode from model property
+        is_classification_only = getattr(self.model, '_is_classification_only', True)
+
         # Extract labels based on mode
-        y_true_labels = y_true[..., 0] if self.is_classification_only else y_true[..., 8]
-        y_pred_labels = y_pred[..., 0] if self.is_classification_only else y_pred[..., 8]
+        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
+        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
 
         # Calculate onset times using cumsum trick instead of where
         true_shifts = tf.pad(y_true_labels[:, :-1], [[0, 0], [1, 0]], constant_values=0.0)
@@ -842,19 +1156,30 @@ class LatencyMetric(tf.keras.metrics.Metric):
         latency = detection_indices - onset_indices
         latency = tf.clip_by_value(latency, -self.max_early_detection, tf.cast(tf.shape(y_true_labels)[1], tf.float32))
 
-        # Update metric states
-        self.total_latency.assign_add(tf.reduce_sum(latency * valid_mask))
-        self.valid_events.assign_add(tf.reduce_sum(valid_mask))
+        # Reset the accumulators for each batch to properly compute the average
+        if tf.reduce_sum(valid_mask) > 0:
+            self.total_latency.assign(tf.reduce_sum(latency * valid_mask))
+            self.valid_events.assign(tf.reduce_sum(valid_mask))
+        else:
+            # If no valid events in this batch, keep the previous value
+            # But for the first batch with no events, set to a large value
+            self.total_latency.assign(1000.0 if self.valid_events == 0 else self.total_latency)
 
     def result(self):
-        return self.total_latency / (self.valid_events + tf.keras.backend.epsilon())
+        # Return large positive value if no valid events have been seen
+        return tf.cond(
+            self.valid_events > 0,
+            lambda: self.total_latency / self.valid_events,
+            lambda: tf.constant(1000.0, dtype=self.total_latency.dtype)
+        )
 
     def reset_state(self):
-        self.total_latency.assign(0.)
-        self.valid_events.assign(0.)
+        # Initialize to large positive value instead of zero
+        self.total_latency.assign(1000.0)
+        self.valid_events.assign(0.0)
 
 class RobustF1Metric(tf.keras.metrics.Metric):
-    def __init__(self, name='robust_f1', thresholds=tf.linspace(0.0, 1.0, 11), is_classification_only=False, **kwargs):
+    def __init__(self, name='robust_f1', thresholds=tf.linspace(0.0, 1.0, 11), model=None, **kwargs):
         super(RobustF1Metric, self).__init__(name=name, **kwargs)
         self.thresholds = thresholds
         self.tp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='tp')
@@ -863,13 +1188,15 @@ class RobustF1Metric(tf.keras.metrics.Metric):
         self.pred_sum = self.add_weight(name='pred_sum', initializer='zeros')
         self.pred_count = self.add_weight(name='pred_count', initializer='zeros')
         self.temp_diff_sum = self.add_weight(name='temp_diff_sum', initializer='zeros')
-        self.is_classification_only = is_classification_only
-        print('is_classification_only:', is_classification_only)
+        self.model = model
 
     def update_state(self, y_true, y_pred, sample_weight=None):
+        # Get classification mode from model property
+        is_classification_only = getattr(self.model, '_is_classification_only', True)
+
         # Extract labels based on mode
-        y_true_labels = tf.cast(y_true[..., 0] if self.is_classification_only else y_true[..., 8], tf.float32)
-        y_pred_labels = tf.cast(y_pred[..., 0] if self.is_classification_only else y_pred[..., 8], tf.float32)
+        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
+        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
 
         def process_threshold(threshold):
             pred_events = tf.cast(y_pred_labels >= threshold, tf.float32)
@@ -1272,557 +1599,65 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
     return loss_fn
 
 
-
-############################### LEGACY ###############################
-
-def build_DBI_TCN_Horizon_Updated(input_timepoints, input_chans=8, embedding_dim=32, params=None):
-    from tcn import TCN
-
-    inputs = Input(shape=(input_timepoints * 2, input_chans), name='inputs')
-
-    # TCN Backbone
-    tcn_layer = TCN(
-        nb_filters=params['NO_FILTERS'],
-        kernel_size=params['NO_KERNELS'],
-        dilations=[2 ** i for i in range(params['NO_DILATIONS'])],
-        return_sequences=True,
-        use_skip_connections=True,
-        dropout_rate=params.get('DROPOUT', 0.0),
-        # activation='relu',
-        activation=ELU(alpha=1),
-        use_weight_norm=True,
-        padding='causal'
-    )
-
-    tcn_output = tcn_layer(inputs)
-    tcn_crop = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Pred_Output')
-    tcn_output = tcn_crop(tcn_output)
-
-    # Embedding Layer for Prototype and Barlow Twins Losses
-    embedding_layer = Dense(embedding_dim, activation='linear', name='embedding')
-    embeddings = embedding_layer(tcn_output)
-
-    # Learnable Prototypes for events and non-events
-    p_event = tf.Variable(tf.random.normal([embedding_dim]), trainable=True, name="p_event")
-    p_non_event = tf.Variable(tf.random.normal([embedding_dim]), trainable=True, name="p_non_event")
-
-    # Prediction Head for Classification
-    classification_output = Dense(1, activation='sigmoid', name='classification_output')(embeddings)
-    classification_output = tf.squeeze(classification_output)
-    # Build Model
-    model = Model(inputs=inputs, outputs=classification_output)
-
-    current_lr = params['LEARNING_RATE']
-    optimizer = tf.keras.optimizers.Adam(learning_rate=current_lr)
-
-    # Prototype-Based Loss
-    def prototype_loss(embeddings, labels):
-        d_event = tf.norm(embeddings - p_event, axis=-1)
-        d_non_event = tf.norm(embeddings - p_non_event, axis=-1)
-        return tf.reduce_mean(labels * d_event + (1 - labels) * d_non_event)
-
-    def focal_tversky_loss(y_true, y_pred, sample_weight=None, alpha=0.7, beta=0.3, gamma=0.75):
-        # Apply sample weights if provided
-        if sample_weight is not None:
-            sample_weight = tf.cast(sample_weight, dtype=y_true.dtype)
-            y_true = y_true * sample_weight
-            y_pred = y_pred * sample_weight
-
-        # Calculate Tversky components
-        true_pos = tf.reduce_sum(y_true * y_pred)
-        false_neg = tf.reduce_sum(y_true * (1 - y_pred))
-        false_pos = tf.reduce_sum((1 - y_true) * y_pred)
-
-        # Calculate Tversky index
-        tversky_index = (true_pos + 1e-10) / (true_pos + alpha * false_neg + beta * false_pos + 1e-10)
-
-        # Apply focal modulation
-        return tf.pow((1 - tversky_index), gamma)
-
-    # Combined Loss
-    def combined_loss(y_true, y_pred, embeddings, labels, alpha=0.0, weights=None, params=None):
-
-        total_loss = 0.0
-        if params['TYPE_LOSS'].find('Focal')>-1:
-            print('Using Focal Loss')
-            # bfce = tf.keras.losses.BinaryFocalCrossentropy(reduction=tf.keras.losses.Reduction.NONE)
-            classification_loss = tf.keras.losses.binary_focal_crossentropy(tf.expand_dims(y_true, axis=-1), tf.expand_dims(y_pred, axis=-1))
-            total_loss += tf.reduce_mean(classification_loss*weights)
-        elif params['TYPE_LOSS'].find('Tversky')>-1:
-            print('Using Tversky Loss')
-            classification_loss = focal_tversky_loss(y_true, y_pred, sample_weight = weights)
-            total_loss += classification_loss
+def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+    """
+    Custom triplet loss function for SWR prediction that works with tuple outputs.
+    """
+    def loss_fn(y_true, y_pred):
+        # Get batch size
         # pdb.set_trace()
+        # batch_size = tf.shape(y_pred)[0] // 3
+        # params['BATCH_SIZE'] = tf.shape(y_pred)[0] // 3
+        
+        # Split tensors using tf.split instead of unpacking
+        anchor_out, positive_out, negative_out = tf.split(y_pred, num_or_size_splits=3, axis=0)
+        anchor_true, positive_true, negative_true = tf.split(y_true, num_or_size_splits=3, axis=0)
 
-        if params['TYPE_LOSS'].find('Proto')>-1:
-            print('Using Proto Loss:')
-            loss_weight = (params['TYPE_LOSS'][params['TYPE_LOSS'].find('Proto')+5:params['TYPE_LOSS'].find('Proto')+8])
-            weight = 1 if int(loss_weight[0])==1 else -1
-            alpha = float(loss_weight[1])*10**(weight*float(loss_weight[2]))
-            print('Proto Loss Weight: {0}'.format(alpha))
-            if alpha != 0:
-                total_loss += prototype_loss(embeddings, labels) * alpha
+        # Split predictions into classification and embedding parts using tf operations
+        anchor_class = anchor_out[..., 0]
+        positive_class = positive_out[..., 0]
+        negative_class = negative_out[..., 0]
+        
+        anchor_emb = anchor_out[..., 1:]
+        positive_emb = positive_out[..., 1:]
+        negative_emb = negative_out[..., 1:]
 
+        # Extract labels using tf operations
+        anchor_labels = tf.cast(anchor_true[..., 0], tf.float32)
+        positive_labels = tf.cast(positive_true[..., 0], tf.float32)
+        negative_labels = tf.cast(negative_true[..., 0], tf.float32)
+        
+        # Calculate embedding distances using tf operations
+        pos_dist = tf.reduce_sum(tf.square(anchor_emb - positive_emb), axis=-1)
+        neg_dist = tf.reduce_sum(tf.square(anchor_emb - negative_emb), axis=-1)
+        
+        # Triplet loss with margin
+        margin = tf.cast(params.get('TRIPLET_MARGIN', 0.5), tf.float32)
+        triplet_loss_val = tf.maximum(0.0, pos_dist - neg_dist + margin)
+        
+        # Classification loss using focal loss
+        alpha = tf.cast(params.get('FOCAL_ALPHA', 0.65), tf.float32)
+        gamma = tf.cast(params.get('FOCAL_GAMMA', 1.0), tf.float32)
+        
+        focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
+            apply_class_balancing=True,
+            alpha=alpha,
+            gamma=gamma,
+            reduction=tf.keras.losses.Reduction.NONE
+        )
+        
+        # Calculate classification loss for each part of the triplet
+        class_loss_anchor = focal_loss(anchor_labels, anchor_class)
+        class_loss_positive = focal_loss(positive_labels, positive_class)
+        class_loss_negative = focal_loss(negative_labels, negative_class)
+        
+        # Combine losses using tf operations
+        total_class_loss = (class_loss_anchor + class_loss_positive + class_loss_negative) / 3.0
+        
+        # Weight between triplet and classification loss
+        total_loss = tf.multiply(loss_weight, tf.reduce_mean(triplet_loss_val)) + tf.reduce_mean(total_class_loss)
+        
         return total_loss
-
-    # Training Step with Binary Accuracy Monitoring
-    def train_step(x, y,sample_weight=None, params=None):
-        y = tf.squeeze(y)
-        with tf.GradientTape() as tape:
-            # Forward pass
-            embeddings = embedding_layer(tcn_crop(tcn_layer(x)))
-            predictions = model(x, training=True)
-
-            # Combined loss (classification and prototype)
-            total_loss = combined_loss(y, predictions, embeddings, y, alpha=5.0, weights=sample_weight, params=params)
-
-        gradients = tape.gradient(total_loss, model.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-
-        # Calculate binary accuracy
-        binary_accuracy = tf.reduce_mean(tf.keras.metrics.binary_accuracy(y, predictions))
-        return total_loss, binary_accuracy
-
-    def train_model(train_dataset, val_dataset, params=None, save_best=True, patience=1, factor=0.5, min_lr=1e-5):
-
-        # Track the best validation F1 score
-        best_val_f1 = 0.0
-        epochs = params['NO_EPOCHS']
-
-        # learning rate scheduler
-        no_improve_epochs = 0
-
-        # Instantiate F1 metric outside of `evaluate`
-        val_f1_metric = MaxF1Metric()
-        val_accuracy_metric = tf.keras.metrics.BinaryAccuracy()
-        val_precision_metric = tf.keras.metrics.Precision()
-        val_recall_metric = tf.keras.metrics.Recall()
-        val_loss_metric = tf.keras.metrics.Mean()
-
-        for epoch in range(epochs):
-
-            current_lr = optimizer.learning_rate.numpy()
-            # Initialize metrics for the current epoch
-            epoch_loss_avg = tf.keras.metrics.Mean()
-            epoch_accuracy_avg = tf.keras.metrics.Mean()
-
-            # Training loop
-            for inputs, labels, weights in train_dataset:
-                # Perform a training step
-                loss, accuracy = train_step(inputs, labels, sample_weight=weights, params=params)
-                epoch_loss_avg.update_state(loss)
-                epoch_accuracy_avg.update_state(accuracy)
-
-            # Run validation and get F1 score, accuracy, precision, recall, and loss
-            val_f1, val_accuracy, val_precision, val_recall, val_loss = evaluate(val_dataset, val_f1_metric, val_accuracy_metric, val_precision_metric, val_recall_metric, val_loss_metric)
-
-            # Print epoch results
-            print(f"Epoch {epoch+1}, Loss: {epoch_loss_avg.result().numpy()}, "
-                  f"Accuracy: {epoch_accuracy_avg.result().numpy()}, "
-                  f"Validation Loss: {val_loss:.4f}, "
-                  f"Validation F1 Score: {val_f1:.4f}, "
-                  f"Validation Accuracy: {val_accuracy:.4f}, "
-                  f"Validation Precision: {val_precision:.4f}, "
-                  f"Validation Recall: {val_recall:.4f}")
-
-            # Save model if the F1 score improved
-            if save_best and val_f1 > best_val_f1:
-                best_val_f1 = val_f1
-                no_improve_epochs = 0
-                model.save(params['EXP_DIR'] + '/best_f1_model.h5')
-                print(f"New best model saved with F1 Score: {best_val_f1:.4f}")
-            else:
-                no_improve_epochs += 1
-            # print('No Improve Epochs:', no_improve_epochs)
-
-            # Reset metrics for the next epoch
-            epoch_loss_avg.reset_states()
-            epoch_accuracy_avg.reset_states()
-            val_f1_metric.reset_states()
-            val_accuracy_metric.reset_states()
-            val_precision_metric.reset_states()
-            val_recall_metric.reset_states()
-            val_loss_metric.reset_states()
-
-            # Callbacks at the end of each epoch
-            if no_improve_epochs >= patience:
-                new_lr = max(current_lr * factor, min_lr)
-                if new_lr < current_lr:
-                    current_lr = new_lr
-                    optimizer.learning_rate.assign(current_lr)
-                    print(f"Reduced learning rate to {current_lr}")
-                else:
-                    print(f"Learning rate already at minimum value of {min_lr}, Early stopping")
-                    break
-                no_improve_epochs = 0  # Reset counter after reducing learning rate
-
-    def evaluate(val_dataset, val_f1_metric, val_accuracy_metric, val_precision_metric, val_recall_metric, val_loss_metric):
-        # Reset metric state
-        val_f1_metric.reset_states()
-        val_accuracy_metric.reset_states()
-        val_precision_metric.reset_states()
-        val_recall_metric.reset_states()
-        val_loss_metric.reset_states()
-
-        # List to store F1 scores at each threshold
-        val_f1_scores = []
-
-        # Iterate through validation dataset
-        for inputs, labels in val_dataset:
-            predictions = model(inputs, training=False)
-
-            # Update metrics based on labels and predictions
-            val_f1_score = val_f1_metric(labels, predictions)
-            val_accuracy_metric.update_state(labels, predictions)
-            val_precision_metric.update_state(labels, predictions)
-            val_recall_metric.update_state(labels, predictions)
-            val_loss_metric.update_state(labels, predictions)
-            val_f1_scores.append(val_f1_score)
-
-        # Ensure `f1_scores` contains values before calculating max F1
-        if val_f1_scores:
-            max_f1_score = tf.reduce_max(tf.stack(val_f1_scores))
-        else:
-            max_f1_score = 0.0  # or other default value
-
-        val_accuracy = val_accuracy_metric.result().numpy()
-        val_precision = val_precision_metric.result().numpy()
-        val_recall = val_recall_metric.result().numpy()
-        val_loss = val_loss_metric.result().numpy()
-
-        return max_f1_score, val_accuracy, val_precision, val_recall, val_loss
-    return model, train_model
-
-# Prototype Update Function
-def update_prototypes(embeddings, labels, p_event, p_non_event):
-    event_embeddings = tf.boolean_mask(embeddings, labels)
-    non_event_embeddings = tf.boolean_mask(embeddings, 1 - labels)
-
-    if tf.reduce_sum(tf.cast(labels, tf.float32)) > 0:
-        p_event.assign(tf.reduce_mean(event_embeddings, axis=0))
-    if tf.reduce_sum(tf.cast(1 - labels, tf.float32)) > 0:
-        p_non_event.assign(tf.reduce_mean(non_event_embeddings, axis=0))
-
-def build_DBI_TCN_HorizonBarlow(input_timepoints, input_chans=8, params=None):
-
-    def augment_signal(signal):
-        # Example augmentations: noise, scaling, and temporal shifts
-        noise = tf.random.normal(shape=tf.shape(signal), mean=0.0, stddev=0.1)
-        scaled = signal * tf.random.uniform(shape=[], minval=0.1, maxval=10.1)
-        # shifted = tf.roll(signal, shift=tf.random.uniform(shape=[], minval=-5, maxval=5, dtype=tf.int32), axis=1)
-        return scaled + noise
-
-    def create_augmented_views(inputs):
-        view1 = augment_signal(inputs)
-        view2 = augment_signal(inputs)
-        return view1, view2
-
-    def barlow_twins_loss(embedding1, embedding2, lambda_param=0.005):
-        # Normalize embeddings
-        embedding1 = tf.nn.l2_normalize(embedding1, axis=1)
-        embedding2 = tf.nn.l2_normalize(embedding2, axis=1)
-
-        # Cross-correlation matrix
-        c = tf.matmul(embedding1, embedding2, transpose_a=True)
-        c /= tf.cast(tf.shape(embedding1)[0], tf.float32)  # Normalize by batch size
-
-        # On-diagonal: minimize difference from 1
-        on_diag = tf.reduce_sum(tf.square(tf.linalg.diag_part(c) - 1))
-
-        # Off-diagonal: minimize correlation
-        off_diag = tf.reduce_sum(tf.square(c)) - on_diag
-
-        # Total loss
-        return on_diag + lambda_param * off_diag
-
-    # Combined Loss
-    def total_barlow_loss(y_true_exp, y_pred_exp, prediction_targets, prediction_out, embeddings1, embeddings2, horizon=0, loss_weight=1, params=None, model=None, sample_weight=None):
-        if params['TYPE_LOSS'].find('FocalSmooth')>-1:
-            print('FocalSmooth')
-            total_loss = tf.keras.losses.binary_focal_crossentropy(y_true_exp, y_pred_exp, apply_class_balancing=True, label_smoothing=0.1)
-        elif params['TYPE_LOSS'].find('FocalSmoothless')>-1:
-            print('FocalRegular')
-            total_loss = tf.keras.losses.binary_focal_crossentropy(y_true_exp, y_pred_exp, apply_class_balancing=True)
-        elif params['TYPE_LOSS'].find('SigmoidFoc')>-1:
-            print('Sigmoid Focal Loss')
-            aind = params['TYPE_LOSS'].find('Ax')+2
-            alp = float(params['TYPE_LOSS'][aind:aind+3])/100
-            gind = params['TYPE_LOSS'].find('Gx')+2
-            gam = float(params['TYPE_LOSS'][gind:gind+3])/100
-            print('Alpha: {0}, Gamma: {1}'.format(alp, gam))
-            sigmoid_focal_loss = SigmoidFocalCrossEntropy(from_logits=True,alpha=alp,gamma=gam,reduction='none')
-            total_loss = tf.reduce_mean(tf.multiply(sigmoid_focal_loss(y_true_exp, y_pred_exp), sample_weight))
-        elif params['TYPE_LOSS'].find('Focal')>-1:
-            print('Focal')
-            aind = params['TYPE_LOSS'].find('Ax')+2
-            alp = float(params['TYPE_LOSS'][aind:aind+3])/100
-            gind = params['TYPE_LOSS'].find('Gx')+2
-            gam = float(params['TYPE_LOSS'][gind:gind+3])/100
-            print('Alpha: {0}, Gamma: {1}'.format(alp, gam))
-            if alp == 0:
-                focal_loss = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=False,gamma=gam,axis=-1,reduction='none')
-                total_loss = tf.reduce_mean(tf.multiply(focal_loss(y_true_exp, y_pred_exp), sample_weight))
-            else:
-                focal_loss = tf.keras.losses.BinaryFocalCrossentropy(apply_class_balancing=True,alpha=alp,gamma=gam,axis=-1,reduction='none')
-                total_loss = tf.reduce_mean(tf.multiply(focal_loss(y_true_exp, y_pred_exp), sample_weight))
-        # add prediction loss
-        # mse_loss = tf.reduce_mean(tf.multiply(tf.square(prediction_targets-prediction_out), sample_weight))
-        mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out))
-        total_loss += loss_weight * mse_loss
-
-        # barlow loss for embedding robustness
-        barlow_weight = 5e-1
-        barlos_loss = barlow_weight * (barlow_twins_loss(embeddings1, embeddings2, lambda_param=0.005))# +
-                                    #    barlow_twins_loss(embeddings1, prediction_out, lambda_param=0.005))
-        total_loss += barlos_loss
-        return total_loss
-
-    # Loss Function
-    @tf.function
-    def train_step(inputs, y_true, params=None, horizon=0, loss_weight=1):
-        with tf.GradientTape() as tape:
-
-            # Augmented Views
-            view1, view2 = tf.keras.layers.Lambda(create_augmented_views)(inputs)
-            out_view1 = tcn_op(view1)
-            out_view2 = tcn_op(view2)
-            embeddings1 = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output1')(out_view1)
-            embeddings2 = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output2')(out_view2)
-            embeddings1 = embeddings1[:, horizon:, :]
-            embeddings2 = embeddings2[:, horizon:, :]
-            # Predictions
-            predictions = model(inputs, training=True)
-
-            # split inputs outputs
-            prediction_targets = y_true[:, horizon:, :8]                   # Targets starting from horizon
-            prediction_out = predictions[:, :-horizon, :8]                 # Predicted outputs before the horizon
-            y_true_exp = tf.expand_dims(y_true[:, :, 8], axis=-1)
-            y_pred_exp = tf.expand_dims(predictions[:, :, 8], axis=-1)     # First 8 channels for horizon prediction
-            if y_true.shape[-1]==10:
-                sample_weight = y_true[:, :, 9]
-            else:
-                sample_weight = tf.ones_like(y_true_exp)
-
-            # Compute losses
-            total_loss = total_barlow_loss(y_true_exp, y_pred_exp, prediction_targets, prediction_out, embeddings1, embeddings2,
-                                           loss_weight=1, horizon=0, params=params, model=None, sample_weight=sample_weight)
-
-        # Backpropagation
-        gradients = tape.gradient(total_loss, model.trainable_variables)
-        optimizer.apply_gradients(zip(gradients, model.trainable_variables))
-
-        # Calculate binary accuracy
-        binary_accuracy = tf.reduce_mean(tf.keras.metrics.binary_accuracy(y_true_exp, y_pred_exp))
-        return total_loss, binary_accuracy
-
-    def train_model(train_dataset, val_dataset, params=None, save_best=True, patience=20, factor=0.5, min_lr=1e-5):
-
-        # loss parameters
-        hori_shift = 0  # Default value
-        if params['TYPE_ARCH'].find('Hori')>-1:
-            hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Hori')+4:params['TYPE_ARCH'].find('Hori')+6])/1000*params['SRATE'])
-            print('Using Horizon Timesteps:', hori_shift)
-
-        if params['TYPE_ARCH'].find('Loss')>-1:
-            loss_weight = (params['TYPE_ARCH'][params['TYPE_ARCH'].find('Loss')+4:params['TYPE_ARCH'].find('Loss')+7])
-            weight = 1 if int(loss_weight[0])==1 else -1
-            loss_weight = float(loss_weight[1])*10**(weight*float(loss_weight[2]))
-            print('Using Loss Weight:', loss_weight)
-
-        # Track the best validation F1 score
-        best_val_f1 = 0.0
-        epochs = params['NO_EPOCHS']
-
-        # learning rate scheduler
-        no_improve_epochs = 0
-
-        # Instantiate F1 metric outside of `evaluate`
-        val_f1_metric = MaxF1MetricHorizon()
-        val_accuracy_metric = tf.keras.metrics.BinaryAccuracy()
-        val_loss_metric = tf.keras.metrics.Mean()
-
-        print('Training model...')
-        for epoch in range(epochs):
-
-            current_lr = optimizer.learning_rate.numpy()
-            # Initialize metrics for the current epoch
-            epoch_loss_avg = tf.keras.metrics.Mean()
-            epoch_accuracy_avg = tf.keras.metrics.Mean()
-
-            # Training loop
-            for inputs, labels in train_dataset:
-                # drop some batches
-                if tf.random.uniform([]) < 0.2:
-                    continue
-
-                # Perform a training step
-                loss, accuracy = train_step(inputs, labels, params=params, horizon=hori_shift, loss_weight=loss_weight)
-                epoch_loss_avg.update_state(loss)
-                epoch_accuracy_avg.update_state(accuracy)
-
-            # Run validation and get F1 score, accuracy, precision, recall, and loss
-            val_f1, val_accuracy, val_loss = evaluate(val_dataset, val_f1_metric, val_accuracy_metric, val_loss_metric)
-
-            # Print epoch results
-            print(f"Epoch {epoch+1}, Loss: {epoch_loss_avg.result().numpy()}, "
-                  f"Accuracy: {epoch_accuracy_avg.result().numpy()}, "
-                  f"Validation Loss: {val_loss:.4f}, "
-                  f"Validation F1 Score: {val_f1:.4f}, "
-                  f"Validation Accuracy: {val_accuracy:.4f}, "
-                  )
-
-            # Save model if the F1 score improved
-            if save_best and val_f1 > best_val_f1:
-                best_val_f1 = val_f1
-                no_improve_epochs = 0
-                model.save(params['EXP_DIR'] + '/best_f1_model.h5')
-                print(f"New best model saved with F1 Score: {best_val_f1:.4f}")
-            else:
-                no_improve_epochs += 1
-            # print('No Improve Epochs:', no_improve_epochs)
-
-            # Reset metrics for the next epoch
-            epoch_loss_avg.reset_states()
-            epoch_accuracy_avg.reset_states()
-            val_f1_metric.reset_states()
-            val_accuracy_metric.reset_states()
-            val_loss_metric.reset_states()
-
-            # Callbacks at the end of each epoch
-            if no_improve_epochs >= patience:
-                new_lr = max(current_lr * factor, min_lr)
-                if new_lr < current_lr:
-                    current_lr = new_lr
-                    optimizer.learning_rate.assign(current_lr)
-                    print(f"Reduced learning rate to {current_lr}")
-                else:
-                    print(f"Learning rate already at minimum value of {min_lr}, Early stopping")
-                    break
-                no_improve_epochs = 0  # Reset counter after reducing learning rate
-
-    def evaluate(val_dataset, val_f1_metric, val_accuracy_metric, val_loss_metric):
-
-        # List to store F1 scores at each threshold
-        val_f1_scores = []
-
-        # Iterate through validation dataset
-        for inputs, labels in val_dataset:
-            predictions = model(inputs, training=False)
-
-            # Update metrics based on labels and predictions
-            val_f1_score = val_f1_metric(labels, predictions)
-            val_accuracy_metric.update_state(labels[:, :, 8], predictions[:, :, 8])
-            val_loss_metric.update_state(labels[:, :, 8], predictions[:, :, 8])
-            val_f1_scores.append(val_f1_score)
-
-        # Ensure `f1_scores` contains values before calculating max F1
-        if val_f1_scores:
-            max_f1_score = tf.reduce_max(tf.stack(val_f1_scores))
-        else:
-            max_f1_score = 0.0  # or other default value
-
-        val_accuracy = val_accuracy_metric.result().numpy()
-        val_loss = val_loss_metric.result().numpy()
-
-        return max_f1_score, val_accuracy, val_loss
-
-    # logit oer sigmoid
-    flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
-    print('Using Sigmoid:', flag_sigmoid)
-    # params
-    use_batch_norm = params['TYPE_REG'].find('BN')>-1
-    use_weight_norm = params['TYPE_REG'].find('WReg')>-1
-    use_layer_norm = params['TYPE_REG'].find('LN')>-1
-    # this_activation = 'relu'
-    this_activation = ELU(alpha=1)
-    if params['TYPE_REG'].find('Glo')>-1:
-        print('Using Glorot')
-        this_kernel_initializer = 'glorot_uniform'
-    elif params['TYPE_REG'].find('He')>-1:
-        print('Using He')
-        this_kernel_initializer = 'he_normal'
-    model_type = params['TYPE_MODEL']
-    n_filters = params['NO_FILTERS']
-    n_kernels = params['NO_KERNELS']
-    n_dilations = params['NO_DILATIONS']
-    if params['TYPE_ARCH'].find('Drop')>-1:
-        r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
-        print('Using Dropout')
-        print(r_drop)
-    else:
-        r_drop = 0.0
-
-    # load labels
-    # inputs = Input(shape=(None, input_chans), name='inputs')
-    inputs = Input(shape=(None, input_chans), name='inputs')
-
-    if params['TYPE_ARCH'].find('ZNorm')>-1:
-        print('Using ZNorm')
-        inputs = Normalization()(inputs)
-
-    if params['TYPE_ARCH'].find('CSD')>-1:
-        csd_inputs = CSDLayer()(inputs)
-        inputs_nets = Concatenate(axis=-1)([inputs, csd_inputs])
-    else:
-        inputs_nets = inputs
-
-    # get TCN
-    if model_type=='Base':
-        from tcn import TCN
-        tcn_op = TCN(nb_filters=n_filters,
-                        kernel_size=n_kernels,
-                        nb_stacks=1,
-                        dilations=[2 ** i for i in range(n_dilations)],
-                        # dilations=(1, 2, 4, 8, 16), #, 32
-                        padding='causal',
-                        use_skip_connections=True,
-                        dropout_rate=r_drop,
-                        return_sequences=True,
-                        activation=this_activation,
-                        kernel_initializer=this_kernel_initializer,
-                        # activation=this_activation,
-                        # kernel_initializer=this_kernel_initializer,
-                        use_batch_norm=use_batch_norm,
-                        use_layer_norm=use_layer_norm,
-                        use_weight_norm=use_weight_norm,
-                        go_backwards=False,
-                        return_state=False)
-        print(tcn_op.receptive_field)
-        nets = tcn_op(inputs_nets)
-        nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
-
-    if params['TYPE_ARCH'].find('L2N')>-1:
-        tcn_output = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(nets)
-    else:
-        tcn_output = nets
-
-    # tcn_output = nets
-    output_dim = 8
-    prediction_output = Conv1D(output_dim, kernel_size=1, use_bias=True, activation='linear', name='prediction_output')(tcn_output)  # Output future values
-    tmp_class = Conv1D(1, kernel_size=1, activation='sigmoid', use_bias=True, name='tmp_class')(tcn_output)
-
-    # add confidence layer
-    if params['TYPE_ARCH'].find('Confidence')>-1:
-        print('Using Confidence Inputs')
-        conf_inputs = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Confidence')(inputs)
-        confidence = tf.reduce_mean(tf.square(conf_inputs-prediction_output), axis=-1, keepdims=True)
-        tmp_class = Concatenate(axis=-1)([tmp_class, confidence])
-
-    # compute probability
-    classification_output = tmp_class
-    concat_outputs = Concatenate(axis=-1)([prediction_output, classification_output])
-
-    # Define model with both outputs
-    if params['mode']!='train':
-        concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
-
-    model = Model(inputs=inputs, outputs=concat_outputs)
-
-    if params['WEIGHT_FILE']:
-        print('load model')
-        model.load_weights(params['WEIGHT_FILE'])
-
-    current_lr = params['LEARNING_RATE']
-    optimizer = tf.keras.optimizers.Adam(learning_rate=current_lr)
-    return model, train_model
+    
+    return loss_fn
 

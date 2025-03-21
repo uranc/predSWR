@@ -607,21 +607,24 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         None,
         sequence_length=sample_length,
         sequence_stride=sample_length/stride_step,
-        batch_size=params["BATCH_SIZE"]
+        batch_size=params["BATCH_SIZE"],
+        shuffle=True
     )
     train_y = timeseries_dataset_from_array(
         train_labels[int(sample_length/2)+sample_shift:].reshape(-1,1),
         None,
         sequence_length=sample_length/2,
         sequence_stride=sample_length/stride_step,
-        batch_size=params["BATCH_SIZE"]
+        batch_size=params["BATCH_SIZE"],
+        shuffle=True
     )
     train_w = timeseries_dataset_from_array(
         weights[int(sample_length/2)+sample_shift:].reshape(-1,1),
         None,
         sequence_length=sample_length/2,
         sequence_stride=sample_length/stride_step,
-        batch_size=params["BATCH_SIZE"]
+        batch_size=params["BATCH_SIZE"],
+        shuffle=True
     )
 
     test_x = timeseries_dataset_from_array(
@@ -629,14 +632,16 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         None,
         sequence_length=sample_length,
         sequence_stride=sample_length/stride_step,
-        batch_size=params["BATCH_SIZE"]
+        batch_size=params["BATCH_SIZE"],
+        shuffle=True
     )
     test_y = timeseries_dataset_from_array(
         test_labels[int(sample_length/2)+sample_shift:].reshape(-1,1),
         None,
         sequence_length=sample_length/2,
         sequence_stride=sample_length/stride_step,
-        batch_size=params["BATCH_SIZE"]
+        batch_size=params["BATCH_SIZE"],
+        shuffle=True
     )
 
     # Apply layer normalization to LFPs

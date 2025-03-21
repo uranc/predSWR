@@ -7,13 +7,22 @@ import time
 import copy
 
 
-tag = 'latency' # FiltL, FiltH, FiltM, SingleCh
+tag = 'mixerOnly' # FiltL, FiltH, FiltM, SingleCh
+# tag = 'mixerHori' # FiltL, FiltH, FiltM, SingleCh
 # model_lib = [1,10]#,16,165,89,186,3,11,23,150,142,2,148
 # model_lib = [3,2,4]# FiltL
 # model_lib = [99,113,20,123,122] #FiltH
 # model_lib = [94,81,44,71,95,89,66,34,50] #latency
 # model_lib = [137,150,135,123,107,108]
-model_lib = [448]
+# model_lib = [131, 63, 52, 128] #only
+# model_lib = [127,159,5,169,147] #hori
+# model_lib = [222,258,196,246,235]# hori
+# model_lib = [222,258,196,246,235]# hori
+# model_lib = []
+# model_lib = [193,275,333,254] # only
+# model_lib = [286,302,303,278] # hori
+model_lib = [193,275,333,254]
+
 n=0
 for im, model in enumerate(model_lib):
     # subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model])
@@ -27,7 +36,9 @@ for im, model in enumerate(model_lib):
         # subprocess.call(['sbatch', 'cpu_batch_16GBXS.sh', model, str(iv)])
         model_name = 'Tune_'+'{0}_'.format(model)
         print('submitting job for model: ', model_name, im, iv)
-        subprocess.call(['python', 'pred.py', '--mode', 'predict', '--model', model_name, '--val', str(iv), '--tag', tag])
+        subprocess.call(['python', 'pred.py', '--mode', 'embedding', '--model', model_name, '--val', str(iv), '--tag', tag])
+        # subprocess.call(['python', 'pred.py', '--mode', 'predict', '--model', model_name, '--val', str(iv), '--tag', tag])
+
         # subprocess.call(['sbatch', 'cpu_batch_16GBXS.sh', model_name, str(iv)])
     
         # # pr = '/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}_sf1250.npy'.format(iv, model)
