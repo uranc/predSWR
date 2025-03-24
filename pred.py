@@ -416,7 +416,7 @@ def objective_triplet(trial):
 
     # Base parameters
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 500
+    params['NO_EPOCHS'] = 800
     params['TYPE_MODEL'] = 'Base'
 
     arch_lib = ['MixerOnly', 'MixerHori', 
@@ -471,9 +471,18 @@ def objective_triplet(trial):
     params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.000001, 10.0, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
 
-    # entropyLib = [0, 0.5, 1, 3]
-    # entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
-    # params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
+
+    ax = 65#trial.suggest_int('AX', 1, 99)
+    gx = 100#trial.suggest_int('GX', 50, 999)
+
+    # Removed duplicate TYPE_ARCH suggestion that was causing the error
+    params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
+
+    entropyLib = [0, 0.5, 1, 3]
+    entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
+    if entropy_ind > 0:
+        params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
+        params['TYPE_LOSS'] += 'Entropy'
     
     # params['HYPER_TMSE'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
     # params['HYPER_BARLOW'] = 2e-5
@@ -498,11 +507,6 @@ def objective_triplet(trial):
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
     params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
     # params['NO_FILTERS'] = 64
-    ax = 65#trial.suggest_int('AX', 1, 99)
-    gx = 100#trial.suggest_int('GX', 50, 999)
-
-    # Removed duplicate TYPE_ARCH suggestion that was causing the error
-    params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
 
     # Remove the hardcoded use_freq and derive it from tag instead
     
@@ -674,9 +678,12 @@ def objective_triplet(trial):
         current_metric = epoch_history.history.get('val_max_f1_metric_horizon', [float('-inf')])[0]
         current_metric2 = epoch_history.history.get('val_robust_f1', [float('-inf')])[0]
         if (current_metric > (best_metric + min_delta)) or (current_metric2 > (best_metric2 + min_delta)):
-            best_metric = current_metric
-            best_metric2 = current_metric2
-            print(f"New best metric: {best_metric}, New best metric2: {best_metric2}")
+            if current_metric > best_metric:
+                print(f"New best metric: {current_metric}")
+                best_metric = current_metric
+            else:
+                best_metric2 = current_metric2
+                print(f"New best metric2: {current_metric2}")
             patience_counter = 0
         else:
             patience_counter += 1
@@ -685,7 +692,6 @@ def objective_triplet(trial):
             print(f"\nEarly stopping triggered! No improvement for {patience} epochs.")
             break
         
-
     # Combine histories from all epochs
     combined_history = {}
     for key in history_list[0].keys():
@@ -1082,7 +1088,6 @@ elif mode == 'predict':
         sample_length = params['NO_TIMEPOINTS']
         train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
         windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
-        pdb.set_trace()
         # different outputs
         if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
             if len(windowed_signal.shape) == 3:
@@ -1092,7 +1097,7 @@ elif mode == 'predict':
                 probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal[:,-1]))
                 horizon = np.vstack((np.zeros((sample_length-1, 8)), windowed_signal[:, :-1]))
         elif  model_name.startswith('Tune') != -1:
-            if 'MixerOnly' in params['TYPE_ARCH']:
+            if 'Only' in params['TYPE_ARCH']:
                 probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
             else:                
                 probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal[:,-1]))
@@ -1106,7 +1111,7 @@ elif mode == 'predict':
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}_sf{2}.npy'.format(val_id, model_name, params['SRATE']), probs)
     # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}_{3}_sf{2}.npy'.format(val_id, model_name, params['SRATE'], tag), probs)
     if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1 or model_name.startswith('Tune') != -1:
-        if not ('MixerOnly' in params['TYPE_ARCH']):
+        if not ('Only' in params['TYPE_ARCH']):
             np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}_sf{2}.npy'.format(val_id, model_name, params['SRATE']), horizon)
             # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}_{3}_sf{2}.npy'.format(val_id, model_name, params['SRATE'], tag), horizon)
 

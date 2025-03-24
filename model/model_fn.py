@@ -147,8 +147,8 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
 
     # compute probability
     concat_outputs = tmp_class
-    
-    # Define model with both outputs 
+
+    # Define model with both outputs
     if params['mode']=='embedding':
         concat_outputs = Concatenate(axis=-1)([concat_outputs, tcn_output])
     elif params['mode']=='predict':
@@ -170,7 +170,7 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
 
     # Create loss function without calling it
     loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
-    
+
     model.compile(optimizer=this_optimizer,
                   loss=loss_fn,  # Pass the function itself, not the result of calling it
                   metrics=[f1_metric, r1_metric, latency_metric])
@@ -354,7 +354,7 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
 
     # Create loss function without calling it
     loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
-    
+
     model.compile(optimizer=this_optimizer,
                   loss=loss_fn,
                   metrics=[f1_metric, r1_metric, latency_metric])#, this_embd=tcn_output
@@ -513,12 +513,12 @@ def build_DBI_TCN_DorizonMixer(input_timepoints, input_chans=8, params=None):
     f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
     r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
     latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
-    
+
     model = Model(inputs=inputs, outputs=concat_outputs)
-    
+
     # Create loss function without calling it
     loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
-    
+
     model.compile(optimizer=this_optimizer,
                     loss=loss_fn,
                     metrics=[f1_metric, r1_metric, latency_metric]
@@ -668,10 +668,10 @@ def build_DBI_TCN_CorizonMixer(input_timepoints, input_chans=8, params=None):
     f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
     r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
     latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
-    
+
     # Create loss function without calling it
     loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
-    
+
     model.compile(optimizer=this_optimizer,
                     loss=loss_fn,
                     metrics=[f1_metric, r1_metric, latency_metric]
@@ -688,7 +688,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
     # logit or sigmoid
     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
     print('Using Sigmoid:', flag_sigmoid)
-    
+
     # params
     use_batch_norm = params['TYPE_REG'].find('BN')>-1
     use_weight_norm = params['TYPE_REG'].find('WN')>-1
@@ -720,12 +720,12 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
     elif params['TYPE_REG'].find('He')>-1:
         print('Using He')
         this_kernel_initializer = 'he_normal'
-    
+
     model_type = params['TYPE_MODEL']
     n_filters = params['NO_FILTERS']
     n_kernels = params['NO_KERNELS']
     n_dilations = params['NO_DILATIONS']
-    
+
     if params['TYPE_ARCH'].find('Drop')>-1:
         r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
         print('Using Dropout')
@@ -741,26 +741,26 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
     print('Using Loss Weight:', params['LOSS_WEIGHT'])
     loss_weight = params['LOSS_WEIGHT']
-    
+
     # Function to create the TCN backbone for processing LFP signals
     def create_tcn_model():
         signal_input = Input(shape=(None, input_chans))
-        
+
         # Apply normalization if needed
         if params['TYPE_ARCH'].find('ZNorm')>-1:
             print('Using ZNorm')
-            normalized = Lambda(lambda x: (x - tf.reduce_mean(x, axis=1, keepdims=True)) / 
+            normalized = Lambda(lambda x: (x - tf.reduce_mean(x, axis=1, keepdims=True)) /
                             (tf.math.reduce_std(x, axis=1, keepdims=True) + 1e-6))(signal_input)
         else:
             normalized = signal_input
-            
+
         # Apply CSD if needed
         if params['TYPE_ARCH'].find('CSD')>-1:
             csd_inputs = CSDLayer()(normalized)
             inputs_nets = Concatenate(axis=-1)([normalized, csd_inputs])
         else:
             inputs_nets = normalized
-            
+
         # Apply TCN
         if model_type=='Base':
             print('Using Base TCN')
@@ -807,20 +807,25 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
                 single_outputs.append(tcn_op(ch_slice))
             nets = Concatenate(axis=-1)(single_outputs)
             nets = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
-            
+
         # Apply L2 normalization if needed
         if params['TYPE_ARCH'].find('L2N')>-1:
             tcn_output = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(nets)
         else:
             tcn_output = nets
-        
+
         classification_output = Conv1D(1, kernel_size=1, kernel_initializer='glorot_uniform', use_bias=True, activation='sigmoid', name='tmp_class')(tcn_output)
-        tcn_output = Concatenate(axis=-1)([classification_output, tcn_output])
-        return Model(inputs=signal_input, outputs=tcn_output)
-    
+
+        # linear projection for the triplet loss
+        tmp_pred = Dense(32, activation=this_activation, use_bias=True, name='tmp_pred')(tcn_output)  # Output future values
+        triplet_output = Dense(32, activation=None, use_bias=True, name='triplet_output')(tmp_pred)
+
+        concatenate_output = Concatenate(axis=-1)([classification_output, triplet_output])
+        return Model(inputs=signal_input, outputs=concatenate_output)
+
     # Create the shared TCN model for triplet learning
     tcn_backbone = create_tcn_model()
-    
+
     # For training with triplet loss
     if params['mode'] == 'train':
         # Define inputs for anchor, positive, and negative samples
@@ -828,92 +833,98 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # positive_input = Input(shape=(None, input_chans), name='positive')
         # negative_input = Input(shape=(None, input_chans), name='negative')
         all_inputs = Input(shape=(None, input_chans), name='all_inputs')
-        
-        
+
+
         batch_size = tf.shape(all_inputs)[0] // 3
-        
+
         # Split tensors using tf.split instead of unpacking
         anchor_input, positive_input, negative_input = tf.split(all_inputs, 3, axis=0)
         # anchor_true, positive_true, negative_true = tf.split(y_true, 3, axis=0)
-        
+
         # Process inputs through shared TCN model
         anchor_output = tcn_backbone(anchor_input)
         positive_output = tcn_backbone(positive_input)
         negative_output = tcn_backbone(negative_input)
-        
+
         all_outputs = Concatenate(axis=0)([anchor_output, positive_output, negative_output])
         # Create the training model with dictionary inputs and outputs
         model = Model(
             inputs = all_inputs,
             outputs = all_outputs
         )
-            
+
         # Metrics - only applied to anchor output for metric tracking
         model._is_classification_only = True
-        
+
         f1_metric = MaxF1MetricHorizon(model=model)
         r1_metric = RobustF1Metric(model=model)
         latency_metric = LatencyMetric(model=model)
-           
+
         # Create loss function and compile model
         loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-        
+
         model.compile(
             optimizer=this_optimizer,
             loss=loss_fn,
             metrics=[f1_metric, r1_metric, latency_metric]
         )
-        
+
     else:
         all_inputs = Input(shape=(None, input_chans), name='all_inputs')
-        
-        
+
+
         batch_size = tf.shape(all_inputs)[0] // 3
-        
+
         # Split tensors using tf.split instead of unpacking
         # anchor_input, positive_input, negative_input = tf.split(all_inputs, 3, axis=0)
         # anchor_true, positive_true, negative_true = tf.split(y_true, 3, axis=0)
-        anchor_input = all_inputs
+        # anchor_input = all_inputs
         # Process inputs through shared TCN model
-        anchor_output = tcn_backbone(anchor_input)
+        anchor_output = tcn_backbone(all_inputs)
         # positive_output = tcn_backbone(positive_input)
         # negative_output = tcn_backbone(negative_input)
-        all_outputs = anchor_output
+
+
+        if params['mode']=='embedding':
+            all_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(anchor_output)
+        elif params['mode']=='predict':
+            all_outputs = Lambda(lambda tt: tt[:, -1:, 0], name='Last_Output')(anchor_output)
+
         # all_outputs = Concatenate(axis=0)([anchor_output, positive_output, negative_output])
         # Create the training model with dictionary inputs and outputs
         model = Model(
             inputs = all_inputs,
             outputs = all_outputs
         )
-            
+
         # Metrics - only applied to anchor output for metric tracking
         model._is_classification_only = True
-        
-        f1_metric = MaxF1MetricHorizon(model=model)
-        r1_metric = RobustF1Metric(model=model)
-        latency_metric = LatencyMetric(model=model)
-           
+
+        # f1_metric = MaxF1MetricHorizon(model=model)
+        # r1_metric = RobustF1Metric(model=model)
+        # latency_metric = LatencyMetric(model=model)
+
         model.compile(
             optimizer=this_optimizer,
             loss='mse',
-            metrics=[f1_metric, r1_metric, latency_metric]
+            # metrics=[f1_metric, r1_metric, latency_metric]
         )
-        
+
     if params['WEIGHT_FILE']:
         print('load model')
         model.load_weights(params['WEIGHT_FILE'])
-        
+
     return model
 
 def build_model_PatchAD(input_timepoints, input_chans=8, patch_sizes=[2, 4, 8, 16],
                              d_model=256, num_layers=3, classifier_hidden_dim=64, params=None):
     """
     Builds a Pure PatchAD-based model.
-    
+
     Architecture:
-    Input -> Preprocessing -> Patch Extraction -> PatchAD Module -> 
+    Input -> Preprocessing -> Patch Extraction -> PatchAD Module ->
     Aggregation of patch-based representations -> Classifier Head (MLP)
-    
+
     Returns a model with a single classification output.
     """
     inputs = Input(shape=(input_timepoints, input_chans), name='inputs')
@@ -930,19 +941,19 @@ def build_model_PatchAD(input_timepoints, input_chans=8, patch_sizes=[2, 4, 8, 1
     intra_list = []   # Raw encoder outputs (intra view)
 
     patchad_module = PatchAD(
-        8, input_timepoints, [2, 4, 8, 16],
+        8, input_timepoints, [2, 4, 8, 16, 32],
         d_model=d_model,
         num_layers=num_layers
     )
     outputs = patchad_module(normalized, training=True)
-    
-    
+
+
     import pdb
     pdb.set_trace()
     # get classification loss
     concat_feats = tf.concat((outputs['x_inter'], outputs['x_intra']), axis=-1)
     classification_output = Dense(classifier_hidden_dim, activation='sigmoid')(concat_feats)
-    
+
     # Get horizon shift if specified
     is_classification_only = True
     hori_shift = 0
@@ -950,20 +961,20 @@ def build_model_PatchAD(input_timepoints, input_chans=8, patch_sizes=[2, 4, 8, 1
         hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('PatchAD')+4:params['TYPE_ARCH'].find('PatchAD')+6])/1000*params['SRATE'])
         print('Using Horizon Timesteps:', hori_shift)
         is_classification_only = False
-    
+
     loss_weight = 1.0
     if params and 'LOSS_WEIGHT' in params:
         loss_weight = params['LOSS_WEIGHT']
-    
+
     # Handle prediction mode
     if params and 'mode' in params and params['mode'] == 'predict':
         classification_output = Lambda(lambda tt: tt[:, -1:], name='Last_Output')(classification_output)
-    
+
     # Setup metrics
     f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
     r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
     latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
-    
+
     # Optimizer
     if params and 'TYPE_REG' in params:
         if params['TYPE_REG'].find('AdamW') > -1:
@@ -975,11 +986,11 @@ def build_model_PatchAD(input_timepoints, input_chans=8, patch_sizes=[2, 4, 8, 1
             this_optimizer = tf.keras.optimizers.Adam(learning_rate=params.get('LEARNING_RATE', 0.001))
     else:
         this_optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
-    
+
     # # Create loss function - use standard BCE for classification-only model
     patch_ad_loss = PatchADLoss()
     custom_fbfce = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params) + patch_ad_loss(outputs)
-    
+
     model.compile(optimizer=this_optimizer,
                   loss=custom_fbfce,
                   metrics=[f1_metric, r1_metric, latency_metric])
@@ -1083,7 +1094,7 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
     def update_state(self, y_true, y_pred, sample_weight=None):
         # Get classification mode from model property
         is_classification_only = getattr(self.model, '_is_classification_only', True)
-        
+
         # Extract labels based on mode
         y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
         y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
@@ -1620,7 +1631,7 @@ def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None
         # pdb.set_trace()
         # batch_size = tf.shape(y_pred)[0] // 3
         # params['BATCH_SIZE'] = tf.shape(y_pred)[0] // 3
-        
+
         # Split tensors using tf.split instead of unpacking
         anchor_out, positive_out, negative_out = tf.split(y_pred, num_or_size_splits=3, axis=0)
         anchor_true, positive_true, negative_true = tf.split(y_true, num_or_size_splits=3, axis=0)
@@ -1629,7 +1640,7 @@ def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None
         anchor_class = anchor_out[..., 0]
         positive_class = positive_out[..., 0]
         negative_class = negative_out[..., 0]
-        
+
         anchor_emb = anchor_out[..., 1:]
         positive_emb = positive_out[..., 1:]
         negative_emb = negative_out[..., 1:]
@@ -1638,38 +1649,68 @@ def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None
         anchor_labels = tf.cast(anchor_true[..., 0], tf.float32)
         positive_labels = tf.cast(positive_true[..., 0], tf.float32)
         negative_labels = tf.cast(negative_true[..., 0], tf.float32)
-        
+
         # Calculate embedding distances using tf operations
         pos_dist = tf.reduce_sum(tf.square(anchor_emb - positive_emb), axis=-1)
         neg_dist = tf.reduce_sum(tf.square(anchor_emb - negative_emb), axis=-1)
-        
+
         # Triplet loss with margin
-        margin = tf.cast(params.get('TRIPLET_MARGIN', 0.5), tf.float32)
+        margin = tf.cast(params.get('TRIPLET_MARGIN', 1.0), tf.float32)
         triplet_loss_val = tf.maximum(0.0, pos_dist - neg_dist + margin)
-        
+
         # Classification loss using focal loss
         alpha = tf.cast(params.get('FOCAL_ALPHA', 0.65), tf.float32)
         gamma = tf.cast(params.get('FOCAL_GAMMA', 1.0), tf.float32)
-        
+
         focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
             apply_class_balancing=True,
             alpha=alpha,
             gamma=gamma,
             reduction=tf.keras.losses.Reduction.NONE
         )
-        
+
         # Calculate classification loss for each part of the triplet
         class_loss_anchor = focal_loss(anchor_labels, anchor_class)
         class_loss_positive = focal_loss(positive_labels, positive_class)
         class_loss_negative = focal_loss(negative_labels, negative_class)
-        
+
         # Combine losses using tf operations
         total_class_loss = (class_loss_anchor + class_loss_positive + class_loss_negative) / 3.0
-        
+
         # Weight between triplet and classification loss
         total_loss = tf.multiply(loss_weight, tf.reduce_mean(triplet_loss_val)) + tf.reduce_mean(total_class_loss)
-        
+
+        if ('Entropy' in params['TYPE_LOSS']) and ('HYPER_ENTROPY' in params):
+            entropy_factor = params['HYPER_ENTROPY']
+
+            # Calculate prediction entropy: -p*log(p) - (1-p)*log(1-p)
+            # Add small epsilon to avoid log(0)
+            epsilon = 1e-8
+            
+            for y_pred_exp, y_true_exp in zip([anchor_class, positive_class, negative_class], 
+                                           [anchor_labels, positive_labels, negative_labels]):
+
+                # y_pred_squeezed = tf.squeeze(y_pred_exp, axis=-1)
+                # y_true_squeezed = tf.squeeze(y_true_exp, axis=-1)
+                y_pred_squeezed = y_pred_exp
+                y_true_squeezed = y_true_exp
+
+                # Calculate binary entropy of predictions
+                entropy = -(y_pred_squeezed * tf.math.log(y_pred_squeezed + epsilon) +
+                        (1 - y_pred_squeezed) * tf.math.log(1 - y_pred_squeezed + epsilon))
+
+                # For binary labels (0/1), we want to minimize entropy for all predictions
+                # Higher penalty for incorrect low-confidence predictions, lower penalty for correct confident predictions
+                confidence_weight = tf.abs(y_true_squeezed - y_pred_squeezed) + 0.1  # Higher weight for incorrect predictions
+
+                # Weight entropy by confidence - penalize uncertainty more for incorrect predictions
+                weighted_entropy = entropy * confidence_weight
+
+                entropy_loss = tf.reduce_mean(weighted_entropy)
+                total_loss += entropy_factor * entropy_loss
+
+
         return total_loss
-    
+
     return loss_fn
 
