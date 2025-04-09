@@ -173,7 +173,7 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
 
     model.compile(optimizer=this_optimizer,
                   loss=loss_fn,  # Pass the function itself, not the result of calling it
-                  metrics=[f1_metric, r1_metric, latency_metric])
+                  metrics=[f1_metric, r1_metric, latency_metric, FalsePositiveMonitorMetric(model=model)])
 
     if params['WEIGHT_FILE']:
         print('load model')
@@ -357,7 +357,7 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
 
     model.compile(optimizer=this_optimizer,
                   loss=loss_fn,
-                  metrics=[f1_metric, r1_metric, latency_metric])#, this_embd=tcn_output
+                  metrics=[f1_metric, r1_metric, latency_metric, FalsePositiveMonitorMetric(model=model)])#, this_embd=tcn_output
 
     if params['WEIGHT_FILE']:
         print('load model')
@@ -521,7 +521,7 @@ def build_DBI_TCN_DorizonMixer(input_timepoints, input_chans=8, params=None):
 
     model.compile(optimizer=this_optimizer,
                     loss=loss_fn,
-                    metrics=[f1_metric, r1_metric, latency_metric]
+                    metrics=[f1_metric, r1_metric, latency_metric, FalsePositiveMonitorMetric(model=model)]
                   )
 
     if params['WEIGHT_FILE']:
@@ -674,7 +674,7 @@ def build_DBI_TCN_CorizonMixer(input_timepoints, input_chans=8, params=None):
 
     model.compile(optimizer=this_optimizer,
                     loss=loss_fn,
-                    metrics=[f1_metric, r1_metric, latency_metric]
+                    metrics=[f1_metric, r1_metric, latency_metric, FalsePositiveMonitorMetric(model=model)]
                   )
 
     if params['WEIGHT_FILE']:
@@ -814,7 +814,16 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         else:
             tcn_output = nets
 
-        classification_output = Conv1D(1, kernel_size=1, kernel_initializer='glorot_uniform', use_bias=True, activation='sigmoid', name='tmp_class')(tcn_output)
+        if params['TYPE_ARCH'].find('StopGrad')>-1:
+            print('Using Stop Gradient for Class. Branch')
+            # Stop gradient flow from classification branch to TCN
+            frozen_features = tf.stop_gradient(tcn_output)
+            # Classification branch uses frozen features
+            classification_output = Conv1D(1, kernel_size=1, kernel_initializer='glorot_uniform', 
+                                        use_bias=True, activation='sigmoid', 
+                                        name='tmp_class')(frozen_features)
+        else:
+            classification_output = Conv1D(1, kernel_size=1, kernel_initializer='glorot_uniform', use_bias=True, activation='sigmoid', name='tmp_class')(tcn_output)
 
         # linear projection for the triplet loss
         tmp_pred = Dense(32, activation=this_activation, use_bias=True, name='tmp_pred')(tcn_output)  # Output future values
@@ -857,8 +866,10 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         model._is_classification_only = True
 
         f1_metric = MaxF1MetricHorizon(model=model)
-        r1_metric = RobustF1Metric(model=model)
-        latency_metric = LatencyMetric(model=model)
+        # r1_metric = RobustF1Metric(model=model)
+        # latency_metric = LatencyMetric(model=model)
+        event_f1_metric = EventAwareF1(model=model)
+        fp_event_metric = EventFalsePositiveRateMetric(model=model)
 
         # Create loss function and compile model
         loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
@@ -866,7 +877,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         model.compile(
             optimizer=this_optimizer,
             loss=loss_fn,
-            metrics=[f1_metric, r1_metric, latency_metric]
+            metrics=[f1_metric, event_f1_metric, fp_event_metric]
         )
 
     else:
@@ -993,7 +1004,7 @@ def build_model_PatchAD(input_timepoints, input_chans=8, patch_sizes=[2, 4, 8, 1
 
     model.compile(optimizer=this_optimizer,
                   loss=custom_fbfce,
-                  metrics=[f1_metric, r1_metric, latency_metric])
+                  metrics=[f1_metric, r1_metric, latency_metric, FalsePositiveMonitorMetric(model=model)])
 
     if params and 'WEIGHT_FILE' in params and params['WEIGHT_FILE']:
         print('load model')
@@ -1091,7 +1102,7 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
         self.fn = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='fn')
         self.model = model
 
-    def update_state(self, y_true, y_pred, sample_weight=None):
+    def update_state(self, y_true, y_pred, **kwargs):
         # Get classification mode from model property
         is_classification_only = getattr(self.model, '_is_classification_only', True)
 
@@ -1137,6 +1148,158 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
         self.fp.assign(tf.zeros_like(self.fp))
         self.fn.assign(tf.zeros_like(self.fn))
 
+class EventAwareF1(tf.keras.metrics.Metric):
+    def __init__(self, name="event_f1_metric", thresholds=tf.linspace(0.0, 1.0, 11),
+                 early_margin=40, late_margin=10, model=None, **kwargs):
+        super(EventAwareF1, self).__init__(name=name, **kwargs)
+        self.thresholds = thresholds
+        self.early_margin = early_margin
+        self.late_margin = late_margin
+        self.model = model
+
+        self.tp = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="tp")
+        self.fp = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="fp")
+        self.fn = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="fn")
+
+    def update_state(self, y_true, y_pred, **kwargs):
+        # Determine which branch of outputs to use
+        is_classification_only = getattr(self.model, "_is_classification_only", True)
+        # Assume the true labels and predictions have shape [B, T, channels]
+        # and we take channel 0 for classification (or channel 8 if not)
+        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
+        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
+        # Now y_true_labels and y_pred_labels are [B, T]
+
+        B = tf.shape(y_true_labels)[0]
+        T = tf.shape(y_true_labels)[1]
+
+        # Create a vector of time indices for the entire sequence
+        time_indices = tf.cast(tf.range(T), tf.int32)  # shape [T]
+        # Expand to [B, T]
+        time_indices_exp = tf.tile(tf.expand_dims(time_indices, 0), [B, 1])
+        
+        # Vectorized function for a single threshold:
+        def process_threshold(thresh):
+            thresh = tf.cast(thresh, tf.float32)
+            # B x T binary predictions
+            y_pred_bin = tf.cast(y_pred_labels >= thresh, tf.float32)
+            y_true_bin = tf.cast(y_true_labels >= 0.5, tf.float32)
+
+            # For each sample, determine if there is an event and get the first index if so.
+            has_event = tf.reduce_max(y_true_bin, axis=1) > 0  # shape [B], bool
+            # Note: tf.argmax returns 0 if all are zeros; we rely on has_event to mask these out.
+            true_onset = tf.argmax(y_true_bin, axis=1, output_type=tf.int32)  # shape [B]
+
+            # For samples with an event, create lower and upper bounds.
+            early_bound = tf.maximum(true_onset - self.early_margin, 0)  # [B]
+            late_bound = tf.minimum(true_onset + self.late_margin, T - 1)  # [B]
+            # Expand bounds to shape [B, T] for comparison with time_indices_exp:
+            early_bound_exp = tf.tile(tf.expand_dims(early_bound, 1), [1, T])
+            late_bound_exp = tf.tile(tf.expand_dims(late_bound, 1), [1, T])
+            
+            # Create a mask: True where the time index is in [early_bound, late_bound]
+            within_bounds = tf.logical_and(time_indices_exp >= early_bound_exp,
+                                           time_indices_exp <= late_bound_exp)  # [B, T]
+            
+            # For each sample, check if there is any predicted event in the allowed interval.
+            # This gives a boolean vector of shape [B]: True if a match is found.
+            match = tf.reduce_any(tf.logical_and(tf.equal(y_pred_bin, 1.0), within_bounds), axis=1)
+            match = tf.cast(match, tf.float32)  # 1 if match, 0 if not
+
+            # For samples with an event: 
+            #   - True Positive (TP) = 1 if match, else 0.
+            #   - False Negative (FN) = 1 - match.
+            tp_event = tf.where(has_event, match, tf.zeros_like(match))
+            fn_event = tf.where(has_event, 1 - match, tf.zeros_like(match))
+            # For samples without an event: 
+            #   - False Positives (FP) = total number of predicted events in that sample.
+            fp_no_event = tf.where(~has_event, tf.reduce_sum(y_pred_bin, axis=1), tf.zeros_like(tf.reduce_sum(y_pred_bin, axis=1)))
+            
+            # Sum across the batch for this threshold.
+            tp_total = tf.reduce_sum(tp_event)
+            fp_total = tf.reduce_sum(fp_no_event)
+            fn_total = tf.reduce_sum(fn_event)
+            
+            return tp_total, fp_total, fn_total
+
+        # Use tf.map_fn over thresholds (this loop is over a small number of thresholds)
+        results = tf.map_fn(lambda t: process_threshold(t), self.thresholds,
+                              fn_output_signature=(tf.float32, tf.float32, tf.float32))
+        tp_all, fp_all, fn_all = results
+        self.tp.assign_add(tp_all)
+        self.fp.assign_add(fp_all)
+        self.fn.assign_add(fn_all)
+
+    def result(self):
+        precision = self.tp / (self.tp + self.fp + tf.keras.backend.epsilon())
+        recall = self.tp / (self.tp + self.fn + tf.keras.backend.epsilon())
+        f1_scores = 2 * (precision * recall) / (precision + recall + tf.keras.backend.epsilon())
+        return tf.reduce_max(f1_scores)
+
+    def reset_state(self):
+        self.tp.assign(tf.zeros_like(self.tp))
+        self.fp.assign(tf.zeros_like(self.fp))
+        self.fn.assign(tf.zeros_like(self.fn))
+import tensorflow as tf
+
+class EventFalsePositiveRateMetric(tf.keras.metrics.Metric):
+    def __init__(self, name="event_fp_rate", thresholds=tf.linspace(0.0, 1.0, 11), model=None, **kwargs):
+        super(EventFalsePositiveRateMetric, self).__init__(name=name, **kwargs)
+        self.thresholds = thresholds
+        self.model = model
+        # Accumulators for FP and TN per threshold.
+        self.fp = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="fp")
+        self.tn = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="tn")
+    
+    def update_state(self, y_true, y_pred, **kwargs):
+        # Choose the proper channel based on model flag.
+        is_classification_only = getattr(self.model, "_is_classification_only", True)
+        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
+        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
+        
+        # Determine which windows are negative (no event in ground-truth).
+        neg_mask = tf.less(tf.reduce_max(y_true_labels, axis=1), 0.5)  # shape: [B], dtype bool
+        
+        B = tf.shape(y_true_labels)[0]
+        T = tf.shape(y_true_labels)[1]
+        
+        # For each threshold (vectorized over the batch dimension)
+        def process_threshold(thresh):
+            thresh = tf.cast(thresh, tf.float32)
+            # For each sample, we check whether any timepoint is predicted above thresh.
+            pred_event = tf.greater(tf.reduce_max(y_pred_labels, axis=1), thresh)  # shape: [B], bool
+            pred_event_float = tf.cast(pred_event, tf.float32)
+            # For negative windows (where neg_mask==True), count FP as 1 if any prediction is above thresh,
+            # and TN as 1 if no prediction is above thresh.
+            fp_per_sample = tf.where(neg_mask, pred_event_float, tf.zeros_like(pred_event_float, dtype=tf.float32))
+            tn_per_sample = tf.where(neg_mask, 1.0 - pred_event_float, tf.zeros_like(pred_event_float, dtype=tf.float32))
+            # Sum across the batch for this threshold.
+            fp_total = tf.reduce_sum(fp_per_sample)
+            tn_total = tf.reduce_sum(tn_per_sample)
+            return fp_total, tn_total
+        
+        # Map over the thresholds.
+        fp_all, tn_all = tf.map_fn(
+            lambda t: process_threshold(t),
+            self.thresholds,
+            fn_output_signature=(tf.float32, tf.float32)
+        )
+        
+        self.fp.assign_add(fp_all)
+        self.tn.assign_add(tn_all)
+    
+    def result(self):
+        # Compute FP rate for each threshold.
+        fp_rate = self.fp / (self.fp + self.tn + tf.keras.backend.epsilon())
+        # Return the mean FP rate across thresholds (a scalar).
+        return tf.reduce_mean(fp_rate)
+    
+    def reset_state(self):
+        self.fp.assign(tf.zeros_like(self.fp))
+        self.tn.assign(tf.zeros_like(self.tn))
+
+
+
 class LatencyMetric(tf.keras.metrics.Metric):
     def __init__(self, name='latency_metric', threshold=0.5, max_early_detection=50, model=None, **kwargs):
         super(LatencyMetric, self).__init__(name=name, **kwargs)
@@ -1147,7 +1310,7 @@ class LatencyMetric(tf.keras.metrics.Metric):
         self.valid_events = self.add_weight(name='valid_events', initializer='zeros')
         self.model = model
 
-    def update_state(self, y_true, y_pred, sample_weight=None):
+    def update_state(self, y_true, y_pred, **kwargs):
         # Get classification mode from model property
         is_classification_only = getattr(self.model, '_is_classification_only', True)
 
@@ -1213,7 +1376,7 @@ class RobustF1Metric(tf.keras.metrics.Metric):
         self.temp_diff_sum = self.add_weight(name='temp_diff_sum', initializer='zeros')
         self.model = model
 
-    def update_state(self, y_true, y_pred, sample_weight=None):
+    def update_state(self, y_true, y_pred, **kwargs):
         # Get classification mode from model property
         is_classification_only = getattr(self.model, '_is_classification_only', True)
 
@@ -1278,6 +1441,7 @@ class RobustF1Metric(tf.keras.metrics.Metric):
         self.pred_sum.assign(0.0)
         self.pred_count.assign(0.0)
         self.temp_diff_sum.assign(0.0)
+
 
 def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None):
     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
@@ -1498,6 +1662,16 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
             entropy_loss = tf.reduce_mean(weighted_entropy)
             total_loss += entropy_factor * entropy_loss
 
+        # add false positive loss
+        if 'FalsePositive' in loss_type and 'HYPER_FALSEPOSITIVE' in params:
+            false_positive_factor = params['HYPER_FALSEPOSITIVE']
+            # False positive loss implementation
+            # FP = tf.reduce_sum(tf.cast((y_pred > threshold) & (y_true < 0.5), tf.float32))
+            # FP_loss = FP / (tf.reduce_sum(1 - y_true) + epsilon)
+            # FP_loss = tf.reduce_mean(tf.square(y_pred * (1 - y_true))) * lambda_fp
+
+            total_loss += false_positive_factor * false_positive_loss
+        
         # Add truncated MSE loss
         if 'TMSE' in loss_type and 'HYPER_TMSE' in params:
             tmse_factor = params['HYPER_TMSE']
@@ -1675,7 +1849,10 @@ def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None
         class_loss_negative = focal_loss(negative_labels, negative_class)
 
         # Combine losses using tf operations
-        total_class_loss = (class_loss_anchor + class_loss_positive + class_loss_negative) / 3.0
+        loss_fp_weight = params.get('LOSS_NEGATIVES', 2.0)
+        print(f"Loss weight: {loss_weight}, FP weight: {loss_fp_weight}")
+        total_class_loss = (class_loss_anchor + class_loss_positive + loss_fp_weight * class_loss_negative) / 3.0
+
 
         # Weight between triplet and classification loss
         total_loss = tf.multiply(loss_weight, tf.reduce_mean(triplet_loss_val)) + tf.reduce_mean(total_class_loss)
@@ -1713,4 +1890,3 @@ def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None
         return total_loss
 
     return loss_fn
-

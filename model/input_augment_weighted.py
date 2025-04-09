@@ -285,6 +285,118 @@ def add_pre_onset_noise(data, onset_indices, noise_duration=50, noise_factor=0.0
 
     return data
 
+def apply_realistic_augmentations(data, params=None):
+    """
+    Applies a combination of realistic augmentations to the input data.
+    
+    Args:
+        data: Input tensor of shape [batch_size, time_points, channels]
+        params: Optional parameters dictionary
+    """
+    # Random scaling (0.5 to 2.0)
+    scale_factor = tf.random.uniform([tf.shape(data)[0], 1, tf.shape(data)[-1]], 0.5, 2.0)
+    data = data * scale_factor
+    
+    # Random timepoint shift (±20 points)
+    shifts = tf.random.uniform([tf.shape(data)[0]], -20, 20, dtype=tf.int32)
+    data = tf.map_fn(lambda x: tf.roll(x[0], x[1], axis=0), (data, shifts), dtype=tf.float32)
+    
+    # DC shift (±0.5)
+    dc_shift = tf.random.uniform([tf.shape(data)[0], 1, tf.shape(data)[-1]], -100, 100)
+    data = data + dc_shift
+    
+    # Bandstop filter (2-85 Hz)
+    # Using FFT to implement bandstop
+    fft = tf.signal.fft(tf.cast(data, tf.complex64))
+    freq_mask = tf.ones_like(fft)
+    band_indices = tf.cast(tf.range(2, 85) / (params['SRATE']/2) * tf.shape(data)[1]/2, tf.int32)
+    updates = tf.zeros_like(band_indices, dtype=tf.float32)
+    freq_mask = tf.tensor_scatter_nd_update(freq_mask, tf.expand_dims(band_indices, 1), updates)
+    data = tf.cast(tf.math.real(tf.signal.ifft(fft * tf.cast(freq_mask, tf.complex64))), tf.float32)
+    
+    # Gaussian noise (0-0.2)
+    noise = tf.random.normal(tf.shape(data), 0, tf.random.uniform([], 0.0, 0.2))
+    data = data + noise
+    
+    return data
+
+def apply_artifact_augmentations(data):
+    """
+    Applies artifactual augmentations that the model should be robust against.
+    """
+    # High amplitude gaussian noise (10-100)
+    noise_amp = tf.random.uniform([], 10.0, 100.0)
+    noise = tf.random.normal(tf.shape(data), 0, noise_amp)
+    data = data + noise
+    
+    # Random extreme value artifacts
+    batch_size, time_points, channels = tf.shape(data)[0], tf.shape(data)[1], tf.shape(data)[2]
+    
+    # Generate random positions for artifacts
+    num_artifacts = tf.random.uniform([], 1, 5, dtype=tf.int32)
+    artifact_positions = tf.random.uniform([num_artifacts, 3], 
+                                         maxval=[batch_size, time_points, channels],
+                                         dtype=tf.int32)
+    
+    # Generate extreme values (both positive and negative)
+    extreme_values = tf.random.uniform([num_artifacts], -100.0, 100.0)
+    data = tf.tensor_scatter_nd_update(data, artifact_positions, extreme_values)
+    
+    return data
+
+def create_adversarial_short_events(data, labels, params):
+    """
+    Creates adversarial samples from positive/anchor events by creating short events.
+    
+    Args:
+        data: Input tensor of shape [batch_size, time_points, channels]
+        labels: Binary labels tensor
+        params: Parameters dictionary containing ripple characteristics
+    """
+    batch_size = tf.shape(data)[0]
+    
+    # Find positive events
+    positive_indices = tf.where(tf.reduce_max(labels, axis=1) > 0)
+    
+    # For each positive event
+    def process_event(idx):
+        event_data = data[idx]
+        event_label = labels[idx]
+        
+        # Extract a short segment (1-5ms) from the ripple
+        event_start = tf.random.uniform([], 0, tf.shape(event_data)[0]-10, dtype=tf.int32)
+        segment_length = tf.random.uniform([], 5, 25, dtype=tf.int32)  # 4-20ms at 1250Hz
+        short_segment = event_data[event_start:event_start+segment_length]
+        
+        # Create surrounding noise
+        noise = tf.random.normal([tf.shape(event_data)[0], tf.shape(event_data)[1]], 0, 0.1)
+        
+        # Insert short segment into noise
+        result = tf.tensor_scatter_nd_update(
+            noise,
+            tf.expand_dims(tf.range(event_start, event_start+segment_length), 1),
+            short_segment
+        )
+        
+        # Create corresponding short label
+        short_label = tf.zeros_like(event_label)
+        short_label = tf.tensor_scatter_nd_update(
+            short_label,
+            tf.expand_dims(tf.range(event_start, event_start+segment_length), 1),
+            tf.ones([segment_length])
+        )
+        
+        return result, short_label
+    
+    # Process selected positive events
+    adversarial_data, adversarial_labels = tf.map_fn(
+        process_event,
+        positive_indices,
+        fn_output_signature=(tf.float32, tf.float32)
+    )
+    
+    return adversarial_data, adversarial_labels
+
 
 # augment data
 @tf.function
@@ -309,7 +421,23 @@ def augment_data(data, labels, event_indices=None, apply_mixup=False, mixup_data
         except tf.errors.InvalidArgumentError:
             # Gracefully handle dimension errors
             pass
-        
+
+    # # Apply realistic augmentations (20% chance)
+    # if tf.random.uniform([]) < 0.0:
+    #     data = apply_realistic_augmentations(data, params)
+    
+    # # Apply artifact augmentations (10% chance)
+    # if tf.random.uniform([]) < 0.1:
+    #     data = apply_artifact_augmentations(data)
+    
+    # # Create adversarial short events (5% chance)
+    # if tf.random.uniform([]) < 0.05:
+    #     adv_data, adv_labels = create_adversarial_short_events(data, labels, params)
+    #     # Randomly replace some samples with adversarial ones
+    #     mask = tf.random.uniform([tf.shape(data)[0]]) < 0.2
+    #     data = tf.where(mask[:, tf.newaxis, tf.newaxis], adv_data, data)
+    #     labels = tf.where(mask[:, tf.newaxis], adv_labels, labels)
+    
     # Return the augmented data and original labels
     return data, labels
 
@@ -695,9 +823,10 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
 
     train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"], reshuffle_each_iteration=True).prefetch(tf.data.experimental.AUTOTUNE)
 
-
-
     return train_dataset, test_dataset, label_ratio#, val_dataset
+
+
+
 
 
 def load_allen(indeces= np.int32(np.linspace(49,62,8))):
@@ -707,3 +836,64 @@ def load_allen(indeces= np.int32(np.linspace(49,62,8))):
     # Process LFP
     data = process_LFP(LFP, sf = 1250, channels=np.arange(0,8))
     return data
+
+def load_topological_dataset(batch_size=32, shuffle_buffer=1000):
+    """
+    Loads topological data from Juan Pablo and Alberto datasets and creates a TensorFlow dataset.
+    
+    Args:
+        batch_size (int): Size of batches for training
+        shuffle_buffer (int): Size of shuffle buffer
+        
+    Returns:
+        tf.data.Dataset: Dataset containing batched and preprocessed data
+    """
+    import scipy.io as sio
+    
+    # Load both .mat files
+    jp_data = sio.loadmat('/cs/projects/OWVinckSWR/Dataset/TopologicalData/JuanPabloDB_struct.mat')
+    ab_data = sio.loadmat('/cs/projects/OWVinckSWR/Dataset/TopologicalData/AlbertoDB_struct.mat')
+    
+    # Process and concatenate data from both sources
+    def process_struct(data):
+        ripples = data['ripples']  # nEvents x 127
+        n_events = ripples.shape[0]
+        
+        # Reshape ripples to (nEvents, 127, 8) by splitting last dimension
+        ripples_reshaped = np.reshape(ripples, (n_events, -1, 8))
+        
+        # Collect other features
+        features = np.column_stack([
+            data['amplitude'].reshape(-1, 1),
+            data['entropy'].reshape(-1, 1),
+            data['duration'].reshape(-1, 1),
+            data['frequency'].reshape(-1, 1)
+        ])
+        
+        return ripples_reshaped, features
+    
+    # Process both datasets
+    jp_ripples, jp_features = process_struct(jp_data)
+    ab_ripples, ab_features = process_struct(ab_data)
+    
+    # Concatenate datasets
+    all_ripples = np.concatenate([jp_ripples, ab_ripples], axis=0)
+    all_features = np.concatenate([jp_features, ab_features], axis=0)
+    
+    # Convert to float32 for better performance
+    all_ripples = all_ripples.astype(np.float32)
+    all_features = all_features.astype(np.float32)
+    
+    # Create TensorFlow dataset
+    dataset = tf.data.Dataset.from_tensor_slices({
+        'ripples': all_ripples,
+        'features': all_features
+    })
+    
+    # Apply dataset transformations
+    dataset = dataset.shuffle(shuffle_buffer)
+    dataset = dataset.batch(batch_size)
+    dataset = dataset.prefetch(tf.data.AUTOTUNE)
+    
+    return dataset
+
