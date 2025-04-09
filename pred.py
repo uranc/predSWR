@@ -76,7 +76,7 @@ def objective_only(trial):
     params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
             'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
             'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
-            'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
+            'EXP_DIR': '/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/' + model_name,
             'mode': 'train'
             }
 
@@ -959,7 +959,7 @@ elif mode == 'predict':
         # study_dirs = glob.glob(f'studies_1/study_{study_num}_*')
         tag = args.tag[0]
         param_dir = f"params_{tag}"
-        study_dirs = glob.glob(f'studies/{param_dir}/study_{study_num}_*')
+        study_dirs = glob.glob(f'/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/studies/{param_dir}/study_{study_num}_*')
         # study_dirs = glob.glob(f'studies_CHECK_SIGNALS/{param_dir}/study_{study_num}_*')
         if not study_dirs:
             raise ValueError(f"No study directory found for study number {study_num}")
@@ -1013,10 +1013,12 @@ elif mode == 'predict':
         # Load weights
         params['mode'] = 'predict'
         # weight_file = f"{study_dir}/last.weights.h5"
-        weight_file = f"{study_dir}/max.weights.h5"
-        tag += 'MaxF1'
-        # weight_file = f"{study_dir}/event.weights.h5"
-        # tag += 'EvF1'
+        if 'MixerOnly' in params['TYPE_ARCH']:
+            weight_file = f"{study_dir}/max.weights.h5"
+            tag += 'MaxF1'
+        else:
+            weight_file = f"{study_dir}/event.weights.h5"
+            tag += 'EvF1'
         
         # weight_file = f"{study_dir}/robust.weights.h5"
         print(f"Loading weights from: {weight_file}")
@@ -2104,7 +2106,7 @@ elif mode == 'tune_viz_multi':
     print(json.dumps(stats, indent=2))
 
     # Define the number of top models to consider for both F1 and Latency
-    N_TOP_MODELS = 240  # You can change this value as needed
+    N_TOP_MODELS = 280  # You can change this value as needed
 
     # Collect all trial data with valid values for both metrics
     all_trial_data = [
