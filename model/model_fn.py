@@ -157,7 +157,7 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
         concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
 
     model = Model(inputs=inputs, outputs=concat_outputs)
-
+    model._is_classification_only = True
 
     f1_metric = MaxF1MetricHorizon(model=model)
     # r1_metric = RobustF1Metric(model=model)
@@ -822,8 +822,8 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             # Stop gradient flow from classification branch to TCN
             frozen_features = tf.stop_gradient(tcn_output)
             # Classification branch uses frozen features
-            classification_output = Conv1D(1, kernel_size=1, kernel_initializer='glorot_uniform', 
-                                        use_bias=True, activation='sigmoid', 
+            classification_output = Conv1D(1, kernel_size=1, kernel_initializer='glorot_uniform',
+                                        use_bias=True, activation='sigmoid',
                                         name='tmp_class')(frozen_features)
         else:
             classification_output = Conv1D(1, kernel_size=1, kernel_initializer='glorot_uniform', use_bias=True, activation='sigmoid', name='tmp_class')(tcn_output)
@@ -1167,6 +1167,7 @@ class EventAwareF1(tf.keras.metrics.Metric):
     def update_state(self, y_true, y_pred, **kwargs):
         # Determine which branch of outputs to use
         is_classification_only = getattr(self.model, "_is_classification_only", True)
+        print('Using classification only:', is_classification_only)
         # Assume the true labels and predictions have shape [B, T, channels]
         # and we take channel 0 for classification (or channel 8 if not)
         y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
@@ -1180,7 +1181,7 @@ class EventAwareF1(tf.keras.metrics.Metric):
         time_indices = tf.cast(tf.range(T), tf.int32)  # shape [T]
         # Expand to [B, T]
         time_indices_exp = tf.tile(tf.expand_dims(time_indices, 0), [B, 1])
-        
+
         # Vectorized function for a single threshold:
         def process_threshold(thresh):
             thresh = tf.cast(thresh, tf.float32)
@@ -1199,30 +1200,30 @@ class EventAwareF1(tf.keras.metrics.Metric):
             # Expand bounds to shape [B, T] for comparison with time_indices_exp:
             early_bound_exp = tf.tile(tf.expand_dims(early_bound, 1), [1, T])
             late_bound_exp = tf.tile(tf.expand_dims(late_bound, 1), [1, T])
-            
+
             # Create a mask: True where the time index is in [early_bound, late_bound]
             within_bounds = tf.logical_and(time_indices_exp >= early_bound_exp,
                                            time_indices_exp <= late_bound_exp)  # [B, T]
-            
+
             # For each sample, check if there is any predicted event in the allowed interval.
             # This gives a boolean vector of shape [B]: True if a match is found.
             match = tf.reduce_any(tf.logical_and(tf.equal(y_pred_bin, 1.0), within_bounds), axis=1)
             match = tf.cast(match, tf.float32)  # 1 if match, 0 if not
 
-            # For samples with an event: 
+            # For samples with an event:
             #   - True Positive (TP) = 1 if match, else 0.
             #   - False Negative (FN) = 1 - match.
             tp_event = tf.where(has_event, match, tf.zeros_like(match))
             fn_event = tf.where(has_event, 1 - match, tf.zeros_like(match))
-            # For samples without an event: 
+            # For samples without an event:
             #   - False Positives (FP) = total number of predicted events in that sample.
             fp_no_event = tf.where(~has_event, tf.reduce_sum(y_pred_bin, axis=1), tf.zeros_like(tf.reduce_sum(y_pred_bin, axis=1)))
-            
+
             # Sum across the batch for this threshold.
             tp_total = tf.reduce_sum(tp_event)
             fp_total = tf.reduce_sum(fp_no_event)
             fn_total = tf.reduce_sum(fn_event)
-            
+
             return tp_total, fp_total, fn_total
 
         # Use tf.map_fn over thresholds (this loop is over a small number of thresholds)
@@ -1253,19 +1254,19 @@ class EventFalsePositiveRateMetric(tf.keras.metrics.Metric):
         # Accumulators for FP and TN per threshold.
         self.fp = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="fp")
         self.tn = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="tn")
-    
+
     def update_state(self, y_true, y_pred, **kwargs):
         # Choose the proper channel based on model flag.
         is_classification_only = getattr(self.model, "_is_classification_only", True)
         y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
         y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
-        
+
         # Determine which windows are negative (no event in ground-truth).
         neg_mask = tf.less(tf.reduce_max(y_true_labels, axis=1), 0.5)  # shape: [B], dtype bool
-        
+
         B = tf.shape(y_true_labels)[0]
         T = tf.shape(y_true_labels)[1]
-        
+
         # For each threshold (vectorized over the batch dimension)
         def process_threshold(thresh):
             thresh = tf.cast(thresh, tf.float32)
@@ -1280,23 +1281,23 @@ class EventFalsePositiveRateMetric(tf.keras.metrics.Metric):
             fp_total = tf.reduce_sum(fp_per_sample)
             tn_total = tf.reduce_sum(tn_per_sample)
             return fp_total, tn_total
-        
+
         # Map over the thresholds.
         fp_all, tn_all = tf.map_fn(
             lambda t: process_threshold(t),
             self.thresholds,
             fn_output_signature=(tf.float32, tf.float32)
         )
-        
+
         self.fp.assign_add(fp_all)
         self.tn.assign_add(tn_all)
-    
+
     def result(self):
         # Compute FP rate for each threshold.
         fp_rate = self.fp / (self.fp + self.tn + tf.keras.backend.epsilon())
         # Return the mean FP rate across thresholds (a scalar).
         return tf.reduce_mean(fp_rate)
-    
+
     def reset_state(self):
         self.fp.assign(tf.zeros_like(self.fp))
         self.tn.assign(tf.zeros_like(self.tn))
@@ -1467,6 +1468,269 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
         print(y_true.shape)
         print(y_pred.shape)
 
+        def extract_param_from_loss_type(loss_type, param_prefix, default_value):
+            """Helper function to extract parameters from loss type string"""
+            try:
+                if param_prefix in loss_type:
+                    idx = loss_type.find(param_prefix) + len(param_prefix)
+                    param_str = loss_type[idx:idx+3]
+                    return float(param_str) / 100.0
+                return default_value
+            except:
+                return default_value
+
+        def compute_classification_loss(y_true_exp, y_pred_exp, sample_weight, params):
+            loss_type = params['TYPE_LOSS']
+
+            # Initialize the loss variable
+            classification_loss = 0.0
+
+            # FocalSmooth loss
+            if 'FocalSmooth' in loss_type:
+                # Extract alpha and gamma parameters
+                alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
+                gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
+
+                focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
+                    apply_class_balancing=True,
+                    alpha=alpha,
+                    gamma=gamma,
+                    label_smoothing=0.1,
+                    reduction=tf.keras.losses.Reduction.NONE
+                )
+                loss_values = focal_loss(y_true_exp, y_pred_exp)
+                classification_loss = tf.reduce_mean(loss_values * sample_weight)
+
+            # SigmoidFoc loss
+            elif 'SigmoidFoc' in loss_type:
+                # Extract alpha and gamma parameters
+                alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
+                gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
+
+                focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
+                    apply_class_balancing=True,
+                    alpha=alpha,
+                    gamma=gamma,
+                    from_logits=flag_sigmoid,
+                    reduction=tf.keras.losses.Reduction.NONE
+                )
+                loss_values = focal_loss(y_true_exp, y_pred_exp)
+                classification_loss = tf.reduce_mean(loss_values * sample_weight)
+
+            # Focal loss
+            elif 'Focal' in loss_type:
+                # Extract alpha and gamma parameters
+                alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
+                gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
+
+                print(f"Using Focal loss with alpha={alpha}, gamma={gamma}")
+
+                use_class_balancing = alpha > 0
+                focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
+                    apply_class_balancing=use_class_balancing,
+                    alpha=alpha if alpha > 0 else None,
+                    gamma=gamma,
+                    reduction=tf.keras.losses.Reduction.NONE
+                )
+                loss_values = focal_loss(y_true_exp, y_pred_exp)
+                # pdb.set_trace()
+                classification_loss = tf.reduce_mean(loss_values * sample_weight)
+
+            # Default to binary cross-entropy
+            else:
+                bce_loss = tf.keras.losses.BinaryCrossentropy(
+                    reduction=tf.keras.losses.Reduction.NONE
+                )
+                loss_values = bce_loss(y_true_exp, y_pred_exp)
+                classification_loss = tf.reduce_mean(loss_values * sample_weight)
+
+            return classification_loss
+
+        def add_extra_losses(base_loss, y_true_exp, y_pred_exp, sample_weight, params, model,
+                            prediction_targets, prediction_out, this_op):
+            # Start with the base loss
+            total_loss = base_loss
+            loss_type = params['TYPE_LOSS']
+
+            # Add TV Loss if specified (Total Variation - encourages smoothness)
+            if 'TV' in loss_type:
+                tv_factor = 1e-5
+                tv_loss = tv_factor * tf.reduce_sum(
+                    tf.image.total_variation(tf.expand_dims(y_pred_exp, axis=-1))
+                )
+                total_loss += tv_loss
+
+            # Add L2 smoothness loss - penalizes large changes between consecutive predictions
+            if 'L2' in loss_type:
+                l2_factor = 1e-5
+                l2_smooth_loss = l2_factor * tf.reduce_mean(
+                    tf.square(y_pred_exp[:, 1:] - y_pred_exp[:, :-1])
+                )
+                total_loss += l2_smooth_loss
+
+            # Add margin loss - encourages confident predictions
+            if 'Margin' in loss_type:
+                margin_factor = 1e-4
+                margin_loss = margin_factor * tf.reduce_mean(
+                    tf.squeeze(y_pred_exp * (1 - y_pred_exp))
+                )
+                total_loss += margin_loss
+
+            # Add entropy loss - encourages confident predictions for binary labels
+            if 'Entropy' in loss_type and 'HYPER_ENTROPY' in params:
+                entropy_factor = params['HYPER_ENTROPY']
+
+                # Calculate prediction entropy: -p*log(p) - (1-p)*log(1-p)
+                # Add small epsilon to avoid log(0)
+                epsilon = 1e-8
+                y_pred_squeezed = tf.squeeze(y_pred_exp, axis=-1)
+                y_true_squeezed = tf.squeeze(y_true_exp, axis=-1)
+
+                # Calculate binary entropy of predictions
+                entropy = -(y_pred_squeezed * tf.math.log(y_pred_squeezed + epsilon) +
+                        (1 - y_pred_squeezed) * tf.math.log(1 - y_pred_squeezed + epsilon))
+
+                # For binary labels (0/1), we want to minimize entropy for all predictions
+                # Higher penalty for incorrect low-confidence predictions, lower penalty for correct confident predictions
+                confidence_weight = tf.abs(y_true_squeezed - y_pred_squeezed) + 0.1  # Higher weight for incorrect predictions
+
+                # Weight entropy by confidence - penalize uncertainty more for incorrect predictions
+                weighted_entropy = entropy * confidence_weight
+
+                entropy_loss = tf.reduce_mean(weighted_entropy)
+                total_loss += entropy_factor * entropy_loss
+
+            # add false positive loss
+            if 'FalsePositive' in loss_type and 'HYPER_FALSEPOSITIVE' in params:
+                false_positive_factor = params['HYPER_FALSEPOSITIVE']
+                # False positive loss implementation
+                # FP = tf.reduce_sum(tf.cast((y_pred > threshold) & (y_true < 0.5), tf.float32))
+                # FP_loss = FP / (tf.reduce_sum(1 - y_true) + epsilon)
+                # FP_loss = tf.reduce_mean(tf.square(y_pred * (1 - y_true))) * lambda_fp
+
+                total_loss += false_positive_factor * false_positive_loss
+
+            # Add truncated MSE loss
+            if 'TMSE' in loss_type and 'HYPER_TMSE' in params:
+                tmse_factor = params['HYPER_TMSE']
+                # Truncated MSE loss implementation
+                tmse_loss = truncated_mse_loss(y_true_exp, y_pred_exp)
+                total_loss += tmse_factor * tmse_loss
+
+            # Early onset preference loss - encourages early detection
+            if 'Early' in loss_type:
+                early_factor = 0.1
+                if 'HYPER_EARLY' in params:
+                    early_factor = params['HYPER_EARLY']
+
+                def early_onset_loss():
+                    threshold = 0.5
+                    early_onset_threshold = 5
+                    penalty_factor = 0.1
+                    reward_factor = 0.05
+
+                    # Reshape for compatibility if needed
+                    y_true_sq = tf.squeeze(y_true_exp, axis=-1)
+                    y_pred_sq = tf.squeeze(y_pred_exp, axis=-1)
+
+                    # Calculate delay in detection - find first time predictions cross threshold
+                    detected_times = tf.argmax(tf.cast(y_pred_sq >= threshold, tf.int32), axis=1)
+                    true_event_times = tf.argmax(tf.cast(y_true_sq, tf.int32), axis=1)
+                    delay = detected_times - true_event_times
+
+                    # Penalty for late detections
+                    late_penalty = tf.where(delay > early_onset_threshold,
+                                            penalty_factor * tf.cast(delay - early_onset_threshold, tf.float32),
+                                            0.0)
+
+                    # Reward for slightly early detections
+                    early_reward = tf.where((delay < 0) & (delay >= -early_onset_threshold),
+                                        reward_factor * tf.cast(-delay, tf.float32),
+                                        0.0)
+
+                    # Combine penalty and reward terms
+                    onset_loss = tf.reduce_mean(late_penalty - early_reward)
+                    return onset_loss
+
+                # Only calculate early onset loss if there are actual events in the batch
+                has_events = tf.reduce_any(y_true_exp > 0.5)
+                early_loss = tf.cond(
+                    has_events,
+                    early_onset_loss,
+                    lambda: 0.0
+                )
+                total_loss += early_factor * early_loss
+
+            # Monotonicity loss - encourages predictions to rise toward events
+            if 'Mono' in loss_type and 'HYPER_MONO' in params:
+                mono_factor = params['HYPER_MONO']
+
+                def monotonicity_loss():
+                    """Loss to encourage early rising predictions before onset"""
+                    batch_size = tf.shape(y_true_exp)[0]
+                    time_steps = tf.shape(y_true_exp)[1]
+                    gap_margin = 40  # Default max time steps before onset to apply monotonicity
+
+                    # Find onset indices (first 0 to 1 transition)
+                    y_true_flat = tf.squeeze(y_true_exp, axis=-1)
+                    shifted_y_true = tf.concat([tf.zeros((batch_size, 1)), y_true_flat[:, :-1]], axis=1)
+                    onset_mask = tf.logical_and(shifted_y_true < 0.5, y_true_flat >= 0.5)
+                    onset_indices = tf.argmax(tf.cast(onset_mask, tf.int32), axis=1)
+
+                    # Create gap mask relative to onset indices
+                    gap_start = tf.maximum(onset_indices - gap_margin, 0)
+                    gap_end = onset_indices
+                    gap_mask = tf.sequence_mask(gap_end, maxlen=time_steps, dtype=tf.float32) - \
+                            tf.sequence_mask(gap_start, maxlen=time_steps, dtype=tf.float32)
+                    gap_mask = tf.expand_dims(gap_mask, axis=-1)
+
+                    # Differences between consecutive predictions
+                    y_pred_flat = tf.squeeze(y_pred_exp, axis=-1)
+                    diff = y_pred_flat[:, :-1] - y_pred_flat[:, 1:]
+                    diff = tf.pad(diff, [[0, 0], [0, 1]])  # Pad to match original shape
+
+                    # Penalize non-monotonic increases in the gap period
+                    monotonicity_penalty = tf.nn.relu(diff) * gap_mask
+                    return tf.reduce_mean(monotonicity_penalty)
+
+                # Only calculate monotonicity loss if there are actual events in the batch
+                has_events = tf.reduce_any(y_true_exp > 0.5)
+                mono_loss = tf.cond(
+                    has_events,
+                    monotonicity_loss,
+                    lambda: 0.0
+                )
+
+                total_loss += mono_factor * mono_loss
+
+            # Add Barlow Twins loss for representation learning
+            if 'Bar' in loss_type and 'HYPER_BARLOW' in params:
+                barlow_factor = params['HYPER_BARLOW']
+
+                def barlow_twins_loss(embedding1, embedding2, lambda_param=0.005):
+                    # Normalize embeddings
+                    embedding1 = tf.nn.l2_normalize(embedding1, axis=1)
+                    embedding2 = tf.nn.l2_normalize(embedding2, axis=1)
+
+                    # Cross-correlation matrix
+                    c = tf.matmul(embedding1, embedding2, transpose_a=True)
+                    c /= tf.cast(tf.shape(embedding1)[0], tf.float32)  # Normalize by batch size
+
+                    # On-diagonal: minimize difference from 1
+                    on_diag = tf.reduce_sum(tf.square(tf.linalg.diag_part(c) - 1))
+
+                    # Off-diagonal: minimize correlation
+                    off_diag = tf.reduce_sum(tf.square(c)) - on_diag
+
+                    # Total loss
+                    return on_diag + lambda_param * off_diag
+
+                if this_op is not None:
+                    # Extract intermediate tensor representations
+                    # This is a simplified implementation that would need adjustment
+                    total_loss += barlow_factor * barlow_twins_loss(this_op(prediction_out), this_op(prediction_targets))
+            return total_loss
+
         def prediction_mode_branch():
             # For training/validation with LFP predictions (9 or 10 channels)
             # Check if we have enough channels for prediction mode
@@ -1493,6 +1757,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
             dummy_tensor = tf.zeros(dummy_shape)
             return dummy_tensor, dummy_tensor, y_true_exp, y_pred_exp
 
+        print('Using classification only:', is_classification_only)
         if not is_classification_only:
             prediction_targets, prediction_out, y_true_exp, y_pred_exp = prediction_mode_branch()
             if (len(y_true.shape) == 3) and (y_true.shape[-1] > 9 ):
@@ -1518,9 +1783,9 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
         # Calculate classification loss
         total_loss = compute_classification_loss(y_true_exp, y_pred_exp, sample_weight, params)
 
-        # Handle sigmoid activation if needed
-        if flag_sigmoid:
-            y_pred_exp = tf.math.sigmoid(y_pred_exp)
+        # # Handle sigmoid activation if needed
+        # if flag_sigmoid:
+        #     y_pred_exp = tf.math.sigmoid(y_pred_exp)
 
         # Add extra loss terms
         total_loss = add_extra_losses(total_loss, y_true_exp, y_pred_exp, sample_weight,
@@ -1531,270 +1796,6 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
             mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out))
             total_loss += loss_weight * mse_loss
 
-        return total_loss
-
-    def extract_param_from_loss_type(loss_type, param_prefix, default_value):
-        """Helper function to extract parameters from loss type string"""
-        try:
-            if param_prefix in loss_type:
-                idx = loss_type.find(param_prefix) + len(param_prefix)
-                param_str = loss_type[idx:idx+3]
-                return float(param_str) / 100.0
-            return default_value
-        except:
-            return default_value
-
-    def compute_classification_loss(y_true_exp, y_pred_exp, sample_weight, params):
-        loss_type = params['TYPE_LOSS']
-
-        # Initialize the loss variable
-        classification_loss = 0.0
-
-        # FocalSmooth loss
-        if 'FocalSmooth' in loss_type:
-            # Extract alpha and gamma parameters
-            alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
-            gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
-
-            focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
-                apply_class_balancing=True,
-                alpha=alpha,
-                gamma=gamma,
-                label_smoothing=0.1,
-                reduction=tf.keras.losses.Reduction.NONE
-            )
-            loss_values = focal_loss(y_true_exp, y_pred_exp)
-            classification_loss = tf.reduce_mean(loss_values * sample_weight)
-
-        # SigmoidFoc loss
-        elif 'SigmoidFoc' in loss_type:
-            # Extract alpha and gamma parameters
-            alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
-            gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
-
-            focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
-                apply_class_balancing=True,
-                alpha=alpha,
-                gamma=gamma,
-                from_logits=flag_sigmoid,
-                reduction=tf.keras.losses.Reduction.NONE
-            )
-            loss_values = focal_loss(y_true_exp, y_pred_exp)
-            classification_loss = tf.reduce_mean(loss_values * sample_weight)
-
-        # Focal loss
-        elif 'Focal' in loss_type:
-            # Extract alpha and gamma parameters
-            alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
-            gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
-
-            print(f"Using Focal loss with alpha={alpha}, gamma={gamma}")
-
-            use_class_balancing = alpha > 0
-            focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
-                apply_class_balancing=use_class_balancing,
-                alpha=alpha if alpha > 0 else None,
-                gamma=gamma,
-                reduction=tf.keras.losses.Reduction.NONE
-            )
-            loss_values = focal_loss(y_true_exp, y_pred_exp)
-            # pdb.set_trace()
-            classification_loss = tf.reduce_mean(loss_values * sample_weight)
-
-        # Default to binary cross-entropy
-        else:
-            bce_loss = tf.keras.losses.BinaryCrossentropy(
-                reduction=tf.keras.losses.Reduction.NONE
-            )
-            loss_values = bce_loss(y_true_exp, y_pred_exp)
-            classification_loss = tf.reduce_mean(loss_values * sample_weight)
-
-        return classification_loss
-
-    def add_extra_losses(base_loss, y_true_exp, y_pred_exp, sample_weight, params, model,
-                         prediction_targets, prediction_out, this_op):
-        # Start with the base loss
-        total_loss = base_loss
-        loss_type = params['TYPE_LOSS']
-
-        # Add TV Loss if specified (Total Variation - encourages smoothness)
-        if 'TV' in loss_type:
-            tv_factor = 1e-5
-            tv_loss = tv_factor * tf.reduce_sum(
-                tf.image.total_variation(tf.expand_dims(y_pred_exp, axis=-1))
-            )
-            total_loss += tv_loss
-
-        # Add L2 smoothness loss - penalizes large changes between consecutive predictions
-        if 'L2' in loss_type:
-            l2_factor = 1e-5
-            l2_smooth_loss = l2_factor * tf.reduce_mean(
-                tf.square(y_pred_exp[:, 1:] - y_pred_exp[:, :-1])
-            )
-            total_loss += l2_smooth_loss
-
-        # Add margin loss - encourages confident predictions
-        if 'Margin' in loss_type:
-            margin_factor = 1e-4
-            margin_loss = margin_factor * tf.reduce_mean(
-                tf.squeeze(y_pred_exp * (1 - y_pred_exp))
-            )
-            total_loss += margin_loss
-
-        # Add entropy loss - encourages confident predictions for binary labels
-        if 'Entropy' in loss_type and 'HYPER_ENTROPY' in params:
-            entropy_factor = params['HYPER_ENTROPY']
-
-            # Calculate prediction entropy: -p*log(p) - (1-p)*log(1-p)
-            # Add small epsilon to avoid log(0)
-            epsilon = 1e-8
-            y_pred_squeezed = tf.squeeze(y_pred_exp, axis=-1)
-            y_true_squeezed = tf.squeeze(y_true_exp, axis=-1)
-
-            # Calculate binary entropy of predictions
-            entropy = -(y_pred_squeezed * tf.math.log(y_pred_squeezed + epsilon) +
-                       (1 - y_pred_squeezed) * tf.math.log(1 - y_pred_squeezed + epsilon))
-
-            # For binary labels (0/1), we want to minimize entropy for all predictions
-            # Higher penalty for incorrect low-confidence predictions, lower penalty for correct confident predictions
-            confidence_weight = tf.abs(y_true_squeezed - y_pred_squeezed) + 0.1  # Higher weight for incorrect predictions
-
-            # Weight entropy by confidence - penalize uncertainty more for incorrect predictions
-            weighted_entropy = entropy * confidence_weight
-
-            entropy_loss = tf.reduce_mean(weighted_entropy)
-            total_loss += entropy_factor * entropy_loss
-
-        # add false positive loss
-        if 'FalsePositive' in loss_type and 'HYPER_FALSEPOSITIVE' in params:
-            false_positive_factor = params['HYPER_FALSEPOSITIVE']
-            # False positive loss implementation
-            # FP = tf.reduce_sum(tf.cast((y_pred > threshold) & (y_true < 0.5), tf.float32))
-            # FP_loss = FP / (tf.reduce_sum(1 - y_true) + epsilon)
-            # FP_loss = tf.reduce_mean(tf.square(y_pred * (1 - y_true))) * lambda_fp
-
-            total_loss += false_positive_factor * false_positive_loss
-        
-        # Add truncated MSE loss
-        if 'TMSE' in loss_type and 'HYPER_TMSE' in params:
-            tmse_factor = params['HYPER_TMSE']
-            # Truncated MSE loss implementation
-            tmse_loss = truncated_mse_loss(y_true_exp, y_pred_exp)
-            total_loss += tmse_factor * tmse_loss
-
-        # Early onset preference loss - encourages early detection
-        if 'Early' in loss_type:
-            early_factor = 0.1
-            if 'HYPER_EARLY' in params:
-                early_factor = params['HYPER_EARLY']
-
-            def early_onset_loss():
-                threshold = 0.5
-                early_onset_threshold = 5
-                penalty_factor = 0.1
-                reward_factor = 0.05
-
-                # Reshape for compatibility if needed
-                y_true_sq = tf.squeeze(y_true_exp, axis=-1)
-                y_pred_sq = tf.squeeze(y_pred_exp, axis=-1)
-
-                # Calculate delay in detection - find first time predictions cross threshold
-                detected_times = tf.argmax(tf.cast(y_pred_sq >= threshold, tf.int32), axis=1)
-                true_event_times = tf.argmax(tf.cast(y_true_sq, tf.int32), axis=1)
-                delay = detected_times - true_event_times
-
-                # Penalty for late detections
-                late_penalty = tf.where(delay > early_onset_threshold,
-                                        penalty_factor * tf.cast(delay - early_onset_threshold, tf.float32),
-                                        0.0)
-
-                # Reward for slightly early detections
-                early_reward = tf.where((delay < 0) & (delay >= -early_onset_threshold),
-                                       reward_factor * tf.cast(-delay, tf.float32),
-                                       0.0)
-
-                # Combine penalty and reward terms
-                onset_loss = tf.reduce_mean(late_penalty - early_reward)
-                return onset_loss
-
-            # Only calculate early onset loss if there are actual events in the batch
-            has_events = tf.reduce_any(y_true_exp > 0.5)
-            early_loss = tf.cond(
-                has_events,
-                early_onset_loss,
-                lambda: 0.0
-            )
-
-            total_loss += early_factor * early_loss
-
-        # Monotonicity loss - encourages predictions to rise toward events
-        if 'Mono' in loss_type and 'HYPER_MONO' in params:
-            mono_factor = params['HYPER_MONO']
-
-            def monotonicity_loss():
-                """Loss to encourage early rising predictions before onset"""
-                batch_size = tf.shape(y_true_exp)[0]
-                time_steps = tf.shape(y_true_exp)[1]
-                gap_margin = 40  # Default max time steps before onset to apply monotonicity
-
-                # Find onset indices (first 0 to 1 transition)
-                y_true_flat = tf.squeeze(y_true_exp, axis=-1)
-                shifted_y_true = tf.concat([tf.zeros((batch_size, 1)), y_true_flat[:, :-1]], axis=1)
-                onset_mask = tf.logical_and(shifted_y_true < 0.5, y_true_flat >= 0.5)
-                onset_indices = tf.argmax(tf.cast(onset_mask, tf.int32), axis=1)
-
-                # Create gap mask relative to onset indices
-                gap_start = tf.maximum(onset_indices - gap_margin, 0)
-                gap_end = onset_indices
-                gap_mask = tf.sequence_mask(gap_end, maxlen=time_steps, dtype=tf.float32) - \
-                           tf.sequence_mask(gap_start, maxlen=time_steps, dtype=tf.float32)
-                gap_mask = tf.expand_dims(gap_mask, axis=-1)
-
-                # Differences between consecutive predictions
-                y_pred_flat = tf.squeeze(y_pred_exp, axis=-1)
-                diff = y_pred_flat[:, :-1] - y_pred_flat[:, 1:]
-                diff = tf.pad(diff, [[0, 0], [0, 1]])  # Pad to match original shape
-
-                # Penalize non-monotonic increases in the gap period
-                monotonicity_penalty = tf.nn.relu(diff) * gap_mask
-                return tf.reduce_mean(monotonicity_penalty)
-
-            # Only calculate monotonicity loss if there are actual events in the batch
-            has_events = tf.reduce_any(y_true_exp > 0.5)
-            mono_loss = tf.cond(
-                has_events,
-                monotonicity_loss,
-                lambda: 0.0
-            )
-
-            total_loss += mono_factor * mono_loss
-
-        # Add Barlow Twins loss for representation learning
-        if 'Bar' in loss_type and 'HYPER_BARLOW' in params:
-            barlow_factor = params['HYPER_BARLOW']
-
-            def barlow_twins_loss(embedding1, embedding2, lambda_param=0.005):
-                # Normalize embeddings
-                embedding1 = tf.nn.l2_normalize(embedding1, axis=1)
-                embedding2 = tf.nn.l2_normalize(embedding2, axis=1)
-
-                # Cross-correlation matrix
-                c = tf.matmul(embedding1, embedding2, transpose_a=True)
-                c /= tf.cast(tf.shape(embedding1)[0], tf.float32)  # Normalize by batch size
-
-                # On-diagonal: minimize difference from 1
-                on_diag = tf.reduce_sum(tf.square(tf.linalg.diag_part(c) - 1))
-
-                # Off-diagonal: minimize correlation
-                off_diag = tf.reduce_sum(tf.square(c)) - on_diag
-
-                # Total loss
-                return on_diag + lambda_param * off_diag
-
-            if this_op is not None:
-                # Extract intermediate tensor representations
-                # This is a simplified implementation that would need adjustment
-                total_loss += barlow_factor * barlow_twins_loss(this_op(prediction_out), this_op(prediction_targets))
         return total_loss
     return loss_fn
 
@@ -1866,8 +1867,8 @@ def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None
             # Calculate prediction entropy: -p*log(p) - (1-p)*log(1-p)
             # Add small epsilon to avoid log(0)
             epsilon = 1e-8
-            
-            for y_pred_exp, y_true_exp in zip([anchor_class, positive_class, negative_class], 
+
+            for y_pred_exp, y_true_exp in zip([anchor_class, positive_class, negative_class],
                                            [anchor_labels, positive_labels, negative_labels]):
 
                 # y_pred_squeezed = tf.squeeze(y_pred_exp, axis=-1)

@@ -733,24 +733,24 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         None,
         sequence_length=sample_length,
         sequence_stride=sample_length/stride_step,
-        batch_size=params["BATCH_SIZE"],
-        shuffle=True
+        batch_size=None,#params["BATCH_SIZE"],
+        shuffle=False
     )
     train_y = timeseries_dataset_from_array(
         train_labels[int(sample_length/2)+sample_shift:].reshape(-1,1),
         None,
         sequence_length=sample_length/2,
         sequence_stride=sample_length/stride_step,
-        batch_size=params["BATCH_SIZE"],
-        shuffle=True
+        batch_size=None,#params["BATCH_SIZE"],
+        shuffle=False
     )
     train_w = timeseries_dataset_from_array(
         weights[int(sample_length/2)+sample_shift:].reshape(-1,1),
         None,
         sequence_length=sample_length/2,
         sequence_stride=sample_length/stride_step,
-        batch_size=params["BATCH_SIZE"],
-        shuffle=True
+        batch_size=None,#params["BATCH_SIZE"],
+        shuffle=False
     )
 
     test_x = timeseries_dataset_from_array(
@@ -758,16 +758,16 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         None,
         sequence_length=sample_length,
         sequence_stride=sample_length/stride_step,
-        batch_size=params["BATCH_SIZE"],
-        shuffle=True
+        batch_size=None,#params["BATCH_SIZE"],
+        shuffle=False
     )
     test_y = timeseries_dataset_from_array(
         test_labels[int(sample_length/2)+sample_shift:].reshape(-1,1),
         None,
         sequence_length=sample_length/2,
         sequence_stride=sample_length/stride_step,
-        batch_size=params["BATCH_SIZE"],
-        shuffle=True
+        batch_size=None,#params["BATCH_SIZE"],
+        shuffle=False
     )
 
     # Apply layer normalization to LFPs
@@ -778,7 +778,6 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
 
     # train_x = train_x.map(lambda x: (channel_normalize(x)))
     # test_x = test_x.map(lambda x: (channel_normalize(x)))
-
     if params['TYPE_ARCH'].find('Only')>-1:    
         print('NOT PREDICTING LFPs')
         # Concatenate train_x and train_y per batch
@@ -811,16 +810,14 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
 
     # Combine the dataset with weights
     train_dataset = tf.data.Dataset.zip((train_x, train_d))
-    test_dataset = tf.data.Dataset.zip((test_x, test_d)).prefetch(tf.data.experimental.AUTOTUNE)
+    test_dataset = tf.data.Dataset.zip((test_x, test_d)).batch(params['BATCH_SIZE']).prefetch(tf.data.experimental.AUTOTUNE)
 
+    train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"], reshuffle_each_iteration=True).batch(params['BATCH_SIZE']).prefetch(tf.data.experimental.AUTOTUNE)
     if params['TYPE_ARCH'].find('Aug')>-1:
         print('Using Augmentations:')
         train_dataset = apply_augmentation_to_dataset(train_dataset, params=params, sampling_rate=params['SRATE'])
     else:
         print('No augmentation')
-
-    train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"], reshuffle_each_iteration=True).prefetch(tf.data.experimental.AUTOTUNE)
-
     return train_dataset, test_dataset, label_ratio#, val_dataset
 
 def load_allen(indeces= np.int32(np.linspace(49,62,8))):

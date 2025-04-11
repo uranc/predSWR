@@ -71,34 +71,28 @@ def objective_only(trial):
     tf.compat.v1.reset_default_graph()
     if tf.config.list_physical_devices('GPU'):
         tf.keras.backend.clear_session()
-    
+
     # Start with base parameters
-    params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
+    params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*8,
             'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
             'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
-            'EXP_DIR': '/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/' + model_name,
+            'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
             'mode': 'train'
             }
 
     # Dynamic learning rate range
-    # learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-1, log=True)
-    learning_rate = 1e-3
-    params['LEARNING_RATE'] = learning_rate
-
-    # Optional batch size tuning
-    # batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
     batch_size = 64
+    params['LEARNING_RATE'] = 1e-3
     params['BATCH_SIZE'] = batch_size
-    # ...rest of existing objective function code...
 
     # Base parameters
-    params['SRATE'] = 30000
+    params['SRATE'] = 2500
     params['NO_EPOCHS'] = 400
     params['TYPE_MODEL'] = 'Base'
 
-    arch_lib = ['MixerOnly', 'MixerHori', 
-                'MixerDori', 'DualMixerDori', 'MixerCori', 
-                'SingleCh', 'TripletOnly']    
+    arch_lib = ['MixerOnly', 'MixerHori',
+                'MixerDori', 'DualMixerDori', 'MixerCori',
+                'SingleCh', 'TripletOnly']
     # Model architecture parameters - Fix the categorical suggestion
     # arch_ind = trial.suggest_int('IND_ARCH', 0, len(arch_lib)-1)
     # pdb.set_trace()
@@ -110,7 +104,6 @@ def objective_only(trial):
     print(params['TYPE_ARCH'])
     # pdb.set_trace()
     # params['TYPE_ARCH'] = 'MixerHori'
-    # pdb.set_trace()
     # Update model import based on architecture choice
     if 'MixerHori' in params['TYPE_ARCH']:
         from model.input_augment_weighted import rippleAI_load_dataset
@@ -124,23 +117,13 @@ def objective_only(trial):
     elif 'MixerOnly' in params['TYPE_ARCH']:
         from model.input_augment_weighted import rippleAI_load_dataset
         from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
-    elif 'TripletOnly' in params['TYPE_ARCH']:
-        from model.input_proto import rippleAI_load_dataset
-        from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
-        
-        # Set a reasonable steps_per_epoch value - much smaller than 1500 for initial testing
-        params['steps_per_epoch'] = 250  # Increase gradually if training works
-        
-        # Add debug lines
-        print("Setting up triplet dataset with steps_per_epoch:", params['steps_per_epoch'])
-        print("Batch size:", params['BATCH_SIZE'])
 
     # pdb.set_trace()
     # Timing parameters remain the same
     # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
-    params['NO_TIMEPOINTS'] = 128*3
-    # params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
-    params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'])
+    params['NO_TIMEPOINTS'] = 128#*3
+    params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
+    # params['NO_STRIDES'] = int(params['NO_TIMEPOINTS']*2)
 
     # Timing parameters remain the same
     params['HORIZON_MS'] = trial.suggest_int('HORIZON_MS', 1, 5)
@@ -152,7 +135,7 @@ def objective_only(trial):
     entropyLib = [0, 0.5, 1, 3]
     entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
     params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
-    
+
     # params['HYPER_TMSE'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
     # params['HYPER_BARLOW'] = 2e-5
     # params['HYPER_BARLOW'] = trial.suggest_float('HYPER_BARLOW', 0.000001, 10.0, log=True)
@@ -179,16 +162,16 @@ def objective_only(trial):
 
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
-    params['NO_FILTERS'] = 32#trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
+    params['NO_FILTERS'] = 128#trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
     # params['NO_FILTERS'] = 64
-    ax = 25#trial.suggest_int('AX', 1, 99)
-    gx = 160#trial.suggest_int('GX', 50, 999)
+    ax = trial.suggest_int('AX', 25, 75, step=10)
+    gx = trial.suggest_int('GX', 50, 999, step=150)
 
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}Entropy'.format(ax, gx)
 
     # Remove the hardcoded use_freq and derive it from tag instead
-    
+
     params['TYPE_LOSS'] += tag
     print(params['TYPE_LOSS'])
     # init_lib = ['He', 'Glo']
@@ -200,11 +183,11 @@ def objective_only(trial):
     # act_lib = ['RELU', 'ELU', 'GELU']
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
     par_act = 'ELU'
-    
+
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'Adam'
     # par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
-    
+
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}")
     # Build architecture string with timing parameters (adjust format)
     arch_str = (f"{params['TYPE_ARCH']}"  # Take first 4 chars: Hori/Dori/Cori
@@ -224,7 +207,7 @@ def objective_only(trial):
     params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
     if params['USE_Aug']:
         params['TYPE_ARCH'] += 'Aug'
-        
+
     # if (not 'Cori' in params['TYPE_ARCH']) and  (not 'SingleCh' in params['TYPE_MODEL']):
     #     params['TYPE_LOSS'] += 'BarAug'
     # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
@@ -240,11 +223,11 @@ def objective_only(trial):
     drop_ind = 0#trial.suggest_categorical('Dropout', [0,1,2,3,4])
     if drop_ind > 0:
         params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
-    
+
     params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
 
     # Build name in correct format
-    run_name = (f"{params['TYPE_MODEL']}_" 
+    run_name = (f"{params['TYPE_MODEL']}_"
                 f"K{params['NO_KERNELS']}_"
                 f"T{params['NO_TIMEPOINTS']}_"
                 f"D{params['NO_DILATIONS']}_"
@@ -282,59 +265,37 @@ def objective_only(trial):
         train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='muax', preprocess=preproc)
     else:
         train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
-
-    # if 'TripletOnly' in params['TYPE_ARCH']:
-    #         train_dataset = transform_dataset_for_training(train_dataset)
-    #         val_dataset = transform_dataset_for_training(val_dataset)
-    # if params['TYPE_MODEL'] == 'SingleCh':
-    #     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params, input_chans=1)
-    # else:
+    print(params)
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-    # Early stopping with tunable patience
-
-    # Early stopping parameters
-    best_metric = float('-inf')
-    best_metric2 = float('-inf')
-    best_metric3 = float('inf')
-    patience = 50
-    min_delta = 0.0001
-    patience_counter = 0
-    
-    # Create a list to collect history from each epoch
-    history_list = []
-
     # Setup callbacks including the verifier
     callbacks = [cb.TensorBoard(log_dir=f"{study_dir}/",
                                       write_graph=True,
                                       write_images=True,
                                       update_freq='epoch'),
-        cb.EarlyStopping(
-            monitor='val_event_f1_metric',  # Change monitor
-            patience=50,
-            mode='max',
-            verbose=1,
-            restore_best_weights=True
-        ),                                      
-        cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
-                            monitor='val_max_f1_metric_horizon', 
-                            verbose=1,
-                            save_best_only=True,
-                            save_weights_only=True,
-                            mode='max'),
-                            # cb.ModelCheckpoint(
-                            # f"{study_dir}/robust.weights.h5",
-                            # monitor='val_robust_f1',  # Change monitor
-                            # verbose=1,
-                            # save_best_only=True,
-                            # save_weights_only=True,
-                            # mode='max'),
-                            cb.ModelCheckpoint(
-                            f"{study_dir}/event.weights.h5",
-                            monitor='val_event_f1_metric',  # Change monitor
-                            verbose=1,
-                            save_best_only=True,
-                            save_weights_only=True,
-                            mode='max')
+                cb.EarlyStopping(monitor='val_event_f1_metric',  # Change monitor
+                                patience=50,
+                                mode='max',
+                                verbose=1,
+                                restore_best_weights=True),
+                cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
+                                    monitor='val_max_f1_metric_horizon',
+                                    verbose=1,
+                                    save_best_only=True,
+                                    save_weights_only=True,
+                                    mode='max'),
+                                    # cb.ModelCheckpoint(
+                                    # f"{study_dir}/robust.weights.h5",
+                                    # monitor='val_robust_f1',  # Change monitor
+                                    # verbose=1,
+                                    # save_best_only=True,
+                                    # save_weights_only=True,
+                                    # mode='max'),
+                cb.ModelCheckpoint(f"{study_dir}/event.weights.h5",
+                                    monitor='val_event_f1_metric',  # Change monitor
+                                    verbose=1,
+                                    save_best_only=True,
+                                    save_weights_only=True,
+                                    mode='max')
     ]
 
     # Train and evaluate
@@ -346,6 +307,8 @@ def objective_only(trial):
         verbose=1
     )
     val_accuracy = (max(history.history['val_event_f1_metric'])+max(history.history['val_max_f1_metric_horizon']))/2
+    val_accuracy_mean = (np.mean(history.history['val_event_f1_metric'])+np.mean(history.history['val_max_f1_metric_horizon']))/2
+    val_accuracy = (val_accuracy + val_accuracy_mean)/2
     val_latency = np.mean(history.history['val_event_fp_rate'])
     # Log results
     logger.info(f"Trial {trial.number} finished with val_accuracy: {val_accuracy:.4f}, val_fprate: {val_latency:.4f}")
@@ -374,7 +337,7 @@ def objective_triplet(trial):
     tf.compat.v1.reset_default_graph()
     if tf.config.list_physical_devices('GPU'):
         tf.keras.backend.clear_session()
-    
+
     # Start with base parameters
     params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
             'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
@@ -399,8 +362,8 @@ def objective_triplet(trial):
     params['NO_EPOCHS'] = 800
     params['TYPE_MODEL'] = 'Base'
 
-    arch_lib = ['MixerOnly', 'MixerHori', 
-                'MixerDori', 'DualMixerDori', 'MixerCori', 
+    arch_lib = ['MixerOnly', 'MixerHori',
+                'MixerDori', 'DualMixerDori', 'MixerCori',
                 'SingleCh', 'TripletOnly']
     # Model architecture parameters - Fix the categorical suggestion
     # arch_ind = trial.suggest_int('IND_ARCH', 0, len(arch_lib)-1)
@@ -430,10 +393,10 @@ def objective_triplet(trial):
     elif 'TripletOnly' in params['TYPE_ARCH']:
         from model.input_proto import rippleAI_load_dataset
         from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
-        
+
         # Set a reasonable steps_per_epoch value - much smaller than 1500 for initial testing
         params['steps_per_epoch'] = 1200  # Increase gradually if training works
-        
+
         # Add debug lines
         print("Setting up triplet dataset with steps_per_epoch:", params['steps_per_epoch'])
         print("Batch size:", params['BATCH_SIZE'])
@@ -449,7 +412,7 @@ def objective_triplet(trial):
     params['SHIFT_MS'] = 0
 
     params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.000001, 10.0, log=True)
-    
+
     params['LOSS_NEGATIVES'] = trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
 
@@ -457,14 +420,15 @@ def objective_triplet(trial):
     gx = trial.suggest_int('GX', 50, 999)
 
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
-    params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
+    # params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
+    params['TYPE_LOSS'] = 'FocalAx{:03d}Gx{:03d}'.format(ax, gx)
 
     entropyLib = [0, 0.5, 1, 3]
     entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
     if entropy_ind > 0:
         params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
         params['TYPE_LOSS'] += 'Entropy'
-    
+
     # params['HYPER_TMSE'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
     # params['HYPER_BARLOW'] = 2e-5
     # params['HYPER_BARLOW'] = trial.suggest_float('HYPER_BARLOW', 0.000001, 10.0, log=True)
@@ -490,7 +454,7 @@ def objective_triplet(trial):
     # params['NO_FILTERS'] = 64
 
     # Remove the hardcoded use_freq and derive it from tag instead
-    
+
     params['TYPE_LOSS'] += tag
     print(params['TYPE_LOSS'])
     # init_lib = ['He', 'Glo']
@@ -502,11 +466,11 @@ def objective_triplet(trial):
     # act_lib = ['RELU', 'ELU', 'GELU']
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
     par_act = 'ELU'
-    
+
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'Adam'
     # par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
-    
+
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}")
     # Build architecture string with timing parameters (adjust format)
     arch_str = (f"{params['TYPE_ARCH']}"  # Take first 4 chars: Hori/Dori/Cori
@@ -526,13 +490,13 @@ def objective_triplet(trial):
     # params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
     # if params['USE_Aug']:
     params['TYPE_ARCH'] += 'Aug'
-    
+
 
     params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
     if params['USE_StopGrad']:
         print('Using Stop Gradient for Class. Branch')
-        params['TYPE_ARCH'] += 'StopGrad'    
-        
+        params['TYPE_ARCH'] += 'StopGrad'
+
     # if (not 'Cori' in params['TYPE_ARCH']) and  (not 'SingleCh' in params['TYPE_MODEL']):
     #     params['TYPE_LOSS'] += 'BarAug'
     # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
@@ -549,11 +513,11 @@ def objective_triplet(trial):
     print('Dropout rate:', drop_lib[drop_ind])
     if drop_ind > 0:
         params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
-    
+
     params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
 
     # Build name in correct format
-    run_name = (f"{params['TYPE_MODEL']}_" 
+    run_name = (f"{params['TYPE_MODEL']}_"
                 f"K{params['NO_KERNELS']}_"
                 f"T{params['NO_TIMEPOINTS']}_"
                 f"D{params['NO_DILATIONS']}_"
@@ -594,7 +558,7 @@ def objective_triplet(trial):
             params['steps_per_epoch'] = 1200
             train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True)
         else:
-            train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)        
+            train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
 
     # if 'TripletOnly' in params['TYPE_ARCH']:
     #         train_dataset = transform_dataset_for_training(train_dataset)
@@ -604,7 +568,7 @@ def objective_triplet(trial):
     # else:
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     # Early stopping with tunable patience
-   
+
     # Early stopping parameters
     best_metric = float('-inf')
     best_metric2 = float('-inf')
@@ -612,7 +576,7 @@ def objective_triplet(trial):
     patience = 50
     min_delta = 0.0001
     patience_counter = 0
-    
+
     # Create a list to collect history from each epoch
     history_list = []
 
@@ -622,7 +586,7 @@ def objective_triplet(trial):
                                       write_images=True,
                                       update_freq='epoch'),
         cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
-                            monitor='val_max_f1_metric_horizon', 
+                            monitor='val_max_f1_metric_horizon',
                             verbose=1,
                             save_best_only=True,
                             save_weights_only=True,
@@ -642,7 +606,7 @@ def objective_triplet(trial):
                             save_weights_only=True,
                             mode='max')
     ]
-    
+
     # Loop through epochs manually
     n_epoch = params['NO_EPOCHS']
     for epoch in range(n_epoch):
@@ -650,7 +614,7 @@ def objective_triplet(trial):
         if dataset_params is not None and 'triplet_regenerator' in dataset_params:
             regenerating_dataset = dataset_params['triplet_regenerator']
             print(f"Regenerating triplet samples for epoch {epoch+1}")
-            
+
             if epoch > 0:
                 regenerating_dataset.reinitialize()
             train_data = regenerating_dataset.dataset if hasattr(regenerating_dataset, 'dataset') else regenerating_dataset
@@ -668,12 +632,12 @@ def objective_triplet(trial):
 
         # Collect history
         history_list.append(epoch_history.history)
-                    
+
         # Early stopping check after each epoch
         current_metric = epoch_history.history.get('val_max_f1_metric_horizon', [float('-inf')])[0]
         current_metric2 = epoch_history.history.get('val_event_f1_metric', [float('-inf')])[0]
         current_metric3 = epoch_history.history.get('val_event_fp_rate', [float('inf')])[0]
-        
+
         if (current_metric > (best_metric + min_delta)) or (current_metric2 > (best_metric2 + min_delta)) or (current_metric3 < (best_metric3 - min_delta)):
             if current_metric > best_metric:
                 print(f"New best metric: {current_metric}")
@@ -687,11 +651,11 @@ def objective_triplet(trial):
             patience_counter = 0
         else:
             patience_counter += 1
-            
+
         if patience_counter >= patience:
             print(f"\nEarly stopping triggered! No improvement for {patience} epochs.")
             break
-        
+
     # Combine histories from all epochs
     combined_history = {}
     for key in history_list[0].keys():
@@ -701,7 +665,7 @@ def objective_triplet(trial):
 
     # If the trial completes, compute the final metrics.
     # pdb.set_trace()
-    # final_f1 = (np.mean(combined_history['val_robust_f1']) + 
+    # final_f1 = (np.mean(combined_history['val_robust_f1']) +
     #             max(combined_history['val_max_f1_metric_horizon'])) / 2
     # final_f1 = max(combined_history['val_event_f1_metric'])
     # final_latency = np.mean(combined_history['val_latency_metric'])
@@ -718,7 +682,7 @@ def objective_triplet(trial):
     }
     with open(f"{study_dir}/trial_info.json", 'w') as f:
         json.dump(trial_info, f, indent=4)
-    
+
     return final_f1, final_fp_penalty #, final_latency
 if mode == 'train':
     # update params
@@ -767,6 +731,8 @@ if mode == 'train':
         loss_weight = float(loss_weight[1])*10**(weight*float(loss_weight[2]))
         print(loss_weight)
         params['LOSS_WEIGHT'] = loss_weight
+    else:
+        params['LOSS_WEIGHT'] = 1
 
     # get sampling rate # little dangerous assumes 4 digits
     if 'Samp' in params['TYPE_LOSS']:
@@ -782,12 +748,12 @@ if mode == 'train':
         from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
         from model.input_augment_weighted import rippleAI_load_dataset
     elif model_name.find('MixerCori') != -1:
-        from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN  
+        from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
         from model.input_augment_weighted import rippleAI_load_dataset
     elif model_name.find('MixerOnly') != -1:
         print('Using MixerOnly')
         from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
-        from model.input_augment_weighted import rippleAI_load_dataset  
+        from model.input_augment_weighted import rippleAI_load_dataset
     elif 'TripletOnly' in params['TYPE_ARCH']:
         print('Using TripletOnly')
         from model.input_proto import rippleAI_load_dataset
@@ -886,7 +852,7 @@ if mode == 'train':
         from model.training import train_pred
         if 'SigmoidFoc' in params['TYPE_LOSS']:
             hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'], checkpoint_metric='val_max_f1_metric_horizon_mixer')
-        elif 'TripletOnly' in params['TYPE_ARCH']:            
+        elif 'TripletOnly' in params['TYPE_ARCH']:
             hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'], dataset_params=dataset_params)
         else:
             hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
@@ -968,7 +934,7 @@ elif mode == 'predict':
         else:
             weight_file = f"{study_dir}/event.weights.h5"
             tag += 'EvF1'
-        
+
         # weight_file = f"{study_dir}/robust.weights.h5"
         print(f"Loading weights from: {weight_file}")
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
@@ -1071,7 +1037,7 @@ elif mode == 'predict':
     model.summary()
 
     params['BATCH_SIZE'] = 512*2
-    
+
     # from model.input_augment_weighted import rippleAI_load_dataset
     import importlib.util
     spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/input_augment_weighted.py")
@@ -1143,7 +1109,7 @@ elif mode == 'predict':
         elif  model_name.startswith('Tune') != -1:
             if 'Only' in params['TYPE_ARCH']:
                 probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
-            else:                
+            else:
                 probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal[:,-1]))
                 horizon = np.vstack((np.zeros((sample_length-1, 8)), windowed_signal[:, :-1]))
         elif model_name.find('Proto') != -1:
@@ -1154,7 +1120,7 @@ elif mode == 'predict':
             probs = np.hstack((windowed_signal[0,:-1], windowed_signal[:, -1]))
     # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}_sf{2}.npy'.format(val_id, model_name, params['SRATE']), probs)
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}_{3}_sf{2}.npy'.format(val_id, model_name, params['SRATE'], tag), probs)
-    
+
     if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1 or model_name.startswith('Tune') != -1:
         if not ('Only' in params['TYPE_ARCH']):
             # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}_sf{2}.npy'.format(val_id, model_name, params['SRATE']), horizon)
@@ -1552,7 +1518,7 @@ elif mode=='export':
         # else:
         #     weight_file = f"{study_dir}/event.weights.h5"
         #     tag += 'EvF1'
-        
+
         # weight_file = f"{study_dir}/robust.weights.h5"
         print(f"Loading weights from: {weight_file}")
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
@@ -1685,7 +1651,7 @@ elif mode == 'embedding':
     model = args.model[0]
     model_name = model
     import importlib
-    
+
     if model_name.startswith('Tune'):
         # Extract study number from model name (e.g., 'Tune_45_' -> '45')
         study_num = model_name.split('_')[1]
@@ -1945,7 +1911,7 @@ elif mode == 'tune_worker':
         objective = objective_only
     else:
         objective = objective_only
-    
+
     study.optimize(
         objective,
         n_trials=1000,
@@ -2055,7 +2021,7 @@ elif mode == 'tune_viz':
     print(f"- top_{N}_trials.csv")
     print(f"- top_{N}_trials.html")
     print(f"- top_{N}_parameter_distributions.png")
-    
+
 elif mode == 'tune_viz_multi':
     import pandas as pd
     from optuna.visualization import plot_pareto_front
@@ -2080,7 +2046,7 @@ elif mode == 'tune_viz_multi':
 
     # Create visualization directory under the param_dir
     os.makedirs(f"studies/{param_dir}/visualizations", exist_ok=True)
-    
+
     # Create a subdirectory for hyperparameter impact plots
     os.makedirs(f"studies/{param_dir}/visualizations/param_impact", exist_ok=True)
 
@@ -2191,28 +2157,28 @@ elif mode == 'tune_viz_multi':
         # Create figure for this parameter
         plt.figure(figsize=(10, 6))
         use_log_scale = should_use_log_scale(best_combined_df[param])
-        
+
         try:
             # Get dataframes for top F1, top latency, and intersection (best_combined_df)
             top_f1_df = all_df[all_df['trial_number'].isin(top_f1_trials)]
             top_latency_df = all_df[all_df['trial_number'].isin(top_latency_trials)]
-            
+
             if pd.api.types.is_numeric_dtype(all_df[param]):
                 # Plot all top F1 score models with lower alpha
-                plt.scatter(top_f1_df[param], top_f1_df['f1_score'], 
+                plt.scatter(top_f1_df[param], top_f1_df['f1_score'],
                             label='Top F1 Score', alpha=0.3, color='blue', marker='o')
-                
+
                 # Plot all top latency models with lower alpha
-                plt.scatter(top_latency_df[param], top_latency_df['latency'], 
+                plt.scatter(top_latency_df[param], top_latency_df['latency'],
                             label='Top Latency', alpha=0.3, color='green', marker='s')
-                
+
                 # Highlight the models that are good at both metrics with higher alpha and distinct color
                 if not best_combined_df.empty:
-                    plt.scatter(best_combined_df[param], best_combined_df['f1_score'], 
+                    plt.scatter(best_combined_df[param], best_combined_df['f1_score'],
                                 label='Best Combined (F1)', alpha=0.8, color='red', marker='*', s=100)
-                    plt.scatter(best_combined_df[param], best_combined_df['latency'], 
+                    plt.scatter(best_combined_df[param], best_combined_df['latency'],
                                 label='Best Combined (Latency)', alpha=0.8, color='purple', marker='*', s=100)
-                
+
                 if use_log_scale:
                     plt.xscale('log')
                     plt.xlabel(f"{param} (log scale)")
@@ -2224,16 +2190,16 @@ elif mode == 'tune_viz_multi':
                 latency_means = top_latency_df.groupby(param)['latency'].mean()
                 combined_f1_means = best_combined_df.groupby(param)['f1_score'].mean() if not best_combined_df.empty else None
                 combined_latency_means = best_combined_df.groupby(param)['latency'].mean() if not best_combined_df.empty else None
-                
+
                 plt.plot(f1_means.index, f1_means.values, label='Top F1 Score (Mean)', color='blue', linestyle='--', alpha=0.5)
                 plt.plot(latency_means.index, latency_means.values, label='Top Latency (Mean)', color='green', linestyle='--', alpha=0.5)
-                
+
                 if not best_combined_df.empty and not combined_f1_means.empty and not combined_latency_means.empty:
                     plt.plot(combined_f1_means.index, combined_f1_means.values, label='Best Combined (F1)', color='red', marker='*', linewidth=2)
                     plt.plot(combined_latency_means.index, combined_latency_means.values, label='Best Combined (Latency)', color='purple', marker='*', linewidth=2)
-                
+
                 plt.xlabel(param)
-            
+
             plt.ylabel('Score')
             plt.title(f'Impact of {param} on F1 Score and Latency')
             plt.grid(True, linestyle='--', alpha=0.7)
@@ -2251,18 +2217,18 @@ elif mode == 'tune_viz_multi':
 
     print("\nVerification - First 5 top latency models:")
     print(all_df.sort_values('latency', ascending=True).head(5)[['trial_number', 'f1_score', 'latency']])
-    
+
     # Add code to list models passing both criteria
     if not best_combined_df.empty:
         # Calculate a combined performance metric (average of F1 and 1-latency since we want to minimize latency)
-        best_combined_df['combined_score'] = (best_combined_df['f1_score'] + (1 - best_combined_df['latency'])) / 2        
-        
+        best_combined_df['combined_score'] = (best_combined_df['f1_score'] + (1 - best_combined_df['latency'])) / 2
+
         # Sort by the combined score
         sorted_combined_df = best_combined_df.sort_values('combined_score', ascending=False)
-        
+
         # Save to CSV
         sorted_combined_df.to_csv(f"studies/{param_dir}/visualizations/best_combined_models.csv", index=False)
-        
+
         # Create HTML report for best combined models
         html_content = f"""
         <html>
@@ -2283,14 +2249,14 @@ elif mode == 'tune_viz_multi':
         </body>
         </html>
         """
-        
+
         with open(f"studies/{param_dir}/visualizations/best_combined_models.html", "w") as f:
             f.write(html_content)
-            
+
         print(f"\nFound {len(sorted_combined_df)} models that are in both top {N_TOP_MODELS} for F1 score and latency")
         print(f"Best combined models saved to studies/{param_dir}/visualizations/best_combined_models.csv")
         print(f"Best combined models report saved to studies/{param_dir}/visualizations/best_combined_models.html")
-        
+
         # Print top 10 models to console
         print("\nTop 10 combined models:")
         print(sorted_combined_df[['trial_number', 'f1_score', 'latency', 'combined_score']].head(10))
@@ -2346,7 +2312,7 @@ elif mode == 'tune_viz_multi':
         f.write(impact_html)
 
     print(f"Hyperparameter impact analysis for best combined models saved to studies/{param_dir}/visualizations/")
-    
+
     # Top N trials analysis for F1 Score
     N = 30
     trials = study.trials
