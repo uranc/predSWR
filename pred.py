@@ -122,11 +122,11 @@ def objective_only(trial):
     # Timing parameters remain the same
     # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
     params['NO_TIMEPOINTS'] = 128#*3
-    params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
-    # params['NO_STRIDES'] = int(params['NO_TIMEPOINTS']*2)
+    # params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
+    params['NO_STRIDES'] = trial.suggest_int('NO_STRIDES', 32, 160, step=32)
 
     # Timing parameters remain the same
-    params['HORIZON_MS'] = trial.suggest_int('HORIZON_MS', 1, 5)
+    params['HORIZON_MS'] = trial.suggest_int('HORIZON_MS', 1, 5, step=2)
     params['SHIFT_MS'] = 0
 
     params['LOSS_WEIGHT'] = 1#trial.suggest_float('LOSS_WEIGHT', 0.000001, 10.0, log=True)
