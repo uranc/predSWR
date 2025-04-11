@@ -21,13 +21,14 @@ tag = 'mixerOnly' # FiltL, FiltH, FiltM, SingleCh
 # model_lib = []
 # model_lib = [193,275,333,254] # only
 # model_lib = [286,302,303,278] # hori
-model_lib = [193,275,333,254]
+model_lib = [254, 275, 283, 319, 428, 437, 443, 504, 521] # only
+
 
 n=0
 for im, model in enumerate(model_lib):
     # subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model])
 
-    for iv in [0,1,2]:#,1,2]:#range(3):#range(1,3):
+    for iv in [0]:#,1,2]:#range(3):#range(1,3):
         n+=1
         # print(n)
         # subprocess.call(['python', 'pred.py', '--mode', 'predict', '--model', model, '--val', str(iv)])
@@ -36,8 +37,9 @@ for im, model in enumerate(model_lib):
         # subprocess.call(['sbatch', 'cpu_batch_16GBXS.sh', model, str(iv)])
         model_name = 'Tune_'+'{0}_'.format(model)
         print('submitting job for model: ', model_name, im, iv)
-        subprocess.call(['python', 'pred.py', '--mode', 'embedding', '--model', model_name, '--val', str(iv), '--tag', tag])
-        # subprocess.call(['python', 'pred.py', '--mode', 'predict', '--model', model_name, '--val', str(iv), '--tag', tag])
+        # subprocess.call(['python', 'pred.py', '--mode', 'embedding', '--model', model_name, '--val', str(iv), '--tag', tag])
+        subprocess.call(['python', 'pred.py', '--mode', 'predict', '--model', model_name, '--val', str(iv), '--tag', tag])
+        subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model_name, '--val', str(iv), '--tag', tag])
 
         # subprocess.call(['sbatch', 'cpu_batch_16GBXS.sh', model_name, str(iv)])
     

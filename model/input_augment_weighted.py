@@ -183,8 +183,6 @@ def add_pink_noise(data, noise_factor=0.1):
     pink_noise *= noise_factor
     return data + pink_noise
 
-
-
 def random_channel_shuffle(data):
     """Shuffle channels to simulate random reordering of input data."""
     permuted = tf.random.shuffle(tf.range(tf.shape(data)[-1]))
@@ -825,10 +823,6 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
 
     return train_dataset, test_dataset, label_ratio#, val_dataset
 
-
-
-
-
 def load_allen(indeces= np.int32(np.linspace(49,62,8))):
     loaded_data_raw = np.load('/cs/projects/OWVinckSWR/Carmen/LFP_extracted/sanity_check/raw_lfp_fc.npy')
     indeces[::-1].sort()
@@ -849,25 +843,29 @@ def load_topological_dataset(batch_size=32, shuffle_buffer=1000):
         tf.data.Dataset: Dataset containing batched and preprocessed data
     """
     import scipy.io as sio
-    
+    import h5py
     # Load both .mat files
-    jp_data = sio.loadmat('/cs/projects/OWVinckSWR/Dataset/TopologicalData/JuanPabloDB_struct.mat')
-    ab_data = sio.loadmat('/cs/projects/OWVinckSWR/Dataset/TopologicalData/AlbertoDB_struct.mat')
+    # jp_data = sio.loadmat('/cs/projects/OWVinckSWR/Dataset/TopologicalData/JuanPabloDB_struct.mat')
+    # ab_data = sio.loadmat('/cs/projects/OWVinckSWR/Dataset/TopologicalData/AlbertoDB_struct.mat')
+    
+    # Load both .mat files using h5py
+    jp_data = h5py.File('/cs/projects/OWVinckSWR/Dataset/TopologicalData/JuanPabloDB_struct.mat', 'r')
+    ab_data = h5py.File('/cs/projects/OWVinckSWR/Dataset/TopologicalData/AlbertoDB_struct.mat', 'r')
     
     # Process and concatenate data from both sources
     def process_struct(data):
         ripples = data['ripples']  # nEvents x 127
-        n_events = ripples.shape[0]
+        n_events = ripples.shape[1]
         
         # Reshape ripples to (nEvents, 127, 8) by splitting last dimension
-        ripples_reshaped = np.reshape(ripples, (n_events, -1, 8))
+        ripples_reshaped = np.tile(np.transpose(ripples, (1, 0))[:,:,np.newaxis], (1,1,8))
         
         # Collect other features
         features = np.column_stack([
-            data['amplitude'].reshape(-1, 1),
-            data['entropy'].reshape(-1, 1),
-            data['duration'].reshape(-1, 1),
-            data['frequency'].reshape(-1, 1)
+            np.array(data['amplitude']).reshape(-1, 1),
+            np.array(data['entropy']).reshape(-1, 1),
+            np.array(data['duration']).reshape(-1, 1),
+            np.array(data['frequency']).reshape(-1, 1)
         ])
         
         return ripples_reshaped, features

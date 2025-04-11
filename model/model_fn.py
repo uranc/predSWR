@@ -90,6 +90,8 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
     if model_type=='Base':
         print('Using Base TCN')
         from tcn import TCN
+        # pdb.set_trace()
+
         tcn_op = TCN(nb_filters=n_filters,
                         kernel_size=n_kernels,
                         nb_stacks=1,  # Increase stacks for deeper temporal processing
@@ -156,24 +158,19 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
 
     model = Model(inputs=inputs, outputs=concat_outputs)
 
-    if flag_sigmoid:
-        # f1_metric = MaxF1MetricHorizonMixer()
-        # this_binary_accuracy = custom_binary_accuracy_mixer
-        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
-        r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
-        # this_binary_accuracy = custom_binary_accuracy
-    else:
-        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
-        r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
-        latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
-        # this_binary_accuracy = custom_binary_accuracy
+
+    f1_metric = MaxF1MetricHorizon(model=model)
+    # r1_metric = RobustF1Metric(model=model)
+    # latency_metric = LatencyMetric(model=model)
+    event_f1_metric = EventAwareF1(model=model)
+    fp_event_metric = EventFalsePositiveRateMetric(model=model)
 
     # Create loss function without calling it
     loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
 
     model.compile(optimizer=this_optimizer,
-                  loss=loss_fn,  # Pass the function itself, not the result of calling it
-                  metrics=[f1_metric, r1_metric, latency_metric, FalsePositiveMonitorMetric(model=model)])
+                  loss=loss_fn,
+                  metrics=[f1_metric, event_f1_metric, fp_event_metric])
 
     if params['WEIGHT_FILE']:
         print('load model')
@@ -341,23 +338,29 @@ def build_DBI_TCN_HorizonMixer(input_timepoints, input_chans=8, params=None):
 
     model = Model(inputs=inputs, outputs=concat_outputs)
 
-    if flag_sigmoid:
-        # f1_metric = MaxF1MetricHorizonMixer()
-        # this_binary_accuracy = custom_binary_accuracy_mixer
-        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
-        r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
-        this_binary_accuracy = custom_binary_accuracy
-    else:
-        f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
-        r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
-        latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
+    # if flag_sigmoid:
+    #     # f1_metric = MaxF1MetricHorizonMixer()
+    #     # this_binary_accuracy = custom_binary_accuracy_mixer
+    #     f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only)
+    #     r1_metric = RobustF1Metric(is_classification_only=is_classification_only)
+    #     this_binary_accuracy = custom_binary_accuracy
+    # else:
+    #     f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+    #     r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
+    #     latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
+
+    f1_metric = MaxF1MetricHorizon(model=model)
+    # r1_metric = RobustF1Metric(model=model)
+    # latency_metric = LatencyMetric(model=model)
+    event_f1_metric = EventAwareF1(model=model)
+    fp_event_metric = EventFalsePositiveRateMetric(model=model)
 
     # Create loss function without calling it
     loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
 
     model.compile(optimizer=this_optimizer,
                   loss=loss_fn,
-                  metrics=[f1_metric, r1_metric, latency_metric, FalsePositiveMonitorMetric(model=model)])#, this_embd=tcn_output
+                  metrics=[f1_metric, event_f1_metric, fp_event_metric])
 
     if params['WEIGHT_FILE']:
         print('load model')

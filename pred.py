@@ -92,7 +92,7 @@ def objective_only(trial):
     # ...rest of existing objective function code...
 
     # Base parameters
-    params['SRATE'] = 2500
+    params['SRATE'] = 30000
     params['NO_EPOCHS'] = 400
     params['TYPE_MODEL'] = 'Base'
 
@@ -138,14 +138,15 @@ def objective_only(trial):
     # pdb.set_trace()
     # Timing parameters remain the same
     # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
-    params['NO_TIMEPOINTS'] = 128
-    params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
+    params['NO_TIMEPOINTS'] = 128*3
+    # params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
+    params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'])
 
     # Timing parameters remain the same
     params['HORIZON_MS'] = trial.suggest_int('HORIZON_MS', 1, 5)
     params['SHIFT_MS'] = 0
 
-    params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.000001, 10.0, log=True)
+    params['LOSS_WEIGHT'] = 1#trial.suggest_float('LOSS_WEIGHT', 0.000001, 10.0, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
 
     entropyLib = [0, 0.5, 1, 3]
@@ -171,12 +172,17 @@ def objective_only(trial):
         dil_lib = [7,6,5,5,5]           # for kernels 2,3,4,5,6
     elif params['NO_TIMEPOINTS'] == 384:
         dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
+    elif params['NO_TIMEPOINTS'] == 128*12:
+        dil_lib = [12,12,8,12,12,12]          # for kernels 2,3,4,5,6]
+    elif params['NO_TIMEPOINTS'] == 128*3:
+        dil_lib = [12,12,6,12,12,12]          # for kernels 2,3,4,5,6]
+
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
-    params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
+    params['NO_FILTERS'] = 32#trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
     # params['NO_FILTERS'] = 64
-    ax = 65#trial.suggest_int('AX', 1, 99)
-    gx = 100#trial.suggest_int('GX', 50, 999)
+    ax = 25#trial.suggest_int('AX', 1, 99)
+    gx = 160#trial.suggest_int('GX', 50, 999)
 
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}Entropy'.format(ax, gx)
@@ -207,10 +213,10 @@ def objective_only(trial):
     params['TYPE_ARCH'] = arch_str
 
     # Use multiple binary flags for a combinatorial categorical parameter
-    params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
+    params['USE_ZNorm'] = False#trial.suggest_categorical('USE_ZNorm', [True, False])
     if params['USE_ZNorm']:
         params['TYPE_ARCH'] += 'ZNorm'
-    params['USE_L2N'] = trial.suggest_categorical('USE_L2N', [True, False])
+    params['USE_L2N'] = True#trial.suggest_categorical('USE_L2N', [True, False])
     if params['USE_L2N']:
         params['TYPE_ARCH'] += 'L2N'
 
@@ -231,7 +237,7 @@ def objective_only(trial):
     #     params['TYPE_LOSS'] += 'L2Reg'
 
     drop_lib = [0, 0.05, 0.1, 0.2, 0.5]
-    drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3,4])
+    drop_ind = 0#trial.suggest_categorical('Dropout', [0,1,2,3,4])
     if drop_ind > 0:
         params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
     
@@ -285,108 +291,82 @@ def objective_only(trial):
     # else:
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     # Early stopping with tunable patience
-    callbacks = []
 
-    # Early stopping with tunable patience
-    callbacks.append(cb.EarlyStopping(
-        monitor='val_max_f1_metric_horizon',  # Change monitor
-        patience=30,
-        mode='max',
-        verbose=1,
-        restore_best_weights=True
-    ))
+    # Early stopping parameters
+    best_metric = float('-inf')
+    best_metric2 = float('-inf')
+    best_metric3 = float('inf')
+    patience = 50
+    min_delta = 0.0001
+    patience_counter = 0
     
-    # Import the new multi-objective callback
-    from model.training import WeightDecayCallback, lr_scheduler
-    
-    # use_LR = trial.suggest_categorical('USE_LR', [True, False])
-    # if use_LR:
-    #     params['TYPE_REG'] += 'LR'
-    #     callbacks.append(cb.LearningRateScheduler(lr_scheduler, verbose=1))
+    # Create a list to collect history from each epoch
+    history_list = []
 
-    # if par_opt == 'AdamW':
-    #     params['TYPE_REG'] += 'WD'
-    #     callbacks.append(WeightDecayCallback())
-    
-    callbacks.append(cb.TensorBoard(log_dir=f"{study_dir}/",
+    # Setup callbacks including the verifier
+    callbacks = [cb.TensorBoard(log_dir=f"{study_dir}/",
                                       write_graph=True,
                                       write_images=True,
-                                      update_freq='epoch'))
-    # Better model checkpoint
-    callbacks.append(cb.ModelCheckpoint(
-        f"{study_dir}/max.weights.h5",
-        monitor='val_max_f1_metric_horizon',  # Change monitor
-        verbose=1,
-        save_best_only=True,
-        save_weights_only=True,
-        mode='max'
-    ))
+                                      update_freq='epoch'),
+        cb.EarlyStopping(
+            monitor='val_event_f1_metric',  # Change monitor
+            patience=50,
+            mode='max',
+            verbose=1,
+            restore_best_weights=True
+        ),                                      
+        cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
+                            monitor='val_max_f1_metric_horizon', 
+                            verbose=1,
+                            save_best_only=True,
+                            save_weights_only=True,
+                            mode='max'),
+                            # cb.ModelCheckpoint(
+                            # f"{study_dir}/robust.weights.h5",
+                            # monitor='val_robust_f1',  # Change monitor
+                            # verbose=1,
+                            # save_best_only=True,
+                            # save_weights_only=True,
+                            # mode='max'),
+                            cb.ModelCheckpoint(
+                            f"{study_dir}/event.weights.h5",
+                            monitor='val_event_f1_metric',  # Change monitor
+                            verbose=1,
+                            save_best_only=True,
+                            save_weights_only=True,
+                            mode='max')
+    ]
 
-    # Better model checkpoint
-    callbacks.append(cb.ModelCheckpoint(
-        f"{study_dir}/latency.weights.h5",
-        monitor='val_latency_metric',  # Change monitor
-        verbose=1,
-        save_best_only=True,
-        save_weights_only=True,
-        mode='min',
-    ))
+    # Train and evaluate
+    history = model.fit(
+        train_dataset,
+        validation_data=val_dataset,
+        epochs=params['NO_EPOCHS'],
+        callbacks=callbacks,
+        verbose=1
+    )
+    val_accuracy = (max(history.history['val_event_f1_metric'])+max(history.history['val_max_f1_metric_horizon']))/2
+    val_latency = np.mean(history.history['val_event_fp_rate'])
+    # Log results
+    logger.info(f"Trial {trial.number} finished with val_accuracy: {val_accuracy:.4f}, val_fprate: {val_latency:.4f}")
 
-    # Better model checkpoint
-    callbacks.append(cb.ModelCheckpoint(
-        f"{study_dir}/robust.weights.h5",
-        monitor='val_robust_f1',  # Change monitor
-        verbose=1,
-        save_best_only=True,
-        save_weights_only=True,
-        mode='max'
-    ))
-
-    try:
-        history = model.fit(
-            train_dataset,
-            validation_data=val_dataset,
-            epochs=params['NO_EPOCHS'],
-            callbacks=callbacks,  # this includes your F1PruningCallback
-            verbose=1
-        )
-    except optuna.TrialPruned as e:
-        # Optionally extract intermediate metrics from history if available.
-        # Note: In many cases, history might not be complete.
-        intermediate_f1 = None
-        intermediate_latency = None
-        if history is not None and 'val_max_f1_metric_horizon' in history.history:
-            intermediate_f1 = max(history.history['val_max_f1_metric_horizon'])
-        if history is not None and 'val_latency_metric' in history.history:
-            intermediate_latency = np.mean(history.history['val_latency_metric'])
-        
-        trial_info = {
-            'parameters': params,
-            'metrics': {
-                'val_accuracy': intermediate_f1,
-                'val_latency': intermediate_latency
-            }
-        }
-        with open(f"{study_dir}/trial_info.json", 'w') as f:
-            json.dump(trial_info, f, indent=4)
-        # Re-raise to mark the trial as pruned.
-        raise e
-
-    # If the trial completes, compute the final metrics.
-    final_f1 = (np.mean(history.history['val_robust_f1']) + 
-                max(history.history['val_max_f1_metric_horizon'])) / 2
-    final_latency = np.mean(history.history['val_latency_metric'])
+    # Save trial information
     trial_info = {
         'parameters': params,
         'metrics': {
-            'val_accuracy': final_f1,
-            'val_latency': final_latency
+        'val_accuracy': val_accuracy,
+        'val_latency': val_latency
         }
     }
     with open(f"{study_dir}/trial_info.json", 'w') as f:
         json.dump(trial_info, f, indent=4)
-    
-    return final_f1, final_latency
+
+    # Proper cleanup after training
+    del model
+    gc.collect()
+    tf.keras.backend.clear_session()
+
+    return val_accuracy, val_latency
 
 
 def objective_triplet(trial):
@@ -636,37 +616,6 @@ def objective_triplet(trial):
     # Create a list to collect history from each epoch
     history_list = []
 
-    class FalsePositiveSampler(tf.keras.callbacks.Callback):
-        def __init__(self, threshold=0.5, buffer_path="fp_buffer.npy", max_buffer_size=1000):
-            self.threshold = threshold
-            self.buffer_path = buffer_path
-            self.max_buffer_size = max_buffer_size
-            self.fp_buffer = []
-
-        def on_batch_end(self, batch, logs=None):
-            y_true = self.model._last_y_true.numpy()
-            y_pred = self.model._last_y_pred.numpy()
-
-            pred_labels = (y_pred[..., 0] >= self.threshold).astype(np.float32)
-            true_labels = (y_true[..., 0] >= 0.5).astype(np.float32)
-
-            # Identify FPs
-            false_positives = (pred_labels == 1) & (true_labels == 0)
-
-            if np.any(false_positives):
-                # Save the raw inputs corresponding to FPs
-                x_batch = self.model._last_x_batch.numpy()  # Needs to be stored beforehand
-                for i in range(len(x_batch)):
-                    if np.any(false_positives[i]):
-                        self.fp_buffer.append(x_batch[i])
-                        if len(self.fp_buffer) > self.max_buffer_size:
-                            self.fp_buffer.pop(0)
-
-            # Optionally save to disk
-            np.save(self.buffer_path, self.fp_buffer)
-
-    # Wrap your data generator to load samples from this buffer periodically.
-    
     # Setup callbacks including the verifier
     callbacks = [cb.TensorBoard(log_dir=f"{study_dir}/",
                                       write_graph=True,
@@ -959,7 +908,7 @@ elif mode == 'predict':
         # study_dirs = glob.glob(f'studies_1/study_{study_num}_*')
         tag = args.tag[0]
         param_dir = f"params_{tag}"
-        study_dirs = glob.glob(f'/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/studies/{param_dir}/study_{study_num}_*')
+        study_dirs = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/study_{study_num}_*')
         # study_dirs = glob.glob(f'studies_CHECK_SIGNALS/{param_dir}/study_{study_num}_*')
         if not study_dirs:
             raise ValueError(f"No study directory found for study number {study_num}")
@@ -1531,13 +1480,92 @@ elif mode=='export':
     # necessary !!!
     # tf.compat.v1.disable_eager_execution()
 
-    if model_name == 'RippleNet':
+
+    if model_name.startswith('Tune'):
+        # Extract study number from model name (e.g., 'Tune_45_' -> '45')
+        study_num = model_name.split('_')[1]
+        print(f"Loading tuned model from study {study_num}")
+
+        # params['SRATE'] = 2500
+        # Find the study directory
+        import glob
+        # study_dirs = glob.glob(f'studies_1/study_{study_num}_*')
+        tag = args.tag[0]
+        param_dir = f"params_{tag}"
+        study_dirs = glob.glob(f'/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/studies/{param_dir}/study_{study_num}_*')
+        # study_dirs = glob.glob(f'studies_CHECK_SIGNALS/{param_dir}/study_{study_num}_*')
+        if not study_dirs:
+            raise ValueError(f"No study directory found for study number {study_num}")
+        study_dir = study_dirs[0]  # Take the first matching directory
+
+        # Load trial info to get parameters
+        with open(f"{study_dir}/trial_info.json", 'r') as f:
+            trial_info = json.load(f)
+            params.update(trial_info['parameters'])
+
+        # pdb.set_trace()
+        # Import required modules
+        if 'MixerOnly' in params['TYPE_ARCH']:
+            # from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_MixerOnly
+        elif 'MixerHori' in params['TYPE_ARCH']:
+            # from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_HorizonMixer
+        elif 'MixerDori' in params['TYPE_ARCH']:
+            # from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_DorizonMixer
+        elif 'MixerCori' in params['TYPE_ARCH']:
+            # from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
+        elif 'TripletOnly' in params['TYPE_ARCH']:
+            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+        from model.model_fn import CSDLayer
+        from tcn import TCN
+        from keras.models import load_model
+        # Load weights
+        params['mode'] = 'predict'
+        # weight_file = f"{study_dir}/last.weights.h5"
+        # if 'MixerOnly' in params['TYPE_ARCH']:
+        weight_file = f"{study_dir}/max.weights.h5"
+        tag += 'MaxF1'
+        # else:
+        #     weight_file = f"{study_dir}/event.weights.h5"
+        #     tag += 'EvF1'
+        
+        # weight_file = f"{study_dir}/robust.weights.h5"
+        print(f"Loading weights from: {weight_file}")
+        model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+        model.load_weights(weight_file)
+    elif model_name == 'RippleNet':
         import sys, pickle, keras, h5py
+        # load info on best model (path, threhsold settings)
         sys.path.insert(0, '/cs/projects/OWVinckSWR/DL/RippleNet/')
         from ripplenet.common import *
         params['TYPE_ARCH'] = 'RippleNet'
 
         # load info on best model (path, threhsold settings)
+        # load the 'best' performing model on the validation sets
         with open('/cs/projects/OWVinckSWR/DL/RippleNet/best_model.pkl', 'rb') as f:
             best_model = pickle.load(f)
             print(best_model)
@@ -1550,7 +1578,6 @@ elif mode=='export':
         model_number = 1
         arch = model_name
         params['TYPE_ARCH'] = arch
-
         for filename in os.listdir('/mnt/hpc/projects/OWVinckSWR/Carmen/DBI2/rippl-AI/optimized_models/'):
             if f'{arch}_{model_number}' in filename:
                 break
@@ -1558,7 +1585,6 @@ elif mode=='export':
         sp=filename.split('_')
         n_channels=int(sp[2][2])
         timesteps=int(sp[4][2:])
-
         optimizer = keras.optimizers.Adam(learning_rate=0.001, beta_1=0.9, beta_2=0.999, epsilon=1e-07, amsgrad=False)
         if new_model==None:
             model = keras.models.load_model(os.path.join('/mnt/hpc/projects/OWVinckSWR/Carmen/DBI2/rippl-AI/optimized_models',filename), compile=False)
@@ -1574,7 +1600,6 @@ elif mode=='export':
         # get model parameters
         print(model_name)
         param_lib = model_name.split('_')
-        # pdb.set_trace()
         assert(len(param_lib)==12)
         params['TYPE_MODEL'] = param_lib[0]
         print(params['TYPE_MODEL'])
@@ -1609,17 +1634,21 @@ elif mode=='export':
         params['TYPE_ARCH'] = param_lib[11]
         print(params['TYPE_ARCH'])
 
+        # get sampling rate # little dangerous assumes 4 digits
+        if 'Samp' in params['TYPE_LOSS']:
+            sind = params['TYPE_LOSS'].find('Samp')
+            params['SRATE'] = int(params['TYPE_LOSS'][sind+4:sind+8])
+        else:
+            params['SRATE'] = 1250
+
+        # tag = ''  # MUAX, LP,
         # get model
-        # a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
-        a_model = importlib.import_module('model.model_fn')
-        # if model.find('CSD') != -1:
-        #     build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
-        if model.find('Hori') != -1:
-            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Horizon')
-        elif model.find('Dori') != -1:
-            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Dorizon')
-        elif model.find('Cori') != -1:
-            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_Corizon')
+        a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        if model.find('CSD') != -1:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
+        else:
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+        # from model.model_fn import build_DBI_TCN
 
         params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
@@ -1628,7 +1657,7 @@ elif mode=='export':
     # pdb.set_trace()
     from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
     full_model = tf.function(lambda x: model(x))
-    pdb.set_trace()
+    # pdb.set_trace()
     full_model = full_model.get_concrete_function([tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype, name="x")])
     frozen_func = convert_variables_to_constants_v2(full_model, lower_control_flow=False)
     frozen_func.graph.as_graph_def(add_shapes=True)
@@ -2106,7 +2135,7 @@ elif mode == 'tune_viz_multi':
     print(json.dumps(stats, indent=2))
 
     # Define the number of top models to consider for both F1 and Latency
-    N_TOP_MODELS = 280  # You can change this value as needed
+    N_TOP_MODELS = 300  # You can change this value as needed
 
     # Collect all trial data with valid values for both metrics
     all_trial_data = [
