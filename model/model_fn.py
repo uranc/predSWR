@@ -8,6 +8,7 @@ from tensorflow_addons.activations import gelu
 from tensorflow.keras.initializers import Constant
 from tensorflow.keras.regularizers import l1, l2
 from tensorflow.keras import backend as K
+from tensorflow.keras import layers
 from tensorflow.keras.models import Model
 from tensorflow.keras import applications
 from model.patchAD.patch_ad import PatchAD
@@ -1015,6 +1016,114 @@ def build_model_PatchAD(input_timepoints, input_chans=8, patch_sizes=[2, 4, 8, 1
 
     return model
 
+def build_CAD_Downsampler(input_shape=(1536*2, 8), target_length=128*2, embed_dim=32):
+    """
+    Causal Context-Aware Downsampler with ELU activations and residual connections.
+    Downsamples from 1024 → 128 timepoints.
+    """
+    inputs = Input(shape=input_shape, name="highfreq_input")
+    x = inputs
+
+    num_blocks = int(tf.math.log(float(1536*2) / target_length) / tf.math.log(2.0))
+    for i in range(num_blocks):
+        # Store the input before processing for skip connection
+        input_layer = x
+
+        # Apply convolution with downsampling (stride=2)
+        x = layers.Conv1D(embed_dim,
+                          kernel_size=5 if i == 0 else 3,
+                          strides=3 if i == 0 else 2,
+                          padding="causal",
+                          activation=None,
+                        name=f"conv_block_{i}")(x)
+        x = layers.LayerNormalization()(x)
+        x = layers.ELU()(x)
+
+        # Use average pooling to downsample the input to match conv output dimensions
+        pooled_input = layers.AveragePooling1D(pool_size=2, strides=2, padding="same")(input_layer)
+
+        # Project channels if needed (regardless of sequence length)
+        if pooled_input.shape[-1] != embed_dim:
+            pooled_input = layers.Conv1D(embed_dim, kernel_size=1, padding="same")(pooled_input)
+
+        # Always trim pooled_input to match x's length using a Lambda layer
+        # This avoids comparing symbolic tensors directly
+        pooled_input = layers.Lambda(
+            lambda tensors: tensors[0][:, :tf.shape(tensors[1])[1], :],
+            name=f"trim_skip_{i}"
+        )([pooled_input, x])
+
+        # Add the transformed input as a skip connection
+        x = layers.Add()([x, pooled_input])
+
+    # Final projection to match original channel dim (8)
+    x = layers.Conv1D(input_shape[1], kernel_size=1, activation="elu")(x)
+
+    return Model(inputs, x, name="CAD_Downsampler")
+
+def build_DBI_TCN_CADMixerOnly(input_timepoints, input_chans=8, params=None, pretrained_tcn=None):
+    print('Input Timepoints', input_timepoints)
+    # optimizer
+    if params['TYPE_REG'].find('AdamW')>-1:
+        # Increase initial learning rate for better exploration
+        initial_lr = params['LEARNING_RATE'] * 2.0
+        this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, clipnorm=1.0)
+    elif params['TYPE_REG'].find('Adam')>-1:
+        this_optimizer = tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE'])
+    elif params['TYPE_REG'].find('SGD')>-1:
+        this_optimizer = tf.keras.optimizers.SGD(learning_rate=params['LEARNING_RATE'], momentum=0.9)
+
+    downsample_dim = params['NO_FILTERS']
+    # horizontal shift
+    hori_shift = 0
+    if params['TYPE_ARCH'].find('Only')>-1:
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Only')+4:params['TYPE_ARCH'].find('Only')+6])/1000*2500)
+        print('Using Horizon Timesteps:', hori_shift)
+
+    print('Using Loss Weight:', params['LOSS_WEIGHT'])
+    loss_weight = params['LOSS_WEIGHT']
+    # model to be trained
+    # with K.name_scope('CAD'):  # name scope used to make sure weights get unique names
+    # CAD = build_CAD_Downsampler(input_shape=(None, 8), target_length=input_timepoints, embed_dim=downsample_dim)  # CAD module
+    CAD = build_CAD_Downsampler(input_shape=(1536*2, 8), target_length=128*2, embed_dim=downsample_dim)  # CAD module
+
+    # Inputs
+    X_highfreq = Input(shape=(None, 8), name="X_highfreq")     # 30 kHz input
+    # y_label = Input(shape=(T,), name="y_label")                # label for classification (same T as TCN output)
+
+    # CAD module
+    X_downsampled = CAD(X_highfreq)                            # Output shape: (96, 8)
+
+    # Frozen TCN
+    TCN_output = pretrained_tcn(X_downsampled)
+    # pdb.set_trace()
+    TCN_output = Lambda(lambda x: x[:, -128:, :], name='Last_Output')(TCN_output)  # Output shape: (128, 8)
+    # TCN_output = Lambda(lambda x: x[:, -input_timepoints:, :], name='Last_Output')(TCN_output)  # Output shape: (128, 8)
+
+
+    model = Model(inputs=X_highfreq, outputs=TCN_output)
+    model._is_classification_only = True
+    # model._is_cad = True
+
+    f1_metric = MaxF1MetricHorizon(model=model)
+    event_f1_metric = EventAwareF1(model=model)
+    fp_event_metric = EventFalsePositiveRateMetric(model=model)
+
+    # Create loss function without calling it
+    loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+
+    model.compile(optimizer=this_optimizer,
+                  loss=loss_fn,
+                  metrics=[f1_metric, event_f1_metric, fp_event_metric])
+
+    if params['WEIGHT_FILE']:
+        print('load model')
+        model.load_weights(params['WEIGHT_FILE'])
+
+    return model
+
+
+
 #################### Custom Layers ####################
 class CSDLayer(Layer):
     """
@@ -1113,6 +1222,15 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
         y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
         y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
 
+        # is_cad = getattr(self.model, "_is_cad", False)
+        # print('Using CAD:', is_cad)
+        # if is_cad:
+        #     print('Using CAD mode and downsampling labels')
+        #     pool = tf.keras.layers.MaxPooling1D(pool_size=12, strides=12, padding='valid')
+        #     y_true_exp_expanded = tf.expand_dims(y_true_labels, axis=-1)
+        #     y_true_labels = tf.squeeze(pool(y_true_exp_expanded), axis=-1)#_expanded)
+
+            
         def process_threshold(threshold):
             pred_events = tf.cast(y_pred_labels >= threshold, tf.float32)
             true_events = tf.cast(y_true_labels >= 0.5, tf.float32)
@@ -1153,7 +1271,7 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
 
 class EventAwareF1(tf.keras.metrics.Metric):
     def __init__(self, name="event_f1_metric", thresholds=tf.linspace(0.0, 1.0, 11),
-                 early_margin=40, late_margin=10, model=None, **kwargs):
+                 early_margin=40, late_margin=40, model=None, **kwargs):
         super(EventAwareF1, self).__init__(name=name, **kwargs)
         self.thresholds = thresholds
         self.early_margin = early_margin
@@ -1167,11 +1285,21 @@ class EventAwareF1(tf.keras.metrics.Metric):
     def update_state(self, y_true, y_pred, **kwargs):
         # Determine which branch of outputs to use
         is_classification_only = getattr(self.model, "_is_classification_only", True)
-        print('Using classification only:', is_classification_only)
+        # print('Using classification only:', is_classification_only)
+
         # Assume the true labels and predictions have shape [B, T, channels]
         # and we take channel 0 for classification (or channel 8 if not)
         y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
         y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
+        
+        # is_cad = getattr(self.model, "_is_cad", False)
+        # print('Using CAD:', is_cad)
+        # if is_cad:
+        #     print('Using CAD mode and downsampling labels')
+        #     pool = tf.keras.layers.MaxPooling1D(pool_size=12, strides=12, padding='valid')
+        #     y_true_exp_expanded = tf.expand_dims(y_true_labels, axis=-1)
+        #     y_true_labels = tf.squeeze(pool(y_true_exp_expanded), axis=-1)#_expanded)
+
         # Now y_true_labels and y_pred_labels are [B, T]
 
         B = tf.shape(y_true_labels)[0]
@@ -1217,8 +1345,10 @@ class EventAwareF1(tf.keras.metrics.Metric):
             fn_event = tf.where(has_event, 1 - match, tf.zeros_like(match))
             # For samples without an event:
             #   - False Positives (FP) = total number of predicted events in that sample.
-            fp_no_event = tf.where(~has_event, tf.reduce_sum(y_pred_bin, axis=1), tf.zeros_like(tf.reduce_sum(y_pred_bin, axis=1)))
-
+            # fp_no_event = tf.where(~has_event, tf.reduce_sum(y_pred_bin, axis=1), tf.zeros_like(tf.reduce_sum(y_pred_bin, axis=1)))
+            fp_no_event = tf.where(~has_event,
+                                tf.cast(tf.reduce_any(tf.equal(y_pred_bin, 1.0), axis=1), tf.float32),
+                                tf.zeros_like(tf.reduce_sum(y_pred_bin, axis=1)))
             # Sum across the batch for this threshold.
             tp_total = tf.reduce_sum(tp_event)
             fp_total = tf.reduce_sum(fp_no_event)
@@ -1260,6 +1390,14 @@ class EventFalsePositiveRateMetric(tf.keras.metrics.Metric):
         is_classification_only = getattr(self.model, "_is_classification_only", True)
         y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
         y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
+
+        # is_cad = getattr(self.model, "_is_cad", False)
+        # print('Using CAD:', is_cad)
+        # if is_cad:
+        #     print('Using CAD mode and downsampling labels')
+        #     pool = tf.keras.layers.MaxPooling1D(pool_size=12, strides=12, padding='valid')
+        #     y_true_exp_expanded = tf.expand_dims(y_true_labels, axis=-1)
+        #     y_true_labels = tf.squeeze(pool(y_true_exp_expanded), axis=-1)#_expanded)
 
         # Determine which windows are negative (no event in ground-truth).
         neg_mask = tf.less(tf.reduce_max(y_true_labels, axis=1), 0.5)  # shape: [B], dtype bool
@@ -1450,6 +1588,7 @@ class RobustF1Metric(tf.keras.metrics.Metric):
 def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None):
     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
     is_classification_only = 'Only' in  params['TYPE_ARCH']
+    is_cad = 'CAD' in params['TYPE_ARCH']
     """
     Custom loss function that combines focal binary cross-entropy (FBFCE) with additional terms.
     Args:
@@ -1463,10 +1602,11 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
     Returns:
     - Combined loss value.
     """
-    def loss_fn(y_true, y_pred, loss_weight=loss_weight, horizon=horizon, flag_sigmoid=flag_sigmoid, is_classification_only=is_classification_only):
+    def loss_fn(y_true, y_pred, loss_weight=loss_weight, horizon=horizon, flag_sigmoid=flag_sigmoid, is_classification_only=is_classification_only, is_cad=is_cad):
         # Get the last dimension size and determine mode
-        print(y_true.shape)
-        print(y_pred.shape)
+        # print(y_true.shape)
+        # print(y_pred.shape)
+        # pdb.set_trace()
 
         def extract_param_from_loss_type(loss_type, param_prefix, default_value):
             """Helper function to extract parameters from loss type string"""
@@ -1523,7 +1663,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
                 alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
                 gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
 
-                print(f"Using Focal loss with alpha={alpha}, gamma={gamma}")
+                # print(f"Using Focal loss with alpha={alpha}, gamma={gamma}")
 
                 use_class_balancing = alpha > 0
                 focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
@@ -1532,9 +1672,11 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
                     gamma=gamma,
                     reduction=tf.keras.losses.Reduction.NONE
                 )
+                # pdb.set_trace()
                 loss_values = focal_loss(y_true_exp, y_pred_exp)
                 # pdb.set_trace()
-                classification_loss = tf.reduce_mean(loss_values * sample_weight)
+                classification_loss = tf.reduce_mean(loss_values)# * sample_weight)
+                # classification_loss = tf.reduce_mean(loss_values * sample_weight)
 
             # Default to binary cross-entropy
             else:
@@ -1757,7 +1899,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
             dummy_tensor = tf.zeros(dummy_shape)
             return dummy_tensor, dummy_tensor, y_true_exp, y_pred_exp
 
-        print('Using classification only:', is_classification_only)
+        # print('Using classification only:', is_classification_only)
         if not is_classification_only:
             prediction_targets, prediction_out, y_true_exp, y_pred_exp = prediction_mode_branch()
             if (len(y_true.shape) == 3) and (y_true.shape[-1] > 9 ):
@@ -1766,10 +1908,20 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
                 sample_weight = tf.ones_like(y_true[:, :, 0])
         else:
             prediction_targets, prediction_out, y_true_exp, y_pred_exp = classification_mode_branch()
+            
             if (len(y_true.shape) == 3) and (y_true.shape[-1] > 1 ):
                 sample_weight = y_true[:, :, 1]
             else:
                 sample_weight = tf.ones_like(y_true[:, :, 0])
+                
+            # if is_cad:
+            #     print('Using CAD mode and downsampling labels')
+            #     pool = tf.keras.layers.MaxPooling1D(pool_size=12, strides=12, padding='valid')
+            #     sample_weight_expanded = tf.expand_dims(sample_weight, axis=-1) 
+            #     sample_weight = pool(sample_weight_expanded)
+            #     # y_true_exp_expanded = tf.expand_dims(y_true_exp, axis=-1)
+            #     y_true_exp = pool(y_true_exp)
+
 
         # # Maybe zero weights during training (20% chance)
         # if params.get('TRAINING', False):  # Only if in training mode

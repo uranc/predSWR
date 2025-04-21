@@ -22,3 +22,4 @@ studies_3/
 studies_4/
 time_analysis/ROC_curves/*.png
 *.txt
+umap_approx_model.pkl

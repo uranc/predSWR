@@ -725,14 +725,14 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
     weights = weights.astype('float32')
     # make datasets
     sample_length = params['NO_TIMEPOINTS']*2
-    stride_step = sample_length/params['NO_STRIDES']
+    stride_step = params['NO_STRIDES']
 
     # train
     train_x = timeseries_dataset_from_array(
         train_examples,
         None,
         sequence_length=sample_length,
-        sequence_stride=sample_length/stride_step,
+        sequence_stride=stride_step,
         batch_size=None,#params["BATCH_SIZE"],
         shuffle=False
     )
@@ -740,7 +740,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         train_labels[int(sample_length/2)+sample_shift:].reshape(-1,1),
         None,
         sequence_length=sample_length/2,
-        sequence_stride=sample_length/stride_step,
+        sequence_stride=stride_step,
         batch_size=None,#params["BATCH_SIZE"],
         shuffle=False
     )
@@ -748,16 +748,15 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         weights[int(sample_length/2)+sample_shift:].reshape(-1,1),
         None,
         sequence_length=sample_length/2,
-        sequence_stride=sample_length/stride_step,
+        sequence_stride=stride_step,
         batch_size=None,#params["BATCH_SIZE"],
         shuffle=False
     )
-
     test_x = timeseries_dataset_from_array(
         test_examples,
         None,
         sequence_length=sample_length,
-        sequence_stride=sample_length/stride_step,
+        sequence_stride=stride_step,
         batch_size=None,#params["BATCH_SIZE"],
         shuffle=False
     )
@@ -765,16 +764,30 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         test_labels[int(sample_length/2)+sample_shift:].reshape(-1,1),
         None,
         sequence_length=sample_length/2,
-        sequence_stride=sample_length/stride_step,
+        sequence_stride=stride_step,
         batch_size=None,#params["BATCH_SIZE"],
         shuffle=False
     )
 
-    # Apply layer normalization to LFPs
-    def channel_normalize(data):
-        mean, variance = tf.nn.moments(data, axes=[1], keepdims=True)
-        normalized_data = (data - mean) / tf.sqrt(variance + 1e-6)
-        return normalized_data
+    if params['TYPE_ARCH'].find('CAD')>-1:
+        print('Using CAD')
+        def downsample_labels(targets):
+            # Add a channel dimension for max pooling
+            targets = tf.expand_dims(targets, axis=0)
+            # Apply max pooling with a window size of 12 and stride of 12
+            targets = tf.nn.max_pool1d(targets, ksize=12, strides=12, padding='VALID')
+            # Remove the channel dimension after pooling
+            targets = tf.squeeze(targets, axis=0)
+            return targets          
+        train_y = train_y.map(lambda x: downsample_labels(x))
+        train_w = train_w.map(lambda x: downsample_labels(x))
+        test_y = test_y.map(lambda x: downsample_labels(x))
+
+    # # Apply layer normalization to LFPs
+    # def channel_normalize(data):
+    #     mean, variance = tf.nn.moments(data, axes=[1], keepdims=True)
+    #     normalized_data = (data - mean) / tf.sqrt(variance + 1e-6)
+    #     return normalized_data
 
     # train_x = train_x.map(lambda x: (channel_normalize(x)))
     # test_x = test_x.map(lambda x: (channel_normalize(x)))
@@ -789,6 +802,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
             return tf.concat([labels, weights], axis=-1)  # Concatenate along the last axis (channels)ZZ
         train_d = train_c.map(lambda x, y: concat_lfps_labels_weights(x, y))
         test_d = test_c
+
     else:
         # train_y = train_y.map(lambda x: tf.pad(x, [[0, 0], [50, 0], [0, 0]], 'CONSTANT', constant_values=0.0))
         train_xy = train_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
