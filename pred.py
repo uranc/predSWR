@@ -347,8 +347,8 @@ def objective_only_30k(trial):
 
     # Dynamic learning rate range
     batch_size = 64
-    # params['LEARNING_RATE'] = 1e-3
-    params['LEARNING_RATE'] = trial.suggest_float('learning_rate', 1e-3, 1e-1, log=True)
+    params['LEARNING_RATE'] = 5e-3
+    # params['LEARNING_RATE'] = trial.suggest_float('learning_rate', 1e-3, 1e-1, log=True)
     params['BATCH_SIZE'] = batch_size
 
     # Base parameters
@@ -440,15 +440,16 @@ def objective_only_30k(trial):
     # pdb.set_trace()
     # Timing parameters remain the same
     # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
-    params['NO_TIMEPOINTS'] = 1536 #128
+    params['NO_TIMEPOINTS'] = 1104 #128
     # params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'])
-    params['NO_STRIDES'] = trial.suggest_int('NO_STRIDES', params['NO_TIMEPOINTS']/4, params['NO_TIMEPOINTS'], step=params['NO_TIMEPOINTS']/4)
+    params['NO_STRIDES'] = trial.suggest_int('NO_STRIDES', params['NO_TIMEPOINTS']/16, params['NO_TIMEPOINTS'], step=params['NO_TIMEPOINTS']/8)
 
     # params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
     # params['NO_STRIDES'] = trial.suggest_int('NO_STRIDES', 128*3, params['NO_TIMEPOINTS']*4*3, step=128*3)
 
     # Timing parameters remain the same
-    params['HORIZON_MS'] = trial.suggest_int('HORIZON_MS', 1, 9, step=2)
+    # params['HORIZON_MS'] = trial.suggest_int('HORIZON_MS', 1, 9, step=2)
+    params['HORIZON_MS'] = 0
     params['SHIFT_MS'] = 0
 
     params['LOSS_WEIGHT'] = 1#trial.suggest_float('LOSS_WEIGHT', 0.000001, 10.0, log=True)
@@ -486,6 +487,8 @@ def objective_only_30k(trial):
         dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
     elif params['NO_TIMEPOINTS'] == 128*12:
         dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]
+    elif params['NO_TIMEPOINTS'] == 92*12:
+        dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]
 
 
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
@@ -495,10 +498,12 @@ def objective_only_30k(trial):
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
     params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
     # params['NO_FILTERS'] = 64
-    ax = trial.suggest_int('AX', 25, 75, step=25)
+    # ax = trial.suggest_int('AX', 25, 75, step=25)
+    ax = 25
     # ax = trial.suggest_int('AX', 25, 25, step=0)
     # gx = 100
-    gx = trial.suggest_int('GX', 50, 200, step=50)
+    # gx = trial.suggest_int('GX', 50, 200, step=50)
+    gx = 150
 
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     params['TYPE_LOSS'] = 'Samp{}FocalGapAx{:03d}Gx{:03d}Entropy'.format(params['SRATE'], ax, gx)
@@ -1223,7 +1228,7 @@ if mode == 'train':
             tt = tf.TensorSpec([batch_size*3, params['NO_TIMEPOINTS'], params['NO_CHANNELS']], tf.float32)
             frozen_func = concrete_func.get_concrete_function(tt)
         if 'CADOnly' in params['TYPE_ARCH']:
-            tt = tf.TensorSpec([batch_size, 1536, params['NO_CHANNELS']], tf.float32)
+            tt = tf.TensorSpec([batch_size, 1104, params['NO_CHANNELS']], tf.float32)
             frozen_func = concrete_func.get_concrete_function(tt)
         else:
             frozen_func = concrete_func.get_concrete_function(
@@ -1247,7 +1252,6 @@ if mode == 'train':
         print('Training model with custom training loop')
         train_model(train_dataset, test_dataset, params=params)
     else:
-        pdb.set_trace()
         print('Training model with keras')
         from model.training import train_pred
         if 'SigmoidFoc' in params['TYPE_LOSS']:
@@ -1321,6 +1325,58 @@ elif mode == 'predict':
             model_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+        elif 'CADOnly' in params['TYPE_ARCH']:
+            pretrain_tag = 'params_mixerOnlyEvents2500'
+            pretrain_num = 1414#958
+            pretrained_dir = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{pretrain_tag}/study_{pretrain_num}_*')
+            if not study_dir:
+                raise ValueError(f"No study directory found for study number {pretrain_num}")
+            pretrained_dir = pretrained_dir[0]  # Take the first matching directory
+
+            pretrained_params = copy.deepcopy(params)
+            # Load trial info to get parameters
+            with open(f"{pretrained_dir}/trial_info.json", 'r') as f:
+                trial_info = json.load(f)
+                pretrained_params.update(trial_info['parameters'])
+
+            # Check which weight file is most recent
+            event_weights = f"{pretrained_dir}/event.weights.h5"
+            max_weights = f"{pretrained_dir}/max.weights.h5"
+
+            if os.path.exists(event_weights) and os.path.exists(max_weights):
+                # Both files exist, select the most recently modified one
+                event_mtime = os.path.getmtime(event_weights)
+                max_mtime = os.path.getmtime(max_weights)
+
+                if event_mtime > max_mtime:
+                    weight_file = event_weights
+                    print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
+                else:
+                    weight_file = max_weights
+                    print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
+            elif os.path.exists(event_weights):
+                weight_file = event_weights
+                print("Using event.weights.h5 (max.weights.h5 not found)")
+            elif os.path.exists(max_weights):
+                weight_file = max_weights
+                print("Using max.weights.h5 (event.weights.h5 not found)")
+            else:
+                raise ValueError(f"Neither event.weights.h5 nor max.weights.h5 found in {pretrained_dir}")
+            print(f"Loading weights from: {weight_file}")
+
+            pretrained_params["WEIGHT_FILE"] = weight_file
+
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{pretrained_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN_Pretrained = model_module.build_DBI_TCN_MixerOnly
+            
+            pretrained_tcn = build_DBI_TCN_Pretrained(pretrained_params["NO_TIMEPOINTS"], params=pretrained_params)
+            pretrained_tcn.load_weights(weight_file)
+            pretrained_tcn.trainable = False
+            pretrained_tcn.compile(optimizer='adam', loss='mse')
+            model = build_DBI_TCN(pretrained_params["NO_TIMEPOINTS"], params=params, pretrained_tcn=pretrained_tcn)            
         from model.model_fn import CSDLayer
         from tcn import TCN
         from keras.models import load_model

@@ -724,7 +724,15 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
 
     weights = weights.astype('float32')
     # make datasets
-    sample_length = params['NO_TIMEPOINTS']*2
+    
+    if params['TYPE_ARCH'].find('CAD')>-1:
+        sample_length = params['NO_TIMEPOINTS']
+        label_length = 1
+        label_skip = sample_length
+    else:
+        sample_length = params['NO_TIMEPOINTS']*2
+        label_length = sample_length/2
+        label_skip = int(sample_length/2)
     stride_step = params['NO_STRIDES']
 
     # train
@@ -737,17 +745,17 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         shuffle=False
     )
     train_y = timeseries_dataset_from_array(
-        train_labels[int(sample_length/2)+sample_shift:].reshape(-1,1),
+        train_labels[label_skip+sample_shift:].reshape(-1,1),
         None,
-        sequence_length=sample_length/2,
+        sequence_length=label_length,
         sequence_stride=stride_step,
         batch_size=None,#params["BATCH_SIZE"],
         shuffle=False
     )
     train_w = timeseries_dataset_from_array(
-        weights[int(sample_length/2)+sample_shift:].reshape(-1,1),
+        weights[label_skip+sample_shift:].reshape(-1,1),
         None,
-        sequence_length=sample_length/2,
+        sequence_length=label_length,
         sequence_stride=stride_step,
         batch_size=None,#params["BATCH_SIZE"],
         shuffle=False
@@ -761,27 +769,27 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         shuffle=False
     )
     test_y = timeseries_dataset_from_array(
-        test_labels[int(sample_length/2)+sample_shift:].reshape(-1,1),
+        test_labels[label_skip+sample_shift:].reshape(-1,1),
         None,
-        sequence_length=sample_length/2,
+        sequence_length=label_length,
         sequence_stride=stride_step,
         batch_size=None,#params["BATCH_SIZE"],
         shuffle=False
     )
 
-    if params['TYPE_ARCH'].find('CAD')>-1:
-        print('Using CAD')
-        def downsample_labels(targets):
-            # Add a channel dimension for max pooling
-            targets = tf.expand_dims(targets, axis=0)
-            # Apply max pooling with a window size of 12 and stride of 12
-            targets = tf.nn.max_pool1d(targets, ksize=12, strides=12, padding='VALID')
-            # Remove the channel dimension after pooling
-            targets = tf.squeeze(targets, axis=0)
-            return targets          
-        train_y = train_y.map(lambda x: downsample_labels(x))
-        train_w = train_w.map(lambda x: downsample_labels(x))
-        test_y = test_y.map(lambda x: downsample_labels(x))
+    # if params['TYPE_ARCH'].find('CAD')>-1:
+    #     print('Using CAD')
+    #     def downsample_labels(targets):
+    #         # Add a channel dimension for max pooling
+    #         targets = tf.expand_dims(targets, axis=0)
+    #         # Apply max pooling with a window size of 12 and stride of 12
+    #         targets = tf.nn.max_pool1d(targets, ksize=12, strides=12, padding='VALID')
+    #         # Remove the channel dimension after pooling
+    #         targets = tf.squeeze(targets, axis=0)
+    #         return targets          
+    #     train_y = train_y.map(lambda x: downsample_labels(x))
+    #     train_w = train_w.map(lambda x: downsample_labels(x))
+    #     test_y = test_y.map(lambda x: downsample_labels(x))
 
     # # Apply layer normalization to LFPs
     # def channel_normalize(data):

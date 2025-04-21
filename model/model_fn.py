@@ -1024,7 +1024,7 @@ def build_CAD_Downsampler(input_shape=(1536*2, 8), target_length=128*2, embed_di
     inputs = Input(shape=input_shape, name="highfreq_input")
     x = inputs
 
-    num_blocks = int(tf.math.log(float(1536*2) / target_length) / tf.math.log(2.0))
+    num_blocks = int(tf.math.log(float(input_shape[0]) / target_length) / tf.math.log(2.0))
     for i in range(num_blocks):
         # Store the input before processing for skip connection
         input_layer = x
@@ -1085,7 +1085,7 @@ def build_DBI_TCN_CADMixerOnly(input_timepoints, input_chans=8, params=None, pre
     # model to be trained
     # with K.name_scope('CAD'):  # name scope used to make sure weights get unique names
     # CAD = build_CAD_Downsampler(input_shape=(None, 8), target_length=input_timepoints, embed_dim=downsample_dim)  # CAD module
-    CAD = build_CAD_Downsampler(input_shape=(1536*2, 8), target_length=128*2, embed_dim=downsample_dim)  # CAD module
+    CAD = build_CAD_Downsampler(input_shape=(1104, 8), target_length=92, embed_dim=downsample_dim)  # CAD module
 
     # Inputs
     X_highfreq = Input(shape=(None, 8), name="X_highfreq")     # 30 kHz input
@@ -1097,7 +1097,7 @@ def build_DBI_TCN_CADMixerOnly(input_timepoints, input_chans=8, params=None, pre
     # Frozen TCN
     TCN_output = pretrained_tcn(X_downsampled)
     # pdb.set_trace()
-    TCN_output = Lambda(lambda x: x[:, -128:, :], name='Last_Output')(TCN_output)  # Output shape: (128, 8)
+    TCN_output = Lambda(lambda x: x[:, -1:, :], name='Last_Output')(TCN_output)  # Output shape: (128, 8)
     # TCN_output = Lambda(lambda x: x[:, -input_timepoints:, :], name='Last_Output')(TCN_output)  # Output shape: (128, 8)
 
 
@@ -1638,6 +1638,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
                     label_smoothing=0.1,
                     reduction=tf.keras.losses.Reduction.NONE
                 )
+                # pdb.set_trace()
                 loss_values = focal_loss(y_true_exp, y_pred_exp)
                 classification_loss = tf.reduce_mean(loss_values * sample_weight)
 
@@ -1907,6 +1908,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
             else:
                 sample_weight = tf.ones_like(y_true[:, :, 0])
         else:
+            # pdb.set_trace()
             prediction_targets, prediction_out, y_true_exp, y_pred_exp = classification_mode_branch()
             
             if (len(y_true.shape) == 3) and (y_true.shape[-1] > 1 ):
