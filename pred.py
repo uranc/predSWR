@@ -35,6 +35,7 @@ def objective_patch(trial):
     tf.compat.v1.reset_default_graph()
     if tf.config.list_physical_devices('GPU'):
         tf.keras.backend.clear_session()
+    tf.config.run_functions_eagerly(False)
 
     # Start with base parameters
     params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*8,
@@ -144,13 +145,13 @@ def objective_patch(trial):
     print(params['TYPE_LOSS'])
     # init_lib = ['He', 'Glo']
     # par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
-    par_init = 'He'
+    par_init = 'Glo'
     # norm_lib = ['LN','BN','GN','WN']
     # par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
     par_norm = 'LN'
     # act_lib = ['RELU', 'ELU', 'GELU']
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    par_act = 'ELU'
+    par_act = 'GELU'
 
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'Adam'
