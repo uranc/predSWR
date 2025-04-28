@@ -29,44 +29,8 @@ import glob
 import importlib
 from tensorflow.keras import callbacks as cb
 
-# import tensorflow_models as tfm
 
-
-tf.config.run_functions_eagerly(True)
-parser = argparse.ArgumentParser(
-    description='Example 3 - Local and Parallel Execution.')
-# parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
-parser.add_argument('--model', type=str, nargs=1,
-                    help='model name ie. l9:experiments/l9', default='testSWR')
-parser.add_argument('--mode', type=str, nargs=1,
-                    help='mode training/predict', default='train')
-parser.add_argument('--val', type=str, nargs=1,
-                    help='val_id 0,1,2,3', default='10')
-parser.add_argument('--tag', type=str, nargs=1,
-                    help='tag for running multiple studies in parallel', default='base')
-
-args = parser.parse_args()
-print(parser.parse_args())
-mode = args.mode[0]
-model_name = args.model[0]
-val_id = int(args.val[0])
-tag = args.tag[0]
-print(val_id)
-# pdb.set_trace()
-# Parameters
-params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
-          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 200,
-          'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
-          'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
-          }
-params['mode'] = mode
-
-# Define objective function before mode selection
-def create_study_name(trial):
-    """Create unique study name based on trial parameters"""
-    return f"study_{trial.number}_{trial.datetime_start.strftime('%Y%m%d_%H%M%S')}"
-
-def objective_only(trial):
+def objective_patch(trial):
     """Objective function for Optuna optimization"""
     tf.compat.v1.reset_default_graph()
     if tf.config.list_physical_devices('GPU'):
@@ -76,13 +40,14 @@ def objective_only(trial):
     params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*8,
             'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
             'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
-            'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
+            'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + 'test',
             'mode': 'train'
             }
 
     # Dynamic learning rate range
     batch_size = 64
-    params['LEARNING_RATE'] = 1e-3
+    params['LEARNING_RATE'] = trial.suggest_float('learning_rate', 1e-3, 1e-1, log=True)# 1e-3
+
     params['BATCH_SIZE'] = batch_size
 
     # Base parameters
@@ -92,7 +57,7 @@ def objective_only(trial):
 
     arch_lib = ['MixerOnly', 'MixerHori',
                 'MixerDori', 'DualMixerDori', 'MixerCori',
-                'SingleCh', 'TripletOnly']
+                'SingleCh', 'TripletOnly', 'Patch']
     # Model architecture parameters - Fix the categorical suggestion
     # arch_ind = trial.suggest_int('IND_ARCH', 0, len(arch_lib)-1)
     # pdb.set_trace()
@@ -117,19 +82,22 @@ def objective_only(trial):
     elif 'MixerOnly' in params['TYPE_ARCH']:
         from model.input_augment_weighted import rippleAI_load_dataset
         from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
+    elif 'Patch' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
+        from model.model_fn import build_DBI_Patch as build_DBI_TCN
 
     # pdb.set_trace()
     # Timing parameters remain the same
     # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
-    params['NO_TIMEPOINTS'] = 128#*3
+    params['NO_TIMEPOINTS'] = 64#*3
     # params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
-    params['NO_STRIDES'] = trial.suggest_int('NO_STRIDES', 32, 160, step=32)
+    params['NO_STRIDES'] = trial.suggest_int('NO_STRIDES', 16, 64*2, step=32)
 
     # Timing parameters remain the same
-    params['HORIZON_MS'] = trial.suggest_int('HORIZON_MS', 1, 5, step=2)
+    params['HORIZON_MS'] = trial.suggest_int('HORIZON_MS', 0, 10, step=2)
     params['SHIFT_MS'] = 0
 
-    params['LOSS_WEIGHT'] = 1#trial.suggest_float('LOSS_WEIGHT', 0.000001, 10.0, log=True)
+    params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.000001, 1-0.000001, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
 
     entropyLib = [0, 0.5, 1, 3]
@@ -143,29 +111,29 @@ def objective_only(trial):
     params['HYPER_MONO'] = 0 #trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
 
     # Model parameters matching training format
-    # params['NO_KERNELS'] = trial.suggest_int('NO_KERNELS', 2, 6) # for kernels 2,3,4,5,6
-    params['NO_KERNELS'] = 4
-    if params['NO_TIMEPOINTS'] == 32:
-        dil_lib = [4,3,2,2,2]           # for kernels 2,3,4,5,6
-    elif params['NO_TIMEPOINTS'] == 64:
-        dil_lib = [5,4,3,3,3]           # for kernels 2,3,4,5,6
-    elif params['NO_TIMEPOINTS'] == 128:
-        dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]
-    elif params['NO_TIMEPOINTS'] == 196:
-        dil_lib = [7,6,5,5,5]           # for kernels 2,3,4,5,6
-    elif params['NO_TIMEPOINTS'] == 384:
-        dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
-    elif params['NO_TIMEPOINTS'] == 128*12:
-        dil_lib = [12,12,8,12,12,12]          # for kernels 2,3,4,5,6]
-    elif params['NO_TIMEPOINTS'] == 128*3:
-        dil_lib = [12,12,6,12,12,12]          # for kernels 2,3,4,5,6]
+    params['NO_KERNELS'] = trial.suggest_int('NO_KERNELS', 1, 6) # for kernels 2,3,4,5,6
+    # params['NO_KERNELS'] = 4
+    # if params['NO_TIMEPOINTS'] == 32:
+    #     dil_lib = [4,3,2,2,2]           # for kernels 2,3,4,5,6
+    # elif params['NO_TIMEPOINTS'] == 64:
+    #     dil_lib = [5,4,3,3,3]           # for kernels 2,3,4,5,6
+    # elif params['NO_TIMEPOINTS'] == 128:
+    #     dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]
+    # elif params['NO_TIMEPOINTS'] == 196:
+    #     dil_lib = [7,6,5,5,5]           # for kernels 2,3,4,5,6
+    # elif params['NO_TIMEPOINTS'] == 384:
+    #     dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
+    # elif params['NO_TIMEPOINTS'] == 128*12:
+    #     dil_lib = [12,12,8,12,12,12]          # for kernels 2,3,4,5,6]
+    # elif params['NO_TIMEPOINTS'] == 128*3:
+    #     dil_lib = [12,12,6,12,12,12]          # for kernels 2,3,4,5,6]
 
-    params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
-    # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
-    params['NO_FILTERS'] = 128#trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
+    # params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
+    params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 1, 5)
+    params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128, 256])
     # params['NO_FILTERS'] = 64
-    ax = trial.suggest_int('AX', 25, 75, step=10)
-    gx = trial.suggest_int('GX', 50, 999, step=150)
+    ax = trial.suggest_int('AX', 25, 75, step=25)
+    gx = trial.suggest_int('GX', 50, 200, step=50)
 
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}Entropy'.format(ax, gx)
@@ -199,7 +167,7 @@ def objective_only(trial):
     params['USE_ZNorm'] = False#trial.suggest_categorical('USE_ZNorm', [True, False])
     if params['USE_ZNorm']:
         params['TYPE_ARCH'] += 'ZNorm'
-    params['USE_L2N'] = True#trial.suggest_categorical('USE_L2N', [True, False])
+    params['USE_L2N'] = False#trial.suggest_categorical('USE_L2N', [True, False])
     if params['USE_L2N']:
         params['TYPE_ARCH'] += 'L2N'
 
@@ -220,9 +188,9 @@ def objective_only(trial):
     #     params['TYPE_LOSS'] += 'L2Reg'
 
     drop_lib = [0, 0.05, 0.1, 0.2, 0.5]
-    drop_ind = 0#trial.suggest_categorical('Dropout', [0,1,2,3,4])
+    drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3,4])
     if drop_ind > 0:
-        params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
+        params['TYPE_ARCH'] += f"Drop{int(drop_lib[drop_ind]*100):02d}"
 
     params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
 
@@ -266,23 +234,39 @@ def objective_only(trial):
     else:
         train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
     print(params)
-    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    
+    patch_lib = [64,32,16,4,2]
+    patches = []
+    for ii in range(params['NO_DILATIONS']):
+        patches.append(patch_lib[ii])
+    print(patches)
+    model = build_DBI_TCN(params["NO_TIMEPOINTS"], 
+                        input_chans=8, 
+                        patch_sizes=patches, 
+                        d_model=params['NO_FILTERS'], 
+                        num_layers=params['NO_KERNELS'], 
+                        params=params)
+    model.summary()
+    from model.training import TerminateOnNaN
+    terminate_on_nan_callback = TerminateOnNaN()
+
     # Setup callbacks including the verifier
     callbacks = [cb.TensorBoard(log_dir=f"{study_dir}/",
                                       write_graph=True,
                                       write_images=True,
                                       update_freq='epoch'),
-                cb.EarlyStopping(monitor='val_event_f1_metric',  # Change monitor
+                cb.EarlyStopping(monitor='val_event_f1',  # Change monitor
                                 patience=50,
                                 mode='max',
                                 verbose=1,
                                 restore_best_weights=True),
                 cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
-                                    monitor='val_max_f1_metric_horizon',
+                                    monitor='val_f1',
                                     verbose=1,
                                     save_best_only=True,
                                     save_weights_only=True,
                                     mode='max'),
+                terminate_on_nan_callback,
                                     # cb.ModelCheckpoint(
                                     # f"{study_dir}/robust.weights.h5",
                                     # monitor='val_robust_f1',  # Change monitor
@@ -291,7 +275,7 @@ def objective_only(trial):
                                     # save_weights_only=True,
                                     # mode='max'),
                 cb.ModelCheckpoint(f"{study_dir}/event.weights.h5",
-                                    monitor='val_event_f1_metric',  # Change monitor
+                                    monitor='val_event_f1',  # Change monitor
                                     verbose=1,
                                     save_best_only=True,
                                     save_weights_only=True,
@@ -306,8 +290,8 @@ def objective_only(trial):
         callbacks=callbacks,
         verbose=1
     )
-    val_accuracy = (max(history.history['val_event_f1_metric'])+max(history.history['val_max_f1_metric_horizon']))/2
-    val_accuracy_mean = (np.mean(history.history['val_event_f1_metric'])+np.mean(history.history['val_max_f1_metric_horizon']))/2
+    val_accuracy = (max(history.history['val_event_f1'])+max(history.history['val_f1']))/2
+    val_accuracy_mean = (np.mean(history.history['val_event_f1'])+np.mean(history.history['val_f1']))/2
     val_accuracy = (val_accuracy + val_accuracy_mean)/2
     val_latency = np.mean(history.history['val_event_fp_rate'])
     # Log results
@@ -341,7 +325,7 @@ def objective_only_30k(trial):
     params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*8,
             'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
             'NO_TIMEPOINTS': 128, 'NO_CHANNELS': 8, 'SRATE': 30000,
-            'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
+            'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + 'test',
             'mode': 'train'
             }
 
@@ -672,360 +656,36 @@ def objective_only_30k(trial):
     tf.keras.backend.clear_session()
 
     return val_accuracy, val_latency
+# pdb.set_trace()
+# tf.config.run_functions_eagerly(True)
+parser = argparse.ArgumentParser(
+    description='Example 3 - Local and Parallel Execution.')
+# parser.add_argument('--n_workers', type=int, help='Number of workers to run in parallel.', default=2)
+parser.add_argument('--model', type=str, nargs=1,
+                    help='model name ie. l9:experiments/l9', default='testSWR')
+parser.add_argument('--mode', type=str, nargs=1,
+                    help='mode training/predict', default='train')
+parser.add_argument('--val', type=str, nargs=1,
+                    help='val_id 0,1,2,3', default='10')
+parser.add_argument('--tag', type=str, nargs=1,
+                    help='tag for running multiple studies in parallel', default='base')
 
+args = parser.parse_args()
+print(parser.parse_args())
+mode = args.mode[0]
+model_name = args.model[0]
+val_id = int(args.val[0])
+tag = args.tag[0]
+print(val_id)
+# pdb.set_trace()
+# Parameters
+params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
+          'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 200,
+          'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
+          'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
+          }
+params['mode'] = mode
 
-def objective_triplet(trial):
-    """Objective function for Optuna optimization"""
-    tf.compat.v1.reset_default_graph()
-    if tf.config.list_physical_devices('GPU'):
-        tf.keras.backend.clear_session()
-
-    # Start with base parameters
-    params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
-            'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
-            'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
-            'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
-            'mode': 'train'
-            }
-
-    # Dynamic learning rate range
-    # learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-1, log=True)
-    learning_rate = 1e-3
-    params['LEARNING_RATE'] = learning_rate
-
-    # Optional batch size tuning
-    # batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
-    batch_size = 64
-    params['BATCH_SIZE'] = batch_size
-    # ...rest of existing objective function code...
-
-    # Base parameters
-    params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 800
-    params['TYPE_MODEL'] = 'Base'
-
-    arch_lib = ['MixerOnly', 'MixerHori',
-                'MixerDori', 'DualMixerDori', 'MixerCori',
-                'SingleCh', 'TripletOnly']
-    # Model architecture parameters - Fix the categorical suggestion
-    # arch_ind = trial.suggest_int('IND_ARCH', 0, len(arch_lib)-1)
-    # pdb.set_trace()
-    tag = args.tag[0]
-    arch_ind = np.where([(arch.lower() in tag.lower()) for arch in arch_lib])[0][0]
-    # print(arch_ind)
-    # pdb.set_trace()
-    params['TYPE_ARCH'] = arch_lib[arch_ind]
-    print(params['TYPE_ARCH'])
-    # pdb.set_trace()
-    # params['TYPE_ARCH'] = 'MixerHori'
-    # pdb.set_trace()
-    # Update model import based on architecture choice
-    if 'MixerHori' in params['TYPE_ARCH']:
-        from model.input_augment_weighted import rippleAI_load_dataset
-        from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
-    elif 'MixerDori' in params['TYPE_ARCH']:
-        from model.input_augment_weighted import rippleAI_load_dataset
-        from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
-    elif 'MixerCori' in params['TYPE_ARCH']:
-        from model.input_augment_weighted import rippleAI_load_dataset
-        from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
-    elif 'MixerOnly' in params['TYPE_ARCH']:
-        from model.input_augment_weighted import rippleAI_load_dataset
-        from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
-    elif 'TripletOnly' in params['TYPE_ARCH']:
-        from model.input_proto import rippleAI_load_dataset
-        from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
-
-        # Set a reasonable steps_per_epoch value - much smaller than 1500 for initial testing
-        params['steps_per_epoch'] = 1200  # Increase gradually if training works
-
-        # Add debug lines
-        print("Setting up triplet dataset with steps_per_epoch:", params['steps_per_epoch'])
-        print("Batch size:", params['BATCH_SIZE'])
-
-    # pdb.set_trace()
-    # Timing parameters remain the same
-    # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
-    params['NO_TIMEPOINTS'] = 128
-    params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
-
-    # Timing parameters remain the same
-    params['HORIZON_MS'] = 1#trial.suggest_int('HORIZON_MS', 1, 5)
-    params['SHIFT_MS'] = 0
-
-    params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.000001, 10.0, log=True)
-
-    params['LOSS_NEGATIVES'] = trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
-    # params['LOSS_WEIGHT'] = 7.5e-4
-
-    ax = trial.suggest_int('AX', 1, 99)
-    gx = trial.suggest_int('GX', 50, 999)
-
-    # Removed duplicate TYPE_ARCH suggestion that was causing the error
-    # params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
-    params['TYPE_LOSS'] = 'FocalAx{:03d}Gx{:03d}'.format(ax, gx)
-
-    entropyLib = [0, 0.5, 1, 3]
-    entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
-    if entropy_ind > 0:
-        params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
-        params['TYPE_LOSS'] += 'Entropy'
-
-    # params['HYPER_TMSE'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
-    # params['HYPER_BARLOW'] = 2e-5
-    # params['HYPER_BARLOW'] = trial.suggest_float('HYPER_BARLOW', 0.000001, 10.0, log=True)
-    # params['HYPER_MONO'] = trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
-    params['HYPER_MONO'] = 0 #trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
-
-    # Model parameters matching training format
-    # params['NO_KERNELS'] = trial.suggest_int('NO_KERNELS', 2, 6) # for kernels 2,3,4,5,6
-    params['NO_KERNELS'] = 4
-    if params['NO_TIMEPOINTS'] == 32:
-        dil_lib = [4,3,2,2,2]           # for kernels 2,3,4,5,6
-    elif params['NO_TIMEPOINTS'] == 64:
-        dil_lib = [5,4,3,3,3]           # for kernels 2,3,4,5,6
-    elif params['NO_TIMEPOINTS'] == 128:
-        dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]
-    elif params['NO_TIMEPOINTS'] == 196:
-        dil_lib = [7,6,5,5,5]           # for kernels 2,3,4,5,6
-    elif params['NO_TIMEPOINTS'] == 384:
-        dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
-    params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
-    # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
-    params['NO_FILTERS'] = 128#trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
-    # params['NO_FILTERS'] = 64
-
-    # Remove the hardcoded use_freq and derive it from tag instead
-
-    params['TYPE_LOSS'] += tag
-    print(params['TYPE_LOSS'])
-    # init_lib = ['He', 'Glo']
-    # par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
-    par_init = 'He'
-    # norm_lib = ['LN','BN','GN','WN']
-    # par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
-    par_norm = 'LN'
-    # act_lib = ['RELU', 'ELU', 'GELU']
-    # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    par_act = 'ELU'
-
-    # opt_lib = ['Adam', 'AdamW', 'SGD']
-    par_opt = 'Adam'
-    # par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
-
-    params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}")
-    # Build architecture string with timing parameters (adjust format)
-    arch_str = (f"{params['TYPE_ARCH']}"  # Take first 4 chars: Hori/Dori/Cori
-                f"{int(params['HORIZON_MS']):02d}")
-    print(arch_str)
-    params['TYPE_ARCH'] = arch_str
-
-    # Use multiple binary flags for a combinatorial categorical parameter
-    params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
-    if params['USE_ZNorm']:
-        params['TYPE_ARCH'] += 'ZNorm'
-    # params['USE_L2N'] = trial.suggest_categorical('USE_L2N', [True, False])
-    # if params['USE_L2N']:
-    params['TYPE_ARCH'] += 'L2N'
-
-
-    # params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
-    # if params['USE_Aug']:
-    params['TYPE_ARCH'] += 'Aug'
-
-
-    params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
-    if params['USE_StopGrad']:
-        print('Using Stop Gradient for Class. Branch')
-        params['TYPE_ARCH'] += 'StopGrad'
-
-    # if (not 'Cori' in params['TYPE_ARCH']) and  (not 'SingleCh' in params['TYPE_MODEL']):
-    #     params['TYPE_LOSS'] += 'BarAug'
-    # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
-    # params['USE_CSD'] = trial.suggest_categorical('USE_CSD', [True, False])
-    # if params['USE_CSD']:
-    #     params['TYPE_ARCH'] += 'CSD'
-    # params['Dropout'] = trial.suggest_int('Dropout', 0, 10)
-    # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
-    # if params['USE_L2Reg']:
-    #     params['TYPE_LOSS'] += 'L2Reg'
-
-    drop_lib = [0, 5, 10, 20, 50, 80]
-    drop_ind = 0#trial.suggest_categorical('Dropout', [0,1,2,3,4, 5])
-    print('Dropout rate:', drop_lib[drop_ind])
-    if drop_ind > 0:
-        params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
-
-    params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
-
-    # Build name in correct format
-    run_name = (f"{params['TYPE_MODEL']}_"
-                f"K{params['NO_KERNELS']}_"
-                f"T{params['NO_TIMEPOINTS']}_"
-                f"D{params['NO_DILATIONS']}_"
-                f"N{params['NO_FILTERS']}_"
-                f"L{int(-np.log10(params['LEARNING_RATE']))}_"
-                f"E{params['NO_EPOCHS']}_"
-                f"B{params['BATCH_SIZE']}_"
-                f"S{params['NO_STRIDES']}_"
-                f"{params['TYPE_LOSS']}_"
-                f"{params['TYPE_REG']}_"
-                f"{params['TYPE_ARCH']}")
-    # pdb.set_trace()
-    params['NAME'] = run_name
-    print(params['NAME'])
-
-    # pdb.set_trace()
-    tag = args.tag[0]
-    param_dir = f"params_{tag}"
-    study_dir = f"studies/{param_dir}/study_{trial.number}_{trial.datetime_start.strftime('%Y%m%d_%H%M%S')}"
-    os.makedirs(study_dir, exist_ok=True)
-
-    # Copy pred.py and model/ directory
-    shutil.copy2('./pred.py', f"{study_dir}/pred.py")
-    if os.path.exists(f"{study_dir}/model"):
-        shutil.rmtree(f"{study_dir}/model")
-    shutil.copytree('./model', f"{study_dir}/model")
-    preproc = True
-    # Load data and build model
-    print(params['TYPE_LOSS'])
-    if 'FiltL' in params['TYPE_LOSS']:
-        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='low', preprocess=preproc)
-    elif 'FiltH' in params['TYPE_LOSS']:
-        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='high', preprocess=preproc)
-    elif 'FiltM' in params['TYPE_LOSS']:
-        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='muax', preprocess=preproc)
-    else:
-        if 'TripletOnly' in params['TYPE_ARCH']:
-            params['steps_per_epoch'] = 1200
-            train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True)
-        else:
-            train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
-
-    # if 'TripletOnly' in params['TYPE_ARCH']:
-    #         train_dataset = transform_dataset_for_training(train_dataset)
-    #         val_dataset = transform_dataset_for_training(val_dataset)
-    # if params['TYPE_MODEL'] == 'SingleCh':
-    #     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params, input_chans=1)
-    # else:
-    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-    # Early stopping with tunable patience
-
-    # Early stopping parameters
-    best_metric = float('-inf')
-    best_metric2 = float('-inf')
-    best_metric3 = float('inf')
-    patience = 50
-    min_delta = 0.0001
-    patience_counter = 0
-
-    # Create a list to collect history from each epoch
-    history_list = []
-
-    # Setup callbacks including the verifier
-    callbacks = [cb.TensorBoard(log_dir=f"{study_dir}/",
-                                      write_graph=True,
-                                      write_images=True,
-                                      update_freq='epoch'),
-        cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
-                            monitor='val_max_f1_metric_horizon',
-                            verbose=1,
-                            save_best_only=True,
-                            save_weights_only=True,
-                            mode='max'),
-                            # cb.ModelCheckpoint(
-                            # f"{study_dir}/robust.weights.h5",
-                            # monitor='val_robust_f1',  # Change monitor
-                            # verbose=1,
-                            # save_best_only=True,
-                            # save_weights_only=True,
-                            # mode='max'),
-                            cb.ModelCheckpoint(
-                            f"{study_dir}/event.weights.h5",
-                            monitor='val_event_f1_metric',  # Change monitor
-                            verbose=1,
-                            save_best_only=True,
-                            save_weights_only=True,
-                            mode='max')
-    ]
-
-    # Loop through epochs manually
-    n_epoch = params['NO_EPOCHS']
-    for epoch in range(n_epoch):
-        print(f"\nEpoch {epoch+1}/{n_epoch}")
-        if dataset_params is not None and 'triplet_regenerator' in dataset_params:
-            regenerating_dataset = dataset_params['triplet_regenerator']
-            print(f"Regenerating triplet samples for epoch {epoch+1}")
-
-            if epoch > 0:
-                regenerating_dataset.reinitialize()
-            train_data = regenerating_dataset.dataset if hasattr(regenerating_dataset, 'dataset') else regenerating_dataset
-
-            steps = dataset_params.get('steps_per_epoch', 500)
-            # pdb.set_trace()
-            epoch_history = model.fit(train_data,
-                steps_per_epoch=steps,
-                initial_epoch=epoch,
-                epochs=epoch+1,
-                validation_data=test_dataset,
-                callbacks=callbacks,
-                verbose=1
-            )
-
-        # Collect history
-        history_list.append(epoch_history.history)
-
-        # Early stopping check after each epoch
-        current_metric = epoch_history.history.get('val_max_f1_metric_horizon', [float('-inf')])[0]
-        current_metric2 = epoch_history.history.get('val_event_f1_metric', [float('-inf')])[0]
-        current_metric3 = epoch_history.history.get('val_event_fp_rate', [float('inf')])[0]
-
-        if (current_metric > (best_metric + min_delta)) or (current_metric2 > (best_metric2 + min_delta)) or (current_metric3 < (best_metric3 - min_delta)):
-            if current_metric > best_metric:
-                print(f"New best metric: {current_metric}")
-                best_metric = current_metric
-            elif current_metric2 > best_metric2:
-                best_metric2 = current_metric2
-                print(f"New best metric2: {current_metric2}")
-            elif current_metric3 < best_metric3:
-                best_metric3 = current_metric3
-                print(f"New best metric3: {current_metric3}")
-            patience_counter = 0
-        else:
-            patience_counter += 1
-
-        if patience_counter >= patience:
-            print(f"\nEarly stopping triggered! No improvement for {patience} epochs.")
-            break
-
-    # Combine histories from all epochs
-    combined_history = {}
-    for key in history_list[0].keys():
-        combined_history[key] = []
-        for h in history_list:
-            combined_history[key].extend(h[key])
-
-    # If the trial completes, compute the final metrics.
-    # pdb.set_trace()
-    # final_f1 = (np.mean(combined_history['val_robust_f1']) +
-    #             max(combined_history['val_max_f1_metric_horizon'])) / 2
-    # final_f1 = max(combined_history['val_event_f1_metric'])
-    # final_latency = np.mean(combined_history['val_latency_metric'])
-    final_f1 = np.mean(combined_history['val_event_f1_metric'])
-    final_fp_penalty = np.mean(combined_history['val_event_fp_rate'])  # Or your new FP-aware metric
-
-    trial_info = {
-        'parameters': params,
-        'metrics': {
-            'val_f1_accuracy': final_f1,
-            'val_fp_penalty': final_fp_penalty
-            # 'val_latency': final_latency
-        }
-    }
-    with open(f"{study_dir}/trial_info.json", 'w') as f:
-        json.dump(trial_info, f, indent=4)
-
-    return final_f1, final_fp_penalty #, final_latency
 if mode == 'train':
     # update params
     print(model_name)
@@ -1127,20 +787,23 @@ if mode == 'train':
         from model.model_fn import build_DBI_TCN_Horizon_Updated
         model, train_model = build_DBI_TCN_Horizon_Updated(input_timepoints=params['NO_TIMEPOINTS'], input_chans=8, embedding_dim=params['NO_FILTERS'], params=params)
         from model.input_proto import rippleAI_load_dataset
-    elif model_name.find('PatchAD') != -1:
-        from model.model_fn import build_model_PatchAD as build_DBI_TCN
-        from model.input_augment_weighted import rippleAI_load_dataset
-    elif model_name.find('PatchTCN') != -1:
-        from model.model_fn import build_model_TCN_PatchAD as build_DBI_TCN
+    elif model_name.find('Patch') != -1:
+        from model.model_fn import build_model_PatchOnly as build_DBI_TCN
         from model.input_augment_weighted import rippleAI_load_dataset
     else:
         from model.model_fn import build_DBI_TCN
         from model.input_aug import rippleAI_load_dataset
+    
     # input
-
-    if 'PatchAD' in model_name:
+    if 'Patch' in model_name:
         # tf.config.run_functions_eagerly(True)
-        model = build_DBI_TCN(params["NO_TIMEPOINTS"], input_chans=8, patch_sizes=[2,4,8,16], d_model=256, num_layers=3)
+        model = build_DBI_TCN(params["NO_TIMEPOINTS"], 
+                              input_chans=8, 
+                              patch_sizes=[64,32],#params['NO_DILATIONS'], 
+                              d_model=params['NO_FILTERS'], 
+                              num_layers=params['NO_KERNELS'], 
+                              params=params)
+
     elif 'CADOnly' in model_name:
         pretrain_tag = 'params_mixerOnlyEvents2500'
         pretrain_num = 1414#958
@@ -1220,6 +883,7 @@ if mode == 'train':
     train_size = len(list(train_dataset))
     params['RIPPLE_RATIO'] = label_ratio
 
+    # pdb.set_trace()
     # Calculate model FLOPs using TensorFlow Profiler
     @tf.function
     def get_flops(model, batch_size=1, params=params):
@@ -1227,8 +891,11 @@ if mode == 'train':
         if 'TripletOnly' in params['TYPE_ARCH']:
             tt = tf.TensorSpec([batch_size*3, params['NO_TIMEPOINTS'], params['NO_CHANNELS']], tf.float32)
             frozen_func = concrete_func.get_concrete_function(tt)
-        if 'CADOnly' in params['TYPE_ARCH']:
+        elif 'CADOnly' in params['TYPE_ARCH']:
             tt = tf.TensorSpec([batch_size, 1104, params['NO_CHANNELS']], tf.float32)
+            frozen_func = concrete_func.get_concrete_function(tt)
+        elif 'Patch' in params['TYPE_ARCH']:
+            tt = tf.TensorSpec([batch_size, params['NO_TIMEPOINTS']*2, params['NO_CHANNELS']], tf.float32)
             frozen_func = concrete_func.get_concrete_function(tt)
         else:
             frozen_func = concrete_func.get_concrete_function(
@@ -1329,7 +996,7 @@ elif mode == 'predict':
             pretrain_tag = 'params_mixerOnlyEvents2500'
             pretrain_num = 1414#958
             pretrained_dir = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{pretrain_tag}/study_{pretrain_num}_*')
-            if not study_dir:
+            if not pretrained_dir:
                 raise ValueError(f"No study directory found for study number {pretrain_num}")
             pretrained_dir = pretrained_dir[0]  # Take the first matching directory
 
@@ -1376,7 +1043,9 @@ elif mode == 'predict':
             pretrained_tcn.load_weights(weight_file)
             pretrained_tcn.trainable = False
             pretrained_tcn.compile(optimizer='adam', loss='mse')
-            model = build_DBI_TCN(pretrained_params["NO_TIMEPOINTS"], params=params, pretrained_tcn=pretrained_tcn)            
+            from model.model_fn import build_DBI_TCN_CADMixerOnly as build_DBI_TCN
+            
+            
         from model.model_fn import CSDLayer
         from tcn import TCN
         from keras.models import load_model
@@ -1392,7 +1061,10 @@ elif mode == 'predict':
 
         # weight_file = f"{study_dir}/robust.weights.h5"
         print(f"Loading weights from: {weight_file}")
-        model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+        if 'CADOnly' in params['TYPE_ARCH']:
+            model = build_DBI_TCN(pretrained_params["NO_TIMEPOINTS"], params=params, pretrained_tcn=pretrained_tcn)
+        else:
+            model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         model.load_weights(weight_file)
     elif model_name == 'RippleNet':
         import sys, pickle, keras, h5py
@@ -1491,8 +1163,9 @@ elif mode == 'predict':
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
 
-    params['BATCH_SIZE'] = 512*2
-
+    # params['BATCH_SIZE'] = 512*2
+    params["BATCH_SIZE"] = 1024*16
+            
     # from model.input_augment_weighted import rippleAI_load_dataset
     import importlib.util
     spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/input_augment_weighted.py")
@@ -2314,20 +1987,20 @@ elif mode == 'tune_server':
     load_if_exists=True,
     sampler=NSGAIISampler(
         # population_size=30,  # Number of parallel solutions evolved
-        population_size=15,  # Number of parallel solutions evolved
+        population_size=16,  # Number of parallel solutions evolved
         crossover_prob=0.9,  # Probability of crossover between solutions
-        mutation_prob=0.2,   # Probability of mutating a solution
+        mutation_prob=0.3,   # Probability of mutating a solution
         seed=42
     ),
-    pruner=optuna.pruners.PatientPruner(
-        optuna.pruners.MedianPruner(
-            n_startup_trials=20,
-            n_warmup_steps=50,
-            interval_steps=10,
-        ),
-    patience=3,
-    min_delta=0.0
-    )
+    # pruner=optuna.pruners.PatientPruner(
+    #     optuna.pruners.MedianPruner(
+    #         n_startup_trials=20,
+    #         n_warmup_steps=50,
+    #         interval_steps=10,
+    #     ),
+    # patience=3,
+    # min_delta=0.0
+    # )
 )
 
     print("Resilient async study server started.")
@@ -2362,14 +2035,18 @@ elif mode == 'tune_worker':
     # )
     # Optimize for 1000 trials
     if 'TripletOnly'.lower() in tag.lower():
-        objective = objective_triplet
+        from model.study_objectives import objective_triplet as objective
     elif 'MixerOnly'.lower() in tag.lower():
-        objective = objective_only
+        from model.study_objectives import objective_only as objective
     elif 'CADOnly'.lower() in tag.lower():
+        # from model.study_objectives import objective_only_30k as objective
         objective = objective_only_30k
+    elif 'Patch'.lower() in tag.lower():
+        # from model.study_objectives import objective_patch as objective
+        objective = objective_patch
     else:
-        objective = objective_only
-
+        from model.study_objectives import objective_only as objective        
+        
     study.optimize(
         objective,
         n_trials=1000,
@@ -2479,358 +2156,333 @@ elif mode == 'tune_viz':
     print(f"- top_{N}_trials.csv")
     print(f"- top_{N}_trials.html")
     print(f"- top_{N}_parameter_distributions.png")
-
+# ...existing code...
 elif mode == 'tune_viz_multi':
     import pandas as pd
-    from optuna.visualization import plot_pareto_front
-    from optuna.visualization import plot_optimization_history
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
     import matplotlib.pyplot as plt
     import seaborn as sns
     import json
     import os
     import optuna
+    import numpy as np
+    import sys
+
     tag = args.tag[0]
     param_dir = f'params_{tag}'
+    viz_dir = f"studies/{param_dir}/visualizations"
+    param_impact_dir = os.path.join(viz_dir, "param_impact")
+
+    # Create visualization directories
+    os.makedirs(viz_dir, exist_ok=True)
+    os.makedirs(param_impact_dir, exist_ok=True)
 
     # Load study for visualization
     try:
+        storage_url = f"sqlite:///studies/{param_dir}/{param_dir}.db"
         study = optuna.load_study(
             study_name=param_dir,
-            storage=f"sqlite:///studies/{param_dir}/{param_dir}.db",
+            storage=storage_url,
         )
+        print(f"Loaded study '{param_dir}' from {storage_url}")
     except Exception as e:
-        print(f"Error loading study: {e}")
-        exit()
+        print(f"Error loading study '{param_dir}': {e}")
+        sys.exit(1) # Exit if study cannot be loaded
 
-    # Create visualization directory under the param_dir
-    os.makedirs(f"studies/{param_dir}/visualizations", exist_ok=True)
-
-    # Create a subdirectory for hyperparameter impact plots
-    os.makedirs(f"studies/{param_dir}/visualizations/param_impact", exist_ok=True)
-
-    # Plot optimization history for F1 Score
+    # --- Standard Optuna Plots ---
+    print("Generating standard Optuna plots...")
     try:
-        fig = plot_optimization_history(study, target=lambda t: t.values[0], target_name="F1 Score")
-        fig.write_html(f"studies/{param_dir}/visualizations/optimization_history_f1.html")
+        # Plot optimization history for F1 Score (Objective 0)
+        fig_hist_f1 = optuna.visualization.plot_optimization_history(study, target=lambda t: t.values[0], target_name="F1 Score")
+        fig_hist_f1.write_html(os.path.join(viz_dir, "optimization_history_f1.html"))
+
+        # Plot optimization history for Latency (Objective 1)
+        fig_hist_latency = optuna.visualization.plot_optimization_history(study, target=lambda t: t.values[1], target_name="Latency")
+        fig_hist_latency.write_html(os.path.join(viz_dir, "optimization_history_latency.html"))
+
+        # Plot Pareto Front
+        fig_pareto = optuna.visualization.plot_pareto_front(study, target_names=["F1 Score", "Latency"])
+        fig_pareto.write_html(os.path.join(viz_dir, "pareto_front.html"))
+
+        # Plot parameter importance for F1 Score
+        fig_imp_f1 = optuna.visualization.plot_param_importances(study, target=lambda t: t.values[0], target_name="F1 Score")
+        fig_imp_f1.write_html(os.path.join(viz_dir, "param_importances_f1.html"))
+
+        # Plot parameter importance for Latency
+        fig_imp_latency = optuna.visualization.plot_param_importances(study, target=lambda t: t.values[1], target_name="Latency")
+        fig_imp_latency.write_html(os.path.join(viz_dir, "param_importances_latency.html"))
+        print("Standard plots generated.")
     except Exception as e:
-        print(f"Error plotting F1 Score optimization history: {e}")
+        print(f"Warning: Error generating standard Optuna plots: {e}")
 
-    # Plot optimization history for Latency
-    try:
-        fig = plot_optimization_history(study, target=lambda t: t.values[1], target_name="Latency")
-        fig.write_html(f"studies/{param_dir}/visualizations/optimization_history_latency.html")
-    except Exception as e:
-        print(f"Error plotting Latency optimization history: {e}")
+    # --- Data Preparation ---
+    print("Preparing data for analysis...")
+    all_trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
 
-    # Plot Pareto Front
-    try:
-        fig = plot_pareto_front(study, target_names=["F1 Score", "Latency"])
-        fig.write_html(f"studies/{param_dir}/visualizations/pareto_front.html")
-    except Exception as e:
-        print(f"Error plotting Pareto Front: {e}")
+    if not all_trials:
+        print("No completed trials found in the study. Exiting visualization.")
+        sys.exit(0)
 
-    # Plot parameter importance for F1 Score
-    try:
-        fig = plot_param_importances(study, target=lambda t: t.values[0], target_name="F1 Score")
-        fig.write_html(f"studies/{param_dir}/visualizations/param_importances_f1.html")
-    except Exception as e:
-        print(f"Error plotting F1 Score parameter importance: {e}")
+    all_trial_data = []
+    for trial in all_trials:
+        if trial.values is not None and len(trial.values) == 2:
+            # Ensure values are floats, handle potential None or non-numeric values gracefully
+            try:
+                f1_score = float(trial.values[0]) if trial.values[0] is not None else np.nan
+                latency = float(trial.values[1]) if trial.values[1] is not None else np.nan
+            except (ValueError, TypeError):
+                f1_score = np.nan
+                latency = np.nan
 
-    # Plot parameter importance for Latency
-    try:
-        fig = plot_param_importances(study, target=lambda t: t.values[1], target_name="Latency")
-        fig.write_html(f"studies/{param_dir}/visualizations/param_importances_latency.html")
-    except Exception as e:
-        print(f"Error plotting Latency parameter importance: {e}")
+            if not (np.isnan(f1_score) or np.isnan(latency)):
+                 all_trial_data.append({
+                    "trial_number": trial.number,
+                    "f1_score": f1_score,
+                    "latency": latency,
+                    **trial.params
+                })
 
-    # Save study statistics
-    stats = {
-        "number_of_trials": len(study.trials),
-        "completed_trials": len(study.get_trials(states=[optuna.trial.TrialState.COMPLETE])),
-        "pruned_trials": len(study.get_trials(states=[optuna.trial.TrialState.PRUNED])),
-        "failed_trials": len(study.get_trials(states=[optuna.trial.TrialState.FAIL]))
-    }
+    if not all_trial_data:
+        print("No completed trials with valid F1 score and Latency found. Exiting visualization.")
+        sys.exit(0)
 
-    with open(f"studies/{param_dir}/visualizations/study_stats.json", "w") as f:
-        json.dump(stats, f, indent=4)
-
-    print(f"Visualization results saved to studies/{param_dir}/visualizations/")
-    print("\nStudy Statistics:")
-    print(json.dumps(stats, indent=2))
-
-    # Define the number of top models to consider for both F1 and Latency
-    N_TOP_MODELS = 300  # You can change this value as needed
-
-    # Collect all trial data with valid values for both metrics
-    all_trial_data = [
-        {"trial_number": trial.number, "f1_score": trial.values[0], "latency": trial.values[1], **trial.params}
-        for trial in study.trials
-        if trial.values is not None and len(trial.values) == 2
-    ]
     all_df = pd.DataFrame(all_trial_data)
+    all_df.to_csv(os.path.join(viz_dir, "all_completed_trials_data.csv"), index=False)
+    print(f"Saved data for {len(all_df)} completed trials.")
 
-    # Save the complete dataset for further analysis
-    all_df.to_csv(f"studies/{param_dir}/visualizations/all_trials_data.csv", index=False)
+    # --- Calculate Quantile Ranges for Plotting ---
+    f1_q05, f1_q95 = np.nanquantile(all_df['f1_score'], [0.05, 0.95]) if not all_df['f1_score'].isnull().all() else (0, 1)
+    lat_q05, lat_q95 = np.nanquantile(all_df['latency'], [0.05, 0.95]) if not all_df['latency'].isnull().all() else (0, 1)
+    # Add a small margin
+    f1_margin = (f1_q95 - f1_q05) * 0.05
+    lat_margin = (lat_q95 - lat_q05) * 0.05
+    f1_ylim = (max(0, f1_q05 - f1_margin), min(1, f1_q95 + f1_margin))
+    lat_ylim = (max(0, lat_q05 - lat_margin), lat_q95 + lat_margin)
+    # Ensure min < max
+    if f1_ylim[0] >= f1_ylim[1]: f1_ylim = (f1_ylim[0] - 0.1, f1_ylim[1] + 0.1)
+    if lat_ylim[0] >= lat_ylim[1]: lat_ylim = (lat_ylim[0] - 0.1, lat_ylim[1] + 0.1)
+    print(f"Using F1 Score Y-axis range: {f1_ylim}")
+    print(f"Using Latency Y-axis range: {lat_ylim}")
 
-    # Identify the top N models for both F1 Score and Latency
-    top_f1_trials = all_df.sort_values(['f1_score', 'trial_number'], ascending=[False, True]).head(N_TOP_MODELS)['trial_number'].tolist()
-    top_latency_trials = all_df.sort_values(['latency', 'trial_number'], ascending=[True, True]).head(N_TOP_MODELS)['trial_number'].tolist()
 
-    # Find the intersection of the top F1 and top Latency models
-    best_combined_trials = set(top_f1_trials).intersection(top_latency_trials)
+    # --- Pareto Optimal Trials Analysis ---
+    print("Analyzing Pareto optimal trials...")
+    pareto_trials = study.best_trials # These are the trials on the Pareto front
 
-    # Filter the DataFrame to include only the best combined models
-    best_combined_df = all_df[all_df['trial_number'].isin(best_combined_trials)]
-
-    # Check if the filtered DataFrame is empty
-    if best_combined_df.empty:
-        print("Warning: No models found in the intersection of top F1 and Latency models.")
+    if not pareto_trials:
+        print("No Pareto optimal trials found (study.best_trials is empty).")
+        pareto_df = pd.DataFrame() # Create empty dataframe
     else:
-        # Get all hyperparameter names
-        hyperparams = [p for p in best_combined_df.columns if p not in ['trial_number', 'f1_score', 'latency']]
+        pareto_trial_numbers = [t.number for t in pareto_trials]
+        pareto_df = all_df[all_df['trial_number'].isin(pareto_trial_numbers)].copy()
 
-        # Function to check if a parameter should use log scale (if it spans multiple orders of magnitude)
-        def should_use_log_scale(series):
-            if not pd.api.types.is_numeric_dtype(series):
-                return False
-            if series.min() <= 0:  # Can't use log scale with zero or negative values
-                return False
-            return series.max() / max(series.min(), 1e-10) > 10  # Use log scale if range spans more than 1 order of magnitude
+        # Optional: Calculate a combined score for ranking Pareto trials (adjust weighting as needed)
+        # Normalization might be useful if scales differ greatly
+        # For simplicity, using the previous formula, but apply only to Pareto front trials
+        pareto_df['combined_score'] = (pareto_df['f1_score'] + (1 - pareto_df['latency'])) / 2
+        pareto_df = pareto_df.sort_values('combined_score', ascending=False)
 
-    # Create plots showing how each hyperparameter affects both metrics
+        # Save Pareto optimal trials data
+        pareto_df.to_csv(os.path.join(viz_dir, "pareto_optimal_trials.csv"), index=False)
+
+        # Generate HTML report for Pareto optimal trials
+        html_content_pareto = f"""
+        <html><head><title>Pareto Optimal Trials</title>
+        <style> table {{ border-collapse: collapse; width: 100%; }} th, td {{ border: 1px solid black; padding: 8px; text-align: left; }} tr:nth-child(even) {{ background-color: #f2f2f2; }} th {{ background-color: #007bff; color: white; }} </style>
+        </head><body>
+        <h2>Pareto Optimal Trials ({len(pareto_df)} trials)</h2>
+        <p>These trials represent the best trade-offs found between maximizing F1 Score and minimizing Latency.</p>
+        <p>Sorted by combined score = (F1 Score + (1 - Latency)) / 2</p>
+        {pareto_df.to_html(index=False)}
+        <p><a href="hyperparameter_impact_analysis.html">View Hyperparameter Impact Analysis</a></p>
+        </body></html>
+        """
+        with open(os.path.join(viz_dir, "pareto_optimal_trials.html"), "w") as f:
+            f.write(html_content_pareto)
+
+        print(f"Found {len(pareto_df)} Pareto optimal trials.")
+        print(f"Pareto optimal trials saved to {os.path.join(viz_dir, 'pareto_optimal_trials.csv')} and .html")
+        print("\nTop 10 Pareto Optimal Trials (ranked by combined_score):")
+        print(pareto_df[['trial_number', 'f1_score', 'latency', 'combined_score']].head(10))
+
+    # --- Hyperparameter Impact Analysis ---
+    print("Generating hyperparameter impact plots...")
+    hyperparams = [p for p in all_df.columns if p not in ['trial_number', 'f1_score', 'latency', 'combined_score']]
+    impact_plot_files = []
+
+    # Function to check if a parameter should use log scale
+    def should_use_log_scale(series):
+        if not pd.api.types.is_numeric_dtype(series): return False
+        if series.min() <= 0: return False
+        # Check if max is significantly larger than min (avoid division by zero)
+        min_val = series.min()
+        max_val = series.max()
+        if min_val < 1e-9: # If min is very close to zero, don't use log scale
+             return False
+        return max_val / min_val > 100 # Use log if range spans > 2 orders of magnitude
+
     for param in hyperparams:
-        if param not in best_combined_df.columns:
-            print(f"Warning: Parameter '{param}' not found in the DataFrame. Skipping.")
+        if param not in all_df.columns or all_df[param].isnull().all() or all_df[param].nunique() <= 1:
+            print(f"Skipping parameter '{param}' due to missing data or single value.")
             continue
 
-        # Check if the column has valid data
-        if best_combined_df[param].isnull().all():
-            print(f"Warning: Parameter '{param}' contains only null values. Skipping.")
-            continue
-
-        if best_combined_df[param].nunique() <= 1:
-            print(f"Warning: Parameter '{param}' has only one unique value. Skipping.")
-            continue
-
-        # Create figure for this parameter
-        plt.figure(figsize=(10, 6))
-        use_log_scale = should_use_log_scale(best_combined_df[param])
+        is_numeric = pd.api.types.is_numeric_dtype(all_df[param])
+        plot_filename = os.path.join(param_impact_dir, f"{param}_impact.png")
+        impact_plot_files.append({"name": param, "path": f"param_impact/{param}_impact.png"})
 
         try:
-            # Get dataframes for top F1, top latency, and intersection (best_combined_df)
-            top_f1_df = all_df[all_df['trial_number'].isin(top_f1_trials)]
-            top_latency_df = all_df[all_df['trial_number'].isin(top_latency_trials)]
+            fig, ax1 = plt.subplots(figsize=(12, 7))
+            use_log = is_numeric and should_use_log_scale(all_df[param])
 
-            if pd.api.types.is_numeric_dtype(all_df[param]):
-                # Plot all top F1 score models with lower alpha
-                plt.scatter(top_f1_df[param], top_f1_df['f1_score'],
-                            label='Top F1 Score', alpha=0.3, color='blue', marker='o')
+            # Plot all completed trials as background
+            if is_numeric:
+                sns.scatterplot(data=all_df, x=param, y='f1_score', ax=ax1, color='lightblue', alpha=0.3, label='_nolegend_')
+            else: # Categorical: Use stripplot for background distribution
+                 sns.stripplot(data=all_df, x=param, y='f1_score', ax=ax1, color='lightblue', alpha=0.3, order=sorted(all_df[param].unique()), label='_nolegend_')
 
-                # Plot all top latency models with lower alpha
-                plt.scatter(top_latency_df[param], top_latency_df['latency'],
-                            label='Top Latency', alpha=0.3, color='green', marker='s')
 
-                # Highlight the models that are good at both metrics with higher alpha and distinct color
-                if not best_combined_df.empty:
-                    plt.scatter(best_combined_df[param], best_combined_df['f1_score'],
-                                label='Best Combined (F1)', alpha=0.8, color='red', marker='*', s=100)
-                    plt.scatter(best_combined_df[param], best_combined_df['latency'],
-                                label='Best Combined (Latency)', alpha=0.8, color='purple', marker='*', s=100)
+            # Highlight Pareto optimal trials for F1 Score
+            if not pareto_df.empty:
+                if is_numeric:
+                    sns.scatterplot(data=pareto_df, x=param, y='f1_score', ax=ax1, color='blue', s=100, marker='o', label='Pareto F1 Score', alpha=0.8)
+                else: # Categorical: Overlay points
+                    sns.stripplot(data=pareto_df, x=param, y='f1_score', ax=ax1, color='blue', s=8, marker='o', order=sorted(all_df[param].unique()), label='Pareto F1 Score', alpha=0.8, jitter=False)
 
-                if use_log_scale:
-                    plt.xscale('log')
-                    plt.xlabel(f"{param} (log scale)")
-                else:
-                    plt.xlabel(param)
-            else:  # Categorical parameter
-                # For categorical params, we'll still show grouped means
-                f1_means = top_f1_df.groupby(param)['f1_score'].mean()
-                latency_means = top_latency_df.groupby(param)['latency'].mean()
-                combined_f1_means = best_combined_df.groupby(param)['f1_score'].mean() if not best_combined_df.empty else None
-                combined_latency_means = best_combined_df.groupby(param)['latency'].mean() if not best_combined_df.empty else None
 
-                plt.plot(f1_means.index, f1_means.values, label='Top F1 Score (Mean)', color='blue', linestyle='--', alpha=0.5)
-                plt.plot(latency_means.index, latency_means.values, label='Top Latency (Mean)', color='green', linestyle='--', alpha=0.5)
+            ax1.set_ylabel('F1 Score', color='blue')
+            ax1.tick_params(axis='y', labelcolor='blue')
+            ax1.set_ylim(f1_ylim) # Set Y-axis limits for F1 score
+            if use_log:
+                ax1.set_xscale('log')
+                ax1.set_xlabel(f"{param} (log scale)")
+            else:
+                ax1.set_xlabel(param)
+            if not is_numeric: # Rotate labels for categorical
+                 plt.setp(ax1.get_xticklabels(), rotation=45, ha="right")
 
-                if not best_combined_df.empty and not combined_f1_means.empty and not combined_latency_means.empty:
-                    plt.plot(combined_f1_means.index, combined_f1_means.values, label='Best Combined (F1)', color='red', marker='*', linewidth=2)
-                    plt.plot(combined_latency_means.index, combined_latency_means.values, label='Best Combined (Latency)', color='purple', marker='*', linewidth=2)
 
-                plt.xlabel(param)
+            # Create second y-axis for Latency
+            ax2 = ax1.twinx()
+            if is_numeric:
+                sns.scatterplot(data=all_df, x=param, y='latency', ax=ax2, color='lightcoral', alpha=0.3, label='_nolegend_')
+            else: # Categorical
+                 sns.stripplot(data=all_df, x=param, y='latency', ax=ax2, color='lightcoral', alpha=0.3, order=sorted(all_df[param].unique()), label='_nolegend_')
 
-            plt.ylabel('Score')
-            plt.title(f'Impact of {param} on F1 Score and Latency')
-            plt.grid(True, linestyle='--', alpha=0.7)
-            plt.legend(loc='best')
+            if not pareto_df.empty:
+                if is_numeric:
+                    sns.scatterplot(data=pareto_df, x=param, y='latency', ax=ax2, color='red', s=100, marker='X', label='Pareto Latency', alpha=0.8)
+                else: # Categorical
+                    sns.stripplot(data=pareto_df, x=param, y='latency', ax=ax2, color='red', s=8, marker='X', order=sorted(all_df[param].unique()), label='Pareto Latency', alpha=0.8, jitter=False)
+
+            ax2.set_ylabel('Latency', color='red')
+            ax2.tick_params(axis='y', labelcolor='red')
+            ax2.set_ylim(lat_ylim) # Set Y-axis limits for Latency
+
+            # Combine legends
+            lines1, labels1 = ax1.get_legend_handles_labels()
+            lines2, labels2 = ax2.get_legend_handles_labels()
+            # Filter out '_nolegend_' entries before combining
+            valid_lines1 = [l for l, lbl in zip(lines1, labels1) if lbl != '_nolegend_']
+            valid_labels1 = [lbl for lbl in labels1 if lbl != '_nolegend_']
+            valid_lines2 = [l for l, lbl in zip(lines2, labels2) if lbl != '_nolegend_']
+            valid_labels2 = [lbl for lbl in labels2 if lbl != '_nolegend_']
+            ax2.legend(valid_lines1 + valid_lines2, valid_labels1 + valid_labels2, loc='best')
+            ax1.get_legend().remove() # Remove ax1 legend as it's combined in ax2
+
+            plt.title(f'Impact of {param} on F1 Score and Latency (Pareto Optimal Highlighted)')
+            ax1.grid(True, axis='x', linestyle='--', alpha=0.6)
+            fig.tight_layout()
+            plt.savefig(plot_filename)
+            plt.close(fig)
+
+        except Exception as e:
+            print(f"Error plotting impact for parameter '{param}': {e}")
+            plt.close(fig) # Ensure figure is closed on error
+            # Remove potentially corrupted file entry
+            impact_plot_files = [f for f in impact_plot_files if f["name"] != param]
+
+
+    # --- Correlation Heatmap ---
+    print("Generating correlation heatmap...")
+    numeric_df = all_df[hyperparams].select_dtypes(include=np.number)
+    if not numeric_df.empty:
+        try:
+            correlation_matrix = numeric_df.corr()
+            plt.figure(figsize=(12, 10))
+            sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt=".2f", linewidths=.5)
+            plt.title('Hyperparameter Correlation Heatmap (Numeric Only)')
+            plt.xticks(rotation=45, ha='right')
+            plt.yticks(rotation=0)
             plt.tight_layout()
-            plt.savefig(f"studies/{param_dir}/visualizations/param_impact/{param}_impact_combined.png")
+            heatmap_filename = os.path.join(param_impact_dir, "correlation_heatmap.png")
+            plt.savefig(heatmap_filename)
             plt.close()
-        except ValueError as e:
-            print(f"Error plotting for parameter '{param}': {e}")
+            print(f"Correlation heatmap saved to {heatmap_filename}")
+            heatmap_rel_path = "param_impact/correlation_heatmap.png"
+        except Exception as e:
+            print(f"Error generating correlation heatmap: {e}")
             plt.close()
-            continue
-
-    print("\nVerification - First 5 top F1 models:")
-    print(all_df.sort_values('f1_score', ascending=False).head(5)[['trial_number', 'f1_score', 'latency']])
-
-    print("\nVerification - First 5 top latency models:")
-    print(all_df.sort_values('latency', ascending=True).head(5)[['trial_number', 'f1_score', 'latency']])
-
-    # Add code to list models passing both criteria
-    if not best_combined_df.empty:
-        # Calculate a combined performance metric (average of F1 and 1-latency since we want to minimize latency)
-        best_combined_df['combined_score'] = (best_combined_df['f1_score'] + (1 - best_combined_df['latency'])) / 2
-
-        # Sort by the combined score
-        sorted_combined_df = best_combined_df.sort_values('combined_score', ascending=False)
-
-        # Save to CSV
-        sorted_combined_df.to_csv(f"studies/{param_dir}/visualizations/best_combined_models.csv", index=False)
-
-        # Create HTML report for best combined models
-        html_content = f"""
-        <html>
-        <head>
-            <title>Best Combined Models (Top in both F1 Score and Latency)</title>
-            <style>
-                table {{ border-collapse: collapse; width: 100%; }}
-                th, td {{ border: 1px solid black; padding: 8px; text-align: left; }}
-                tr:nth-child(even) {{ background-color: #f2f2f2; }}
-                th {{ background-color: #4CAF50; color: white; }}
-            </style>
-        </head>
-        <body>
-            <h2>Models in Top {N_TOP_MODELS} for both F1 Score and Latency ({len(sorted_combined_df)} models)</h2>
-            <p>Sorted by combined score (average of F1 and 1-latency)</p>
-            {sorted_combined_df.to_html(index=False)}
-            <p><a href="hyperparameter_impact_analysis.html">View Hyperparameter Impact Analysis</a></p>
-        </body>
-        </html>
-        """
-
-        with open(f"studies/{param_dir}/visualizations/best_combined_models.html", "w") as f:
-            f.write(html_content)
-
-        print(f"\nFound {len(sorted_combined_df)} models that are in both top {N_TOP_MODELS} for F1 score and latency")
-        print(f"Best combined models saved to studies/{param_dir}/visualizations/best_combined_models.csv")
-        print(f"Best combined models report saved to studies/{param_dir}/visualizations/best_combined_models.html")
-
-        # Print top 10 models to console
-        print("\nTop 10 combined models:")
-        print(sorted_combined_df[['trial_number', 'f1_score', 'latency', 'combined_score']].head(10))
+            heatmap_rel_path = None
     else:
-        print(f"\nNo models found that are in both top {N_TOP_MODELS} for F1 score and latency")
+        print("No numeric hyperparameters found for correlation heatmap.")
+        heatmap_rel_path = None
 
-    # Create a summary HTML file that links to all hyperparameter impact plots
+
+    # --- Generate Summary HTML for Impact Plots ---
+    print("Generating summary HTML for impact plots...")
     impact_html = """
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Hyperparameter Impact Analysis (Best Combined Models)</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 20px; }}
-            .gallery {{ display: flex; flex-wrap: wrap; }}
-            .param-card {{ margin: 10px; padding: 10px; border: 1px solid #ccc; width: 300px; }}
-            img {{ width: 100%; }}
-            .correlation {{ margin: 20px 0; }}
-        </style>
-    </head>
-    <body>
-        <h1>Hyperparameter Impact on F1 Score and Latency (Best Combined Models)</h1>
-        <p>Click on images to view full size.</p>
+    <!DOCTYPE html><html><head><title>Hyperparameter Impact Analysis</title>
+    <style> body {{ font-family: sans-serif; margin: 20px; }} .gallery {{ display: flex; flex-wrap: wrap; gap: 20px; }}
+           .param-card {{ border: 1px solid #ccc; padding: 15px; width: 400px; box-shadow: 2px 2px 5px rgba(0,0,0,0.1); }}
+           .param-card img {{ max-width: 100%; height: auto; }} h1, h2 {{ color: #333; }} </style>
+    </head><body>
+    <h1>Hyperparameter Impact on F1 Score and Latency</h1>
+    <p>Plots show all completed trials (light points) and Pareto optimal trials (dark points/markers).</p>
+    <p>Y-axis ranges are focused on the 5th-95th percentile of all completed trials.</p>
+    <p><a href="../pareto_optimal_trials.html">View Pareto Optimal Trial Details</a></p>"""
 
-        <div class="correlation">
-            <h2>Parameter Correlation Analysis</h2>
-            <a href="param_impact/correlation_heatmap_combined.png" target="_blank">
-                <img src="param_impact/correlation_heatmap_combined.png" alt="Parameter Correlation Heatmap">
-            </a>
-        </div>
+    if heatmap_rel_path:
+        impact_html += f"""
+        <h2>Parameter Correlation Analysis (Numeric)</h2>
+        <div class="param-card" style="width: 600px;">
+            <a href="{heatmap_rel_path}" target="_blank"><img src="{heatmap_rel_path}" alt="Correlation Heatmap"></a>
+        </div>"""
 
-        <h2>Individual Parameter Analysis</h2>
-        <div class="gallery">
-    """
+    impact_html += "<h2>Individual Parameter Analysis</h2><div class='gallery'>"
 
-    for param in hyperparams:
+    for plot_info in impact_plot_files:
         impact_html += f"""
         <div class="param-card">
-            <h3>{param}</h3>
-            <a href="param_impact/{param}_impact_combined.png" target="_blank">
-                <img src="param_impact/{param}_impact_combined.png" alt="Impact of {param}">
+            <h3>{plot_info['name']}</h3>
+            <a href="{plot_info['path']}" target="_blank">
+                <img src="{plot_info['path']}" alt="Impact of {plot_info['name']}">
             </a>
-        </div>
-        """
+        </div>"""
 
-    impact_html += """
-        </div>
-    </body>
-    </html>
-    """
+    impact_html += "</div></body></html>"
 
-    with open(f"studies/{param_dir}/visualizations/hyperparameter_impact_analysis.html", "w") as f:
+    with open(os.path.join(viz_dir, "hyperparameter_impact_analysis.html"), "w") as f:
         f.write(impact_html)
+    print(f"Hyperparameter impact analysis summary saved to {os.path.join(viz_dir, 'hyperparameter_impact_analysis.html')}")
 
-    print(f"Hyperparameter impact analysis for best combined models saved to studies/{param_dir}/visualizations/")
 
-    # Top N trials analysis for F1 Score
-    N = 30
-    trials = study.trials
-    sorted_trials_f1 = sorted(trials, key=lambda t: t.values[0] if t.values else float('-inf'), reverse=True)[:N]
-    sorted_trials_latency = sorted(trials, key=lambda t: t.values[1] if t.values else float('inf'))[:N]
+    # --- Study Statistics ---
+    print("Saving study statistics...")
+    stats = {
+        "study_name": study.study_name,
+        "n_total_trials": len(study.trials), # Includes non-completed trials
+        "n_completed_trials": len(all_trials),
+        "n_valid_data_trials": len(all_df), # Trials with valid F1 and Latency
+        "n_pareto_trials": len(pareto_trials),
+        "n_pruned_trials": len(study.get_trials(deepcopy=False, states=[optuna.trial.TrialState.PRUNED])),
+        "n_failed_trials": len(study.get_trials(deepcopy=False, states=[optuna.trial.TrialState.FAIL]))
+    }
+    with open(os.path.join(viz_dir, "study_stats.json"), "w") as f:
+        json.dump(stats, f, indent=4)
+    print("Study statistics saved.")
+    print("\nStudy Statistics Summary:")
+    print(json.dumps(stats, indent=2))
 
-    data_f1 = [
-        {"trial_number": trial.number, "f1_score": trial.values[0], "latency": trial.values[1], **trial.params}
-        for trial in sorted_trials_f1
-        if trial.values is not None and len(trial.values) == 2  # Ensure both f1_score and latency are available
-    ]
-    data_latency = [
-        {
-            "trial_number": trial.number,
-            "f1_score": trial.values[0],
-            "latency": trial.values[1],
-            **trial.params
-        }
-        for trial in sorted_trials_latency
-        if trial.values is not None and len(trial.values) == 2  # Ensure both f1_score and latency are available
-    ]
-    df_f1 = pd.DataFrame(data_f1)
-    df_latency = pd.DataFrame(data_latency)
+    print(f"\nVisualization generation complete. Results are in: {viz_dir}")
 
-    # Save CSVs for top trials
-    df_f1.to_csv(f"studies/{param_dir}/visualizations/top_{N}_trials_f1.csv", index=False)
-    df_latency.to_csv(f"studies/{param_dir}/visualizations/top_{N}_trials_latency.csv", index=False)
-
-    # Generate HTML reports for top trials
-    def generate_html_report(df, metric_name):
-        html_content = f"""
-        <html>
-        <head>
-            <title>Top {N} Trial Parameters by {metric_name}</title>
-            <style>
-                table {{ border-collapse: collapse; width: 100%; }}
-                th, td {{ border: 1px solid black; padding: 8px; text-align: left; }}
-                tr:nth-child(even) {{ background-color: #f2f2f2; }}
-                th {{ background-color: #4CAF50; color: white; }}
-            </style>
-        </head>
-        <body>
-            <h2>Top {N} Trials by {metric_name}</h2>
-            {df.to_html(index=False)}
-            <p><a href="hyperparameter_impact_analysis.html">View Hyperparameter Impact Analysis</a></p>
-        </body>
-        </html>
-        """
-        return html_content
-
-    with open(f"studies/{param_dir}/visualizations/top_{N}_trials_f1.html", "w") as f:
-        f.write(generate_html_report(df_f1, "F1 Score"))
-
-    with open(f"studies/{param_dir}/visualizations/top_{N}_trials_latency.html", "w") as f:
-        f.write(generate_html_report(df_latency, "Latency"))
-
-    print(f"\nTop {N} trials analysis saved to studies/{param_dir}/visualizations/")
-    print("Check the following files:")
-    print(f"- top_{N}_trials_f1.csv")
-    print(f"- top_{N}_trials_latency.csv")
-    print(f"- top_{N}_trials_f1.html")
-    print(f"- top_{N}_trials_latency.html")
-    print("- hyperparameter_impact_analysis.html (new detailed analysis of each parameter's impact)")

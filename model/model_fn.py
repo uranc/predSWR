@@ -12,7 +12,7 @@ from tensorflow.keras import layers
 from tensorflow.keras.models import Model
 from tensorflow.keras import applications
 from model.patchAD.patch_ad import PatchAD
-from model.patchAD.loss import PatchADLoss
+# from model.patchAD.loss import PatchADLoss
 import pdb
 
 def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
@@ -931,90 +931,169 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
     return model
 
-def build_model_PatchAD(input_timepoints, input_chans=8, patch_sizes=[2, 4, 8, 16],
-                             d_model=256, num_layers=3, classifier_hidden_dim=64, params=None):
+def build_DBI_Patch(input_timepoints, input_chans=8, patch_sizes=[2, 4, 8, 16],
+                             d_model=32, num_layers=3, params=None):
     """
-    Builds a Pure PatchAD-based model.
+    Builds a Pure PatchAD-based model for classification using projected features.
 
     Architecture:
-    Input -> Preprocessing -> Patch Extraction -> PatchAD Module ->
-    Aggregation of patch-based representations -> Classifier Head (MLP)
+    Input -> Preprocessing -> PatchAD Module -> Aggregation (proj_inter/intra) -> Classifier Head (MLP)
 
-    Returns a model with a single classification output.
+    Returns a compiled Keras model.
     """
-    inputs = Input(shape=(input_timepoints, input_chans), name='inputs')
-    normalized = Lambda(lambda x: (x - tf.reduce_mean(x, axis=1, keepdims=True)) /
-                        (tf.math.reduce_std(x, axis=1, keepdims=True) + 1e-6),
-                        name='norm')(inputs)
+    if params is None:
+        raise ValueError("params dictionary cannot be None for build_model_PatchAD")
 
-    # Lists to collect outputs from different scales.
-    proj_inter_list = []
-    proj_intra_list = []
-    rec_inter_list = []
-    rec_intra_list = []
-    inter_list = []   # Raw encoder outputs (inter view)
-    intra_list = []   # Raw encoder outputs (intra view)
+    # --- Parameter Extraction from params dict ---
+    flag_sigmoid = 'SigmoidFoc' in params.get('TYPE_LOSS', '')
+    print('Using Sigmoid:', flag_sigmoid)
 
-    patchad_module = PatchAD(
-        8, input_timepoints, [2, 4, 8, 16, 32],
-        d_model=d_model,
-        num_layers=num_layers
-    )
-    outputs = patchad_module(normalized, training=True)
+    # Activation
+    if params.get('TYPE_REG', '').find('RELU') > -1:
+        this_activation = 'relu'
+    elif params.get('TYPE_REG', '').find('GELU') > -1:
+        this_activation = gelu # Or 'gelu' string if using TF >= 2.4
+    elif params.get('TYPE_REG', '').find('ELU') > -1:
+        this_activation = ELU(alpha=1)
+    else:
+        this_activation = 'gelu' # Default for PatchAD/Mixers
 
+    # Normalization for PatchAD internal layers
+    if params.get('TYPE_REG', '').find('BN') > -1:
+        patch_norm = 'bn'
+    elif params.get('TYPE_REG', '').find('LN') > -1:
+        patch_norm = 'ln'
+    else:
+        patch_norm = 'ln' # Default
 
-    import pdb
-    pdb.set_trace()
-    # get classification loss
-    concat_feats = tf.concat((outputs['x_inter'], outputs['x_intra']), axis=-1)
-    classification_output = Dense(classifier_hidden_dim, activation='sigmoid')(concat_feats)
+    # Dropout
+    r_drop = 0.0
+    if params.get('TYPE_ARCH', '').find('Drop') > -1:
+        try:
+            drop_idx = params['TYPE_ARCH'].find('Drop') + 4
+            r_drop = float(params['TYPE_ARCH'][drop_idx:drop_idx+2]) / 100
+            print(f'Using Dropout: {r_drop}')
+        except (ValueError, IndexError):
+            print("Warning: Could not parse dropout rate, defaulting to 0.0")
+            r_drop = 0.0
 
-    # Get horizon shift if specified
-    is_classification_only = True
-    hori_shift = 0
-    if params and 'TYPE_ARCH' in params and params['TYPE_ARCH'].find('PatchAD') > -1:
-        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('PatchAD')+4:params['TYPE_ARCH'].find('PatchAD')+6])/1000*params['SRATE'])
-        print('Using Horizon Timesteps:', hori_shift)
-        is_classification_only = False
-
-    loss_weight = 1.0
-    if params and 'LOSS_WEIGHT' in params:
-        loss_weight = params['LOSS_WEIGHT']
-
-    # Handle prediction mode
-    if params and 'mode' in params and params['mode'] == 'predict':
-        classification_output = Lambda(lambda tt: tt[:, -1:], name='Last_Output')(classification_output)
-
-    # Setup metrics
-    f1_metric = MaxF1MetricHorizon(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
-    r1_metric = RobustF1Metric(is_classification_only=is_classification_only, thresholds=tf.linspace(0.0, 1.0, 11))
-    latency_metric = LatencyMetric(is_classification_only=is_classification_only, max_early_detection=25)
+    # Kernel Initializer
+    if params.get('TYPE_REG', '').find('Glo') > -1:
+        print('Using Glorot Initializer')
+        this_kernel_initializer = 'glorot_uniform'
+    elif params.get('TYPE_REG', '').find('He') > -1:
+        print('Using He Initializer')
+        this_kernel_initializer = 'he_normal'
+    else:
+        this_kernel_initializer = 'glorot_uniform' # Default
 
     # Optimizer
-    if params and 'TYPE_REG' in params:
-        if params['TYPE_REG'].find('AdamW') > -1:
-            initial_lr = params['LEARNING_RATE'] * 2.0 if 'LEARNING_RATE' in params else 0.001 * 2.0
-            this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, clipnorm=1.0)
-        elif params['TYPE_REG'].find('Adam') > -1:
-            this_optimizer = tf.keras.optimizers.Adam(learning_rate=params.get('LEARNING_RATE', 0.001))
-        else:
-            this_optimizer = tf.keras.optimizers.Adam(learning_rate=params.get('LEARNING_RATE', 0.001))
+    lr = params.get('LEARNING_RATE', 1e-4)
+    if params.get('TYPE_REG', '').find('AdamW') > -1:
+        print('Using AdamW Optimizer')
+        this_optimizer = tf.keras.optimizers.AdamW(learning_rate=lr, clipnorm=1.0)
+    elif params.get('TYPE_REG', '').find('Adam') > -1:
+        print('Using Adam Optimizer')
+        this_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
+    elif params.get('TYPE_REG', '').find('SGD') > -1:
+        print('Using SGD Optimizer')
+        this_optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9)
     else:
-        this_optimizer = tf.keras.optimizers.Adam(learning_rate=0.001)
+        print('Defaulting to Adam Optimizer')
+        this_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
 
-    # # Create loss function - use standard BCE for classification-only model
-    patch_ad_loss = PatchADLoss()
-    custom_fbfce = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params) + patch_ad_loss(outputs)
+    # --- Model Definition ---
+    inputs = Input(shape=(input_timepoints*2, input_chans), name='inputs')
+
+    # Input Normalization (optional, based on params)
+    if params.get('TYPE_ARCH', '').find('ZNorm') > -1:
+        print('Using ZNorm Input Normalization')
+        normalized = Lambda(lambda x: (x - tf.reduce_mean(x, axis=1, keepdims=True)) /
+                            (tf.math.reduce_std(x, axis=1, keepdims=True) + 1e-6),
+                            name='norm')(inputs)
+    else:
+        normalized = inputs
+
+    # PatchAD Module
+    patchAD = PatchAD(
+        input_channels=input_chans, # Pass input_chans correctly
+        seq_length=input_timepoints*2,
+        patch_sizes=patch_sizes,
+        d_model=d_model,
+        num_layers=num_layers,
+        dropout=r_drop,
+        activation=this_activation,
+        norm=patch_norm,
+        name="patch_ad_model" # Added name for clarity
+    )
+    # Build the module explicitly (optional but good practice)
+    # patchad_module.build((None, input_timepoints, input_chans)) # Build is called implicitly during first call
+
+    # Apply the PatchAD module to the normalized input
+    # Pass training=True if you want dropout etc. active during training inference in this build function
+    # Usually, you'd rely on the model.fit() `training` argument.
+    outputs = patchAD(normalized) # outputs is a dict: {'reconstruction', 'proj_inter', 'proj_intra'}
+
+    recons = outputs['reconstruction']
+    
+    #     'reconstruction': rec_final,                # Final combined reconstruction [B, T, C]
+    #     'reconstruction_inter': reconstruction_inter, # Accumulated weighted inter part [B, T, C]
+    #     'reconstruction_intra': reconstruction_intra, # Accumulated weighted intra part [B, T, C]
+    #     'final_features_inter': upsampled_inter,      # Upsampled inter features from last scale [B, T, D]
+    #     'final_features_intra': upsampled_intra,      # Upsampled intra features from last scale [B, T, D]
+    #     'proj_inter': proj_inter,                   # Projected inter features [B, T, proj_dim]
+    #     'proj_intra': proj_intra                    # Projected intra features [B, T, proj_dim]
+    
+    
+    # Classification Head using projected features
+    # The keys should be 'proj_inter' and 'proj_intra' based on PatchAD's return dict
+    concat_proj = tf.concat((outputs['proj_inter'], 
+                              outputs['proj_intra']), axis=-1) # Shape: [B, T, 2*proj_dim]
+    concat_feats = tf.concat((
+                              outputs['final_features_inter'], 
+                              outputs['final_features_intra']), axis=-1) # Shape: [B, 2*proj_dim]
+    # concat_feats = tf.transpose(tf.expand_dims(concat_feats, axis=-1), perm=[0, 2, 1]) # Shape: [B, 1, 2*proj_dim]
+    # Apply Dense layer for classification.
+    # Using params for activation and initializer
+    classification_output = Dense(
+        1,
+        activation='sigmoid', # Often sigmoid for binary classification output layer
+        kernel_initializer='glorot_uniform',
+        name='classifier_dense'
+    )(concat_feats) # Output shape [B, classifier_hidden_dim]
+
+    outs = Concatenate(axis=-1)([recons, classification_output, concat_proj, concat_feats]) # Concatenate reconstruction and classification output 
+    # Define the final model
+    model = Model(inputs=inputs, outputs=outs, name='PatchAD_Model')
+    model._is_classification_only = False # Set classification flag for metrics
+    
+    f1_metric = MaxF1MetricHorizon(model=model)
+    event_f1_metric = EventAwareF1(model=model)
+    fp_event_metric = EventFalsePositiveRateMetric(model=model)
+
+    # Create loss function without calling it
+    hori_shift = 0
+    loss_weight = params.get('LOSS_WEIGHT', 1.0)
+    loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
 
     model.compile(optimizer=this_optimizer,
-                  loss=custom_fbfce,
-                  metrics=[f1_metric, r1_metric, latency_metric, FalsePositiveMonitorMetric(model=model)])
+                  loss=loss_fn,
+                  metrics=[f1_metric, event_f1_metric, fp_event_metric])
 
+   
+    # --- Load Weights ---
     if params and 'WEIGHT_FILE' in params and params['WEIGHT_FILE']:
-        print('load model')
-        model.load_weights(params['WEIGHT_FILE'])
+        weight_file = params['WEIGHT_FILE']
+        print(f'Loading weights from: {weight_file}')
+        try:
+            model.load_weights(weight_file)
+        except Exception as e:
+            print(f"Error loading weights: {e}")
+            # Decide if you want to raise the error or just continue with initialized weights
+            # raise e
 
     return model
+
 
 def build_CAD_Downsampler(input_shape=(1536*2, 8), target_length=128*2, embed_dim=32):
     """
@@ -1206,7 +1285,7 @@ def truncated_mse_loss(y_true, y_pred, tau=4.0):
     return t_mse
 
 class MaxF1MetricHorizon(tf.keras.metrics.Metric):
-    def __init__(self, name='max_f1_metric_horizon', thresholds=tf.linspace(0.0, 1.0, 11), model=None, **kwargs):
+    def __init__(self, name='f1', thresholds=tf.linspace(0.0, 1.0, 11), model=None, **kwargs):
         super(MaxF1MetricHorizon, self).__init__(name=name, **kwargs)
         self.thresholds = thresholds
         self.tp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='tp')
@@ -1270,7 +1349,7 @@ class MaxF1MetricHorizon(tf.keras.metrics.Metric):
         self.fn.assign(tf.zeros_like(self.fn))
 
 class EventAwareF1(tf.keras.metrics.Metric):
-    def __init__(self, name="event_f1_metric", thresholds=tf.linspace(0.0, 1.0, 11),
+    def __init__(self, name="event_f1", thresholds=tf.linspace(0.0, 1.0, 11),
                  early_margin=40, late_margin=40, model=None, **kwargs):
         super(EventAwareF1, self).__init__(name=name, **kwargs)
         self.thresholds = thresholds
@@ -1589,6 +1668,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
     is_classification_only = 'Only' in  params['TYPE_ARCH']
     is_cad = 'CAD' in params['TYPE_ARCH']
+    is_patch = 'Patch' in params['TYPE_ARCH']
     """
     Custom loss function that combines focal binary cross-entropy (FBFCE) with additional terms.
     Args:
@@ -1875,14 +1955,35 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
             return total_loss
 
         def prediction_mode_branch():
-            # For training/validation with LFP predictions (9 or 10 channels)
-            # Check if we have enough channels for prediction mode
-            # def has_enough_channels():
-            prediction_targets = y_true[:, horizon:, :8]  # LFP targets (8 channels)
-            prediction_out = y_pred[:, :-horizon, :8]     # LFP predictions (8 channels)
+            if horizon == 0:
+                prediction_targets = y_true[:, :, :8]  # LFP targets (8 channels)
+                prediction_out = y_pred[:, :, :8]     # LFP predictions (8 channels)
+            else:                
+                prediction_targets = y_true[:, horizon:, :8]  # LFP targets (8 channels)
+                prediction_out = y_pred[:, :-horizon, :8]     # LFP predictions (8 channels)
             y_true_exp = tf.expand_dims(y_true[:, :, 8], axis=-1)  # Probability at index 8
             y_pred_exp = tf.expand_dims(y_pred[:, :, 8], axis=-1)  # Predicted probability at index 8
             return prediction_targets, prediction_out, y_true_exp, y_pred_exp
+
+        def patch_mode_branch():
+            # For training/validation with LFP predictions (9 or 10 channels)
+            # Check if we have enough channels for prediction mode
+            # def has_enough_channels():
+            if horizon == 0:
+                prediction_targets = y_true[:, :, :8]  # LFP targets (8 channels)
+                prediction_out = y_pred[:, :, :8]     # LFP predictions (8 channels)
+            else:                
+                prediction_targets = y_true[:, horizon:, :8]  # LFP targets (8 channels)
+                prediction_out = y_pred[:, :-horizon, :8]     # LFP predictions (8 channels)
+            y_true_exp = tf.expand_dims(y_true[:, :, 8], axis=-1)  # Probability at index 8
+            y_pred_exp = tf.expand_dims(y_pred[:, :, 8], axis=-1)  # Predicted probability at index 8
+            x = y_pred[:, :, 9:]
+            n_feats = params['NO_FILTERS']
+            proj_inter = x[:,:,:n_feats]
+            proj_intra = x[:,:,n_feats:n_feats*2]
+            x_inter = x[:,:,n_feats*2:n_feats*3]
+            x_intra = x[:,:,n_feats*3:]
+            return prediction_targets, prediction_out, y_true_exp, y_pred_exp, proj_inter, proj_intra, x_inter, x_intra
 
         def classification_mode_branch():
             # For classification-only mode (1 or 2 channels)
@@ -1901,16 +2002,20 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
             return dummy_tensor, dummy_tensor, y_true_exp, y_pred_exp
 
         # print('Using classification only:', is_classification_only)
-        if not is_classification_only:
+        if is_patch:
+            prediction_targets, prediction_out, y_true_exp, y_pred_exp, proj_inter, proj_intra, x_inter, x_intra = patch_mode_branch()
+            if (len(y_true.shape) == 3) and (y_true.shape[-1] > 9 ):
+                sample_weight = y_true[:, :, 9]
+            else:
+                sample_weight = tf.ones_like(y_true[:, :, 0])
+        elif not is_classification_only:
             prediction_targets, prediction_out, y_true_exp, y_pred_exp = prediction_mode_branch()
             if (len(y_true.shape) == 3) and (y_true.shape[-1] > 9 ):
                 sample_weight = y_true[:, :, 9]
             else:
                 sample_weight = tf.ones_like(y_true[:, :, 0])
         else:
-            # pdb.set_trace()
             prediction_targets, prediction_out, y_true_exp, y_pred_exp = classification_mode_branch()
-            
             if (len(y_true.shape) == 3) and (y_true.shape[-1] > 1 ):
                 sample_weight = y_true[:, :, 1]
             else:
@@ -1923,7 +2028,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
             #     sample_weight = pool(sample_weight_expanded)
             #     # y_true_exp_expanded = tf.expand_dims(y_true_exp, axis=-1)
             #     y_true_exp = pool(y_true_exp)
-
+        # pdb.set_trace()
 
         # # Maybe zero weights during training (20% chance)
         # if params.get('TRAINING', False):  # Only if in training mode
@@ -1945,8 +2050,10 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
         total_loss = add_extra_losses(total_loss, y_true_exp, y_pred_exp, sample_weight,
                                      params, model, prediction_targets, prediction_out, this_op)
 
-        # Add prediction loss conditionally
-        if not is_classification_only:
+        if is_patch:
+            from model.patchAD.loss import patch_loss
+            total_loss += patch_loss(prediction_targets, prediction_out, proj_inter, proj_intra, x_inter, x_intra, constraint_coeff=loss_weight)
+        elif not is_classification_only:
             mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out))
             total_loss += loss_weight * mse_loss
 

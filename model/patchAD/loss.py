@@ -1,63 +1,64 @@
 import tensorflow as tf
 
-def kl_divergence(p, q):
-    return tf.reduce_sum(p * tf.math.log(p / q + 1e-8), axis=-1)
-
-class PatchADLoss(tf.keras.losses.Loss):
-    def __init__(self, constraint_coef=0.2):
-        super().__init__()
-        self.c = constraint_coef
-        
-    def call(self, y_true, outputs):
-        # Unpack outputs from PatchAD
-        x_inter = outputs['inter']
-        x_intra = outputs['intra']
-        proj_inter = outputs['proj_inter']
-        proj_intra = outputs['proj_intra']
-        rec_inter = outputs['rec_inter']
-        rec_intra = outputs['rec_intra']
-        
-        pdb.set_trace()
-        # Reconstruction: combine both branches
-        rec_pred = rec_inter + rec_intra
-        rec_loss = tf.keras.losses.MeanSquaredError()(y_true, rec_pred)
-        
-        # Contrastive loss between the two views.
-        l_n = kl_divergence(x_inter, tf.stop_gradient(x_intra)) \
-              + kl_divergence(tf.stop_gradient(x_intra), x_inter)
-        l_p = kl_divergence(x_intra, tf.stop_gradient(x_inter)) \
-              + kl_divergence(tf.stop_gradient(x_inter), x_intra)
-        # Divide by the number of patches (assumed along axis=1)
-        cont_loss = (l_n - l_p) / tf.cast(tf.shape(x_inter)[1], tf.float32)
-        
-        # Projection loss: enforce similarity between projected features and the other view.
-        l_n_proj = kl_divergence(proj_inter, tf.stop_gradient(x_intra)) \
-                   + kl_divergence(x_inter, tf.stop_gradient(proj_intra))
-        proj_loss = l_n_proj / tf.cast(tf.shape(x_inter)[1], tf.float32)
-        
-        # Total loss: a weighted combination of contrastive, projection, and reconstruction losses.
-        total_loss = (1 - self.c) * cont_loss + self.c * proj_loss + rec_loss
-        return total_loss
-
-@tf.function
-def compute_anomaly_score(outputs):
+def kl_divergence(p, q, epsilon=1e-8):
     """
-    Computes an anomaly score based on the discrepancy between the inter- and intra- representations.
-    Also returns the reconstruction prediction.
-    
-    Args:
-      outputs: A dictionary with keys:
-          'inter'    : inter-patch representation (tensor)
-          'intra'    : intra-patch representation (tensor)
-          'rec_inter': reconstruction from the inter branch (tensor)
-          'rec_intra': reconstruction from the intra branch (tensor)
-    
-    Returns:
-      anomaly_score: A tensor containing the anomaly score computed as the sum of KL divergences.
-      rec_pred: The reconstructed signal (rec_inter + rec_intra).
+    Symmetric KL divergence between two probability distributions along the last axis.
     """
-    x_inter = outputs['inter']
-    x_intra = outputs['intra']
-    rec_pred = outputs['rec_inter'] + outputs['rec_intra']
-    anomaly_score = kl_divergence(x_inter, x_intra) + kl_divergence(x_intra, x_inter)
-    return anomaly_score, rec_pred
+    safe_p = p + epsilon
+    safe_q = q + epsilon
+    kl1 = tf.reduce_sum(safe_p * tf.math.log(safe_p / safe_q), axis=-1)
+    kl2 = tf.reduce_sum(safe_q * tf.math.log(safe_q / safe_p), axis=-1)
+    return (kl1 + kl2) / 2.0
+
+def patch_loss(prediction_targets, prediction_out, proj_inter, proj_intra, x_inter, x_intra, constraint_coeff=0.5):
+    """
+    PatchAD objective as described in the paper.
+    - prediction_targets: [B, T, C]
+    - prediction_out: [B, T, C]
+    - proj_inter, proj_intra: [B, T, D_proj]
+    - x_inter, x_intra: [B, T, D]
+    - constraint_coeff: c in the final loss equation
+    """
+    # 1. Softmax for KL (probabilities)
+    x_inter_prob = tf.nn.sigmoid(x_inter)
+    x_intra_prob = tf.nn.sigmoid(x_intra)
+    proj_inter_prob = tf.nn.sigmoid(proj_inter)
+    proj_intra_prob = tf.nn.sigmoid(proj_intra)
+
+    # 2. Inter-intra discrepancy (content loss, L_cont)
+    # L_N{P,N}
+    kl_N = tf.reduce_mean(
+        kl_divergence(x_inter_prob, tf.stop_gradient(x_intra_prob)) +
+        kl_divergence(tf.stop_gradient(x_intra_prob), x_inter_prob)
+    )
+    # L_P{P,N}
+    kl_P = tf.reduce_mean(
+        kl_divergence(x_intra_prob, tf.stop_gradient(x_inter_prob)) +
+        kl_divergence(tf.stop_gradient(x_inter_prob), x_intra_prob)
+    )
+    # L_cont = L_N - L_P / len(N) (len(N) = T)
+    L_cont = kl_N - kl_P / tf.cast(tf.shape(x_inter)[1], tf.float32)
+
+    # 3. Projection constraint (L_proj)
+    # L_N'{P',N'}
+    kl_N_proj = tf.reduce_mean(
+        kl_divergence(proj_inter_prob, tf.stop_gradient(proj_intra_prob)) +
+        kl_divergence(tf.stop_gradient(proj_intra_prob), proj_inter_prob)
+    )
+    # L_P'{P',N'}
+    kl_P_proj = tf.reduce_mean(
+        kl_divergence(proj_intra_prob, tf.stop_gradient(proj_inter_prob)) +
+        kl_divergence(tf.stop_gradient(proj_inter_prob), proj_intra_prob)
+    )
+    # L_proj = L_N' - L_P' / len(N)
+    L_proj = kl_N_proj - kl_P_proj / tf.cast(tf.shape(proj_inter)[1], tf.float32)
+
+    # 4. Reconstruction loss (MSE)
+    L_rec = tf.reduce_mean(tf.square(prediction_targets - prediction_out))
+
+    # 5. Final loss
+    total_loss = (1 - constraint_coeff) * L_cont + constraint_coeff * L_proj + L_rec
+
+    # tf.print("Loss components - Rec:", L_rec, "L_cont:", L_cont, "L_proj:", L_proj)
+
+    return total_loss

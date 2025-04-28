@@ -286,7 +286,7 @@ def add_pre_onset_noise(data, onset_indices, noise_duration=50, noise_factor=0.0
 def apply_realistic_augmentations(data, params=None):
     """
     Applies a combination of realistic augmentations to the input data.
-    
+
     Args:
         data: Input tensor of shape [batch_size, time_points, channels]
         params: Optional parameters dictionary
@@ -294,15 +294,15 @@ def apply_realistic_augmentations(data, params=None):
     # Random scaling (0.5 to 2.0)
     scale_factor = tf.random.uniform([tf.shape(data)[0], 1, tf.shape(data)[-1]], 0.5, 2.0)
     data = data * scale_factor
-    
+
     # Random timepoint shift (±20 points)
     shifts = tf.random.uniform([tf.shape(data)[0]], -20, 20, dtype=tf.int32)
     data = tf.map_fn(lambda x: tf.roll(x[0], x[1], axis=0), (data, shifts), dtype=tf.float32)
-    
+
     # DC shift (±0.5)
     dc_shift = tf.random.uniform([tf.shape(data)[0], 1, tf.shape(data)[-1]], -100, 100)
     data = data + dc_shift
-    
+
     # Bandstop filter (2-85 Hz)
     # Using FFT to implement bandstop
     fft = tf.signal.fft(tf.cast(data, tf.complex64))
@@ -311,11 +311,11 @@ def apply_realistic_augmentations(data, params=None):
     updates = tf.zeros_like(band_indices, dtype=tf.float32)
     freq_mask = tf.tensor_scatter_nd_update(freq_mask, tf.expand_dims(band_indices, 1), updates)
     data = tf.cast(tf.math.real(tf.signal.ifft(fft * tf.cast(freq_mask, tf.complex64))), tf.float32)
-    
+
     # Gaussian noise (0-0.2)
     noise = tf.random.normal(tf.shape(data), 0, tf.random.uniform([], 0.0, 0.2))
     data = data + noise
-    
+
     return data
 
 def apply_artifact_augmentations(data):
@@ -326,56 +326,56 @@ def apply_artifact_augmentations(data):
     noise_amp = tf.random.uniform([], 10.0, 100.0)
     noise = tf.random.normal(tf.shape(data), 0, noise_amp)
     data = data + noise
-    
+
     # Random extreme value artifacts
     batch_size, time_points, channels = tf.shape(data)[0], tf.shape(data)[1], tf.shape(data)[2]
-    
+
     # Generate random positions for artifacts
     num_artifacts = tf.random.uniform([], 1, 5, dtype=tf.int32)
-    artifact_positions = tf.random.uniform([num_artifacts, 3], 
+    artifact_positions = tf.random.uniform([num_artifacts, 3],
                                          maxval=[batch_size, time_points, channels],
                                          dtype=tf.int32)
-    
+
     # Generate extreme values (both positive and negative)
     extreme_values = tf.random.uniform([num_artifacts], -100.0, 100.0)
     data = tf.tensor_scatter_nd_update(data, artifact_positions, extreme_values)
-    
+
     return data
 
 def create_adversarial_short_events(data, labels, params):
     """
     Creates adversarial samples from positive/anchor events by creating short events.
-    
+
     Args:
         data: Input tensor of shape [batch_size, time_points, channels]
         labels: Binary labels tensor
         params: Parameters dictionary containing ripple characteristics
     """
     batch_size = tf.shape(data)[0]
-    
+
     # Find positive events
     positive_indices = tf.where(tf.reduce_max(labels, axis=1) > 0)
-    
+
     # For each positive event
     def process_event(idx):
         event_data = data[idx]
         event_label = labels[idx]
-        
+
         # Extract a short segment (1-5ms) from the ripple
         event_start = tf.random.uniform([], 0, tf.shape(event_data)[0]-10, dtype=tf.int32)
         segment_length = tf.random.uniform([], 5, 25, dtype=tf.int32)  # 4-20ms at 1250Hz
         short_segment = event_data[event_start:event_start+segment_length]
-        
+
         # Create surrounding noise
         noise = tf.random.normal([tf.shape(event_data)[0], tf.shape(event_data)[1]], 0, 0.1)
-        
+
         # Insert short segment into noise
         result = tf.tensor_scatter_nd_update(
             noise,
             tf.expand_dims(tf.range(event_start, event_start+segment_length), 1),
             short_segment
         )
-        
+
         # Create corresponding short label
         short_label = tf.zeros_like(event_label)
         short_label = tf.tensor_scatter_nd_update(
@@ -383,16 +383,16 @@ def create_adversarial_short_events(data, labels, params):
             tf.expand_dims(tf.range(event_start, event_start+segment_length), 1),
             tf.ones([segment_length])
         )
-        
+
         return result, short_label
-    
+
     # Process selected positive events
     adversarial_data, adversarial_labels = tf.map_fn(
         process_event,
         positive_indices,
         fn_output_signature=(tf.float32, tf.float32)
     )
-    
+
     return adversarial_data, adversarial_labels
 
 
@@ -407,11 +407,11 @@ def augment_data(data, labels, event_indices=None, apply_mixup=False, mixup_data
     # Ensure data has 3 dimensions [batch, time, channels]
     if len(tf.shape(data)) < 3:
         data = tf.expand_dims(data, axis=-1)
-    
+
     # Ensure labels has at least 2 dimensions [batch, time]
     if len(tf.shape(labels)) < 2:
         labels = tf.expand_dims(labels, axis=-1)
-    
+
     # Apply random scaling 20% of the time
     if tf.random.uniform([]) < 0.2:
         try:
@@ -423,11 +423,11 @@ def augment_data(data, labels, event_indices=None, apply_mixup=False, mixup_data
     # # Apply realistic augmentations (20% chance)
     # if tf.random.uniform([]) < 0.0:
     #     data = apply_realistic_augmentations(data, params)
-    
+
     # # Apply artifact augmentations (10% chance)
     # if tf.random.uniform([]) < 0.1:
     #     data = apply_artifact_augmentations(data)
-    
+
     # # Create adversarial short events (5% chance)
     # if tf.random.uniform([]) < 0.05:
     #     adv_data, adv_labels = create_adversarial_short_events(data, labels, params)
@@ -435,7 +435,7 @@ def augment_data(data, labels, event_indices=None, apply_mixup=False, mixup_data
     #     mask = tf.random.uniform([tf.shape(data)[0]]) < 0.2
     #     data = tf.where(mask[:, tf.newaxis, tf.newaxis], adv_data, data)
     #     labels = tf.where(mask[:, tf.newaxis], adv_labels, labels)
-    
+
     # Return the augmented data and original labels
     return data, labels
 
@@ -448,7 +448,7 @@ def apply_augmentation_to_dataset(dataset, params=None, sampling_rate=1250):
     def augment_batch(data, labels):
         augmented_data, updated_labels = augment_data(
             data, labels, params=params, sampling_rate=sampling_rate)
-        return augmented_data, updated_labels   
+        return augmented_data, updated_labels
 
     # Apply augment_batch function to each batch using map
     return dataset.map(augment_batch, num_parallel_calls=tf.data.experimental.AUTOTUNE)
@@ -478,7 +478,7 @@ def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250
     assert len(val_LFPs) == len(val_GTs), "The number of test LFPs doesn't match the number of test GTs"
 
     assert len(train_LFPs)+len(val_LFPs) == len(sf), "The number of sampling frequencies doesn't match the number of sessions"
-    
+
     # All the training sessions data and GT will be concatenated in one data array and one GT array (2 x n events)
     counter_sf = 0
     retrain_LFP=[]
@@ -724,11 +724,15 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
 
     weights = weights.astype('float32')
     # make datasets
-    
+
     if params['TYPE_ARCH'].find('CAD')>-1:
         sample_length = params['NO_TIMEPOINTS']
         label_length = 1
         label_skip = sample_length
+    elif params['TYPE_ARCH'].find('Patch')>-1:
+        sample_length = params['NO_TIMEPOINTS']*2
+        label_length = sample_length
+        label_skip = 0
     else:
         sample_length = params['NO_TIMEPOINTS']*2
         label_length = sample_length/2
@@ -786,7 +790,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
     #         targets = tf.nn.max_pool1d(targets, ksize=12, strides=12, padding='VALID')
     #         # Remove the channel dimension after pooling
     #         targets = tf.squeeze(targets, axis=0)
-    #         return targets          
+    #         return targets
     #     train_y = train_y.map(lambda x: downsample_labels(x))
     #     train_w = train_w.map(lambda x: downsample_labels(x))
     #     test_y = test_y.map(lambda x: downsample_labels(x))
@@ -799,7 +803,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
 
     # train_x = train_x.map(lambda x: (channel_normalize(x)))
     # test_x = test_x.map(lambda x: (channel_normalize(x)))
-    if params['TYPE_ARCH'].find('Only')>-1:    
+    if params['TYPE_ARCH'].find('Only')>-1:
         print('NOT PREDICTING LFPs')
         # Concatenate train_x and train_y per batch
         test_c = test_y #tf.data.Dataset.zip((test_xy, test_y))
@@ -810,12 +814,16 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
             return tf.concat([labels, weights], axis=-1)  # Concatenate along the last axis (channels)ZZ
         train_d = train_c.map(lambda x, y: concat_lfps_labels_weights(x, y))
         test_d = test_c
-
     else:
         # train_y = train_y.map(lambda x: tf.pad(x, [[0, 0], [50, 0], [0, 0]], 'CONSTANT', constant_values=0.0))
-        train_xy = train_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
-        test_xy = test_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
-        
+        if params['TYPE_ARCH'].find('Patch')>-1:
+            print('Using Patch with Full Window')
+            train_xy = train_x.map(lambda x: x)
+            test_xy = test_x.map(lambda x: x)
+        else:
+            train_xy = train_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
+            test_xy = test_x.map(lambda x: x[:, -params['NO_TIMEPOINTS']:, :])
+            
         # Concatenate train_x and train_y per batch
         test_c = tf.data.Dataset.zip((test_xy, test_y))
         train_c = tf.data.Dataset.zip((train_xy, train_y, train_w))
@@ -828,7 +836,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
         @tf.autograph.experimental.do_not_convert
         def concat_lfps_labels(lfps, labels):
             return tf.concat([lfps, labels], axis=-1)  # Concatenate along the last axis (channels)ZZ
-        test_d = test_c.map(lambda x, y: concat_lfps_labels(x, y))        
+        test_d = test_c.map(lambda x, y: concat_lfps_labels(x, y))
 
     # Combine the dataset with weights
     train_dataset = tf.data.Dataset.zip((train_x, train_d))
@@ -853,11 +861,11 @@ def load_allen(indeces= np.int32(np.linspace(49,62,8))):
 def load_topological_dataset(batch_size=32, shuffle_buffer=1000):
     """
     Loads topological data from Juan Pablo and Alberto datasets and creates a TensorFlow dataset.
-    
+
     Args:
         batch_size (int): Size of batches for training
         shuffle_buffer (int): Size of shuffle buffer
-        
+
     Returns:
         tf.data.Dataset: Dataset containing batched and preprocessed data
     """
@@ -866,19 +874,19 @@ def load_topological_dataset(batch_size=32, shuffle_buffer=1000):
     # Load both .mat files
     # jp_data = sio.loadmat('/cs/projects/OWVinckSWR/Dataset/TopologicalData/JuanPabloDB_struct.mat')
     # ab_data = sio.loadmat('/cs/projects/OWVinckSWR/Dataset/TopologicalData/AlbertoDB_struct.mat')
-    
+
     # Load both .mat files using h5py
     jp_data = h5py.File('/cs/projects/OWVinckSWR/Dataset/TopologicalData/JuanPabloDB_struct.mat', 'r')
     ab_data = h5py.File('/cs/projects/OWVinckSWR/Dataset/TopologicalData/AlbertoDB_struct.mat', 'r')
-    
+
     # Process and concatenate data from both sources
     def process_struct(data):
         ripples = data['ripples']  # nEvents x 127
         n_events = ripples.shape[1]
-        
+
         # Reshape ripples to (nEvents, 127, 8) by splitting last dimension
         ripples_reshaped = np.tile(np.transpose(ripples, (1, 0))[:,:,np.newaxis], (1,1,8))
-        
+
         # Collect other features
         features = np.column_stack([
             np.array(data['amplitude']).reshape(-1, 1),
@@ -886,31 +894,31 @@ def load_topological_dataset(batch_size=32, shuffle_buffer=1000):
             np.array(data['duration']).reshape(-1, 1),
             np.array(data['frequency']).reshape(-1, 1)
         ])
-        
+
         return ripples_reshaped, features
-    
+
     # Process both datasets
     jp_ripples, jp_features = process_struct(jp_data)
     ab_ripples, ab_features = process_struct(ab_data)
-    
+
     # Concatenate datasets
     all_ripples = np.concatenate([jp_ripples, ab_ripples], axis=0)
     all_features = np.concatenate([jp_features, ab_features], axis=0)
-    
+
     # Convert to float32 for better performance
     all_ripples = all_ripples.astype(np.float32)
     all_features = all_features.astype(np.float32)
-    
+
     # Create TensorFlow dataset
     dataset = tf.data.Dataset.from_tensor_slices({
         'ripples': all_ripples,
         'features': all_features
     })
-    
+
     # Apply dataset transformations
     dataset = dataset.shuffle(shuffle_buffer)
     dataset = dataset.batch(batch_size)
     dataset = dataset.prefetch(tf.data.AUTOTUNE)
-    
+
     return dataset
 

@@ -1,126 +1,156 @@
 import tensorflow as tf
 import numpy as np
-from einops.layers.tensorflow import Rearrange
+from einops import rearrange
 from model.patchAD.modules import MLPBlock, PatchMixerLayer, ProjectHead, EncoderEnsemble
 
-
 class PositionalEmbedding(tf.keras.layers.Layer):
-    def __init__(self, input_dim, max_len=5000):
-        super().__init__()
-        position = np.arange(max_len)[:, np.newaxis]
-        div_term = np.exp(np.arange(0, input_dim, 2) * -(np.log(10000.0) / input_dim))
-        pe = np.zeros((max_len, input_dim))
+    def __init__(self, input_dim, max_len=5000, name="positional_embedding", **kwargs):
+        super().__init__(name=name, **kwargs)
+        position = np.arange(max_len)[:, None]
+        div_term = np.exp(np.arange(0, input_dim, 2, dtype=np.float32) * -(np.log(10000.0) / input_dim))
+        pe = np.zeros((max_len, input_dim), dtype=np.float32)
         pe[:, 0::2] = np.sin(position * div_term)
-        pe[:, 1::2] = np.cos(position * div_term)
-        self.pe = tf.constant(pe[np.newaxis, :, :], dtype=tf.float32)
+        if input_dim % 2 != 0:
+            div_term_odd = np.exp(np.arange(0, input_dim - 1, 2, dtype=np.float32) * -(np.log(10000.0) / (input_dim - 1)))
+            cos_len = pe[:, 1::2].shape[1]
+            pe[:, 1::2] = np.cos(position * div_term_odd[:cos_len])
+        else:
+            pe[:, 1::2] = np.cos(position * div_term)
+        self.pe = tf.constant(pe[None], dtype=tf.float32)
+
     def call(self, x):
         seq_len = tf.shape(x)[1]
-        return self.pe[:, :seq_len, :]
-
+        return x + self.pe[:, :seq_len, :]
 
 class PatchAD(tf.keras.Model):
-    def __init__(self, input_channels, seq_length, patch_sizes, d_model=256, num_layers=3,
-                 dropout=0.0, activation="gelu", norm="ln"):
-        super().__init__()
-        self.patch_sizes = sorted(patch_sizes)
-        self.win_size = seq_length
+    def __init__(self,
+                 input_channels,
+                 seq_length,
+                 patch_sizes,
+                 d_model=256,
+                 num_layers=3,
+                 dropout=0.0,
+                 activation="gelu",
+                 norm="ln",
+                 name="patch_ad_model", **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.patch_sizes    = sorted(patch_sizes)
+        self.seq_length     = seq_length
+        self.input_channels = input_channels
+        self.d_model        = d_model
 
-        self.win_emb = PositionalEmbedding(input_channels)
+        self.win_emb = PositionalEmbedding(input_channels, max_len=seq_length, name=f"{name}_pos_emb")
+        self.patch_num_emb  = [tf.keras.layers.Dense(d_model, name=f"{name}_patch_num_emb_p{p}") for p in self.patch_sizes]
+        self.patch_size_emb = [tf.keras.layers.Dense(d_model, name=f"{name}_patch_size_emb_p{p}") for p in self.patch_sizes]
 
-        self.patch_num_emb = [tf.keras.layers.Dense(d_model) for _ in self.patch_sizes]
-        self.patch_size_emb = [tf.keras.layers.Dense(d_model) for _ in self.patch_sizes]
+        self.patch_encoders = []
+        for i, p in enumerate(self.patch_sizes):
+            mixer_layers_list = []
+            N = seq_length // p
+            hid_mixer_dim = d_model
+            for layer_idx in range(num_layers):
+                mixer_layers_list.append(PatchMixerLayer(
+                    in_len=N,
+                    hid_len=hid_mixer_dim,
+                    in_chn=self.input_channels,
+                    hid_chn=hid_mixer_dim,
+                    out_chn=d_model,
+                    patch_size=p,
+                    hid_pch=hid_mixer_dim,
+                    d_model=d_model,
+                    norm=norm,
+                    activ=activation,
+                    drop=dropout,
+                    jump_conn="proj",
+                    name=f"{name}_p{p}_mixer_layer_{layer_idx}"
+                ))
+            self.patch_encoders.append(EncoderEnsemble(mixer_layers_list, name=f"{name}_p{p}_encoder_ensemble"))
 
-        self.patch_encoders = [
-            EncoderEnsemble([
-                PatchMixerLayer(
-                    in_len=seq_length, hid_len=40, in_chn=input_channels,
-                    hid_chn=int(input_channels * 1.2), out_chn=input_channels,
-                    patch_size=p, hid_pch=int(p * 1.2), d_model=d_model,
-                    norm=norm, activ=activation, drop=dropout, jump_conn='proj'
-                ) for _ in range(num_layers)
-            ]) for p in self.patch_sizes
-        ]
+        self.recons_num  = []
+        self.recons_size = []
+        for i, p in enumerate(self.patch_sizes):
+            N = seq_length // p
+            self.recons_num.append(tf.keras.Sequential([
+                tf.keras.layers.LayerNormalization(epsilon=1e-5, name=f"{name}_p{p}_recons_num_norm"),
+                tf.keras.layers.Dense(p, name=f"{name}_p{p}_recons_num_dense"),
+            ], name=f"{name}_p{p}_recons_num_head"))
+            self.recons_size.append(tf.keras.Sequential([
+                tf.keras.layers.LayerNormalization(epsilon=1e-5, name=f"{name}_p{p}_recons_size_norm"),
+                tf.keras.layers.Dense(N, name=f"{name}_p{p}_recons_size_dense"),
+            ], name=f"{name}_p{p}_recons_size_head"))
 
-        # self.patch_num_mixer = tf.keras.Sequential([
-        #     tf.keras.layers.Dense(d_model // 2, activation=activation),
-        #     tf.keras.layers.Dense(d_model),
-        #     tf.keras.layers.Softmax(-1)
-        # ])
-        # self.patch_size_mixer = tf.keras.Sequential([
-        #     tf.keras.layers.Dense(d_model // 2, activation=activation),
-        #     tf.keras.layers.Dense(d_model),
-        #     tf.keras.layers.Softmax(-1)
-        # ])
+        self.rec_alpha = self.add_weight(
+            'rec_alpha',
+            shape=(len(self.patch_sizes),),
+            initializer=tf.keras.initializers.Constant(0.5),
+            trainable=True
+        )
 
-        self.recons_num = [tf.keras.Sequential([
-            Rearrange('b c n d -> b c (n d)'),
-            tf.keras.layers.LayerNormalization(),
-            tf.keras.layers.Dense(d_model),
-            tf.keras.layers.LayerNormalization(),
-            tf.keras.layers.Dense(seq_length),
-            Rearrange('b c l -> b l c')
-        ]) for p in self.patch_sizes]
-
-        self.recons_size = [tf.keras.Sequential([
-            Rearrange('b c p d -> b c (p d)'),
-            tf.keras.layers.LayerNormalization(),
-            tf.keras.layers.Dense(d_model),
-            tf.keras.layers.LayerNormalization(),
-            tf.keras.layers.Dense(seq_length),
-            Rearrange('b c l -> b l c')
-        ]) for p in self.patch_sizes]
-
-        self.rec_alpha = self.add_weight("rec_alpha", shape=(len(self.patch_sizes),),
-                                         initializer=tf.keras.initializers.Constant(0.5), trainable=True)
-
-        self.proj_head_inter = ProjectHead(d_model)
-        self.proj_head_intra = ProjectHead(d_model)
+        proj_dim = d_model
+        self.proj_head_inter = ProjectHead(proj_dim, name=f"{name}_proj_head_inter")
+        self.proj_head_intra = ProjectHead(proj_dim, name=f"{name}_proj_head_intra")
+        self.proj_head_inter.proj_dim = proj_dim
+        self.proj_head_intra.proj_dim = proj_dim
 
     def call(self, x, training=False):
-        B, T, C = tf.shape(x)[0], tf.shape(x)[1], tf.shape(x)[2]
-        
-        x = x + self.win_emb(x)
+        B = tf.shape(x)[0]
+        T = self.seq_length
+        C = self.input_channels
+        D = self.d_model
 
-        rec_total = 0
-        outputs_inter, outputs_intra = None, None
-        patch_num_dist_list, patch_size_dist_list = [], []
+        x_embedded = self.win_emb(x)
+        r1_total = tf.zeros_like(x)
+        r2_total = tf.zeros_like(x)
+        last_scale_inter = None
+        last_scale_intra = None
+        last_scale_p = None
 
-        for i, patch_size in enumerate(self.patch_sizes):
-            num_patches = T // patch_size
+        for idx, p in enumerate(self.patch_sizes):
+            N = T // p
+            x_patches = tf.reshape(x_embedded, (B, N, p, C))
+            inter_view_input = rearrange(x_patches, 'b n p c -> b c n p')
+            inter_view_embedded = self.patch_num_emb[idx](inter_view_input)
+            intra_view_input = rearrange(x_patches, 'b n p c -> b c p n')
+            intra_view_embedded = self.patch_size_emb[idx](intra_view_input)
+            encoder = self.patch_encoders[idx]
+            final_inter, final_intra, _, _ = encoder(inter_view_embedded, intra_view_embedded, training=training)
+            last_scale_inter = final_inter
+            last_scale_intra = final_intra
+            last_scale_p = p
 
-            x_patched = tf.reshape(x, [B, num_patches, patch_size, C])
-            x_patch_num = tf.transpose(x_patched, [0, 3, 1, 2])
-            x_patch_size = tf.transpose(x_patched, [0, 3, 2, 1])
+            r1_patches = self.recons_num[idx](final_inter)
+            r2_patches = self.recons_size[idx](final_intra)
+            r1_temp = rearrange(r1_patches, 'b c n p -> b c (n p)')
+            r1 = rearrange(r1_temp, 'b c t -> b t c')
+            r2_temp = rearrange(r2_patches, 'b c p n -> b c (p n)')
+            r2 = rearrange(r2_temp, 'b c t -> b t c')
+            alpha = tf.sigmoid(self.rec_alpha[idx])
+            r1_total += alpha * r1
+            r2_total += (1.0 - alpha) * r2
 
-            x_patch_num = self.patch_num_emb[i](x_patch_num)
-            x_patch_size = self.patch_size_emb[i](x_patch_size)
+        rec_final = r1_total + r2_total
+        reconstruction_inter = r1_total
+        reconstruction_intra = r2_total
 
-            encoder = self.patch_encoders[i]
-            inter_out, intra_out, _, _ = encoder(x_patch_num, x_patch_size, training=training)
+        # --- PatchAD/DCdetector upsampling ---
+        p = last_scale_p
+        N = T // p
+        # Inter: repeat each patch feature for each point in the patch
+        inter_avg_c = tf.reduce_mean(last_scale_inter, axis=1)  # [B, N, D]
+        upsampled_inter = tf.repeat(inter_avg_c, repeats=p, axis=1)  # [B, N*P, D] == [B, T, D]
+        # Intra: tile the patch's sequence for each patch
+        intra_avg_c = tf.reduce_mean(last_scale_intra, axis=1)  # [B, P, D]
+        upsampled_intra = tf.tile(intra_avg_c, [1, N, 1])  # [B, P*N, D] == [B, T, D]
 
-            # patch_num_dist_list.append(self.patch_num_mixer(inter_out))
-            # patch_size_dist_list.append(self.patch_size_mixer(intra_out))
-
-            patch_num_dist_list.append(inter_out)
-            patch_size_dist_list.append(intra_out)
-
-            rec1 = self.recons_num[i](inter_out)
-            rec2 = self.recons_size[i](intra_out)
-            rec_i = self.rec_alpha[i] * rec1 + (1 - self.rec_alpha[i]) * rec2
-
-            rec_total += rec_i
-
-            outputs_inter, outputs_intra = inter_out, intra_out
-
-        rec_final = rec_total / len(self.patch_sizes)
-
-        proj_inter = self.proj_head_inter(tf.reduce_mean(outputs_inter, axis=1))
-        proj_intra = self.proj_head_intra(tf.reduce_mean(outputs_intra, axis=1))
+        proj_inter = self.proj_head_inter(upsampled_inter, training=training)
+        proj_intra = self.proj_head_intra(upsampled_intra, training=training)
 
         return {
-            'patch_num_dist_list': patch_num_dist_list,
-            'patch_size_dist_list': patch_size_dist_list,
             'reconstruction': rec_final,
+            'reconstruction_inter': reconstruction_inter,
+            'reconstruction_intra': reconstruction_intra,
+            'final_features_inter': upsampled_inter,
+            'final_features_intra': upsampled_intra,
             'proj_inter': proj_inter,
             'proj_intra': proj_intra
         }

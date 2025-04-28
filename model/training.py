@@ -33,6 +33,17 @@ def get_weight_decay(epoch, max_epochs=200):
     progress = min((epoch - warmup_epochs) / (remaining_epochs * 0.8), 1.0)
     return initial_decay + (final_decay - initial_decay) * progress
 
+class TerminateOnNaN(cb.Callback):
+    """Callback that terminates training when a NaN loss is encountered."""
+    def on_epoch_end(self, epoch, logs=None):
+        logs = logs or {}
+        loss = logs.get('loss')
+        if loss is not None:
+            # Check if loss is NaN or infinity
+            if np.isnan(loss) or np.isinf(loss):
+                print(f"\nEpoch {epoch+1}: Invalid loss detected (NaN or Inf). Terminating training.")
+                self.model.stop_training = True
+                
 # Custom callback for weight decay
 class WeightDecayCallback(cb.Callback):
     def __init__(self, max_epochs=100):
