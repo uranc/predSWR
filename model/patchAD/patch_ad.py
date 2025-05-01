@@ -1,22 +1,61 @@
 import tensorflow as tf
-import numpy as np
-from einops import rearrange
-from model.patchAD.modules import MLPBlock, PatchMixerLayer, ProjectHead, EncoderEnsemble
+from tensorflow.keras.layers import (Dense, Dropout, Layer, LayerNormalization, 
+                                   Reshape, Permute, Softmax, Activation)
+from tensorflow.keras.models import Sequential
+from tensorflow.keras.initializers import GlorotUniform
+from tensorflow_addons.activations import gelu
+from .modules import PatchMixerLayer, MLPBlock, EncoderEnsemble, ProjectHead
+
 
 class PositionalEmbedding(tf.keras.layers.Layer):
     def __init__(self, input_dim, max_len=5000, name="positional_embedding", **kwargs):
         super().__init__(name=name, **kwargs)
-        position = np.arange(max_len)[:, None]
-        div_term = np.exp(np.arange(0, input_dim, 2, dtype=np.float32) * -(np.log(10000.0) / input_dim))
-        pe = np.zeros((max_len, input_dim), dtype=np.float32)
-        pe[:, 0::2] = np.sin(position * div_term)
-        if input_dim % 2 != 0:
-            div_term_odd = np.exp(np.arange(0, input_dim - 1, 2, dtype=np.float32) * -(np.log(10000.0) / (input_dim - 1)))
-            cos_len = pe[:, 1::2].shape[1]
-            pe[:, 1::2] = np.cos(position * div_term_odd[:cos_len])
-        else:
-            pe[:, 1::2] = np.cos(position * div_term)
-        self.pe = tf.constant(pe[None], dtype=tf.float32)
+        
+        # Create position and dimension indices
+        position = tf.range(max_len, dtype=tf.float32)[:, tf.newaxis]  # [max_len, 1]
+        
+        # Calculate number of dimensions for sin/cos terms
+        half_dim = input_dim // 2
+        div_term = tf.exp(
+            tf.range(0, half_dim, dtype=tf.float32) * (-tf.math.log(10000.0) / half_dim)
+        )
+        
+        # Initialize PE matrix
+        pe = tf.zeros((max_len, input_dim))
+        
+        # Calculate sin terms for even indices
+        angles = tf.matmul(position, div_term[tf.newaxis, :])  # [max_len, half_dim]
+        sin_terms = tf.sin(angles)
+        
+        # Update even indices (0, 2, 4, ...)
+        even_indices = tf.range(0, input_dim, 2)
+        pe = tf.tensor_scatter_nd_update(
+            pe,
+            tf.stack([
+                tf.repeat(tf.range(max_len), len(even_indices)),
+                tf.tile(even_indices, [max_len])
+            ], axis=1),
+            tf.reshape(sin_terms, [-1])
+        )
+        
+        # Calculate cos terms for odd indices
+        if input_dim % 2 != 0:  # Handle odd input_dim
+            div_term = div_term[:-1]  # Remove last element
+        cos_terms = tf.cos(angles[:, :input_dim//2])  # Only use needed terms
+        
+        # Update odd indices (1, 3, 5, ...)
+        odd_indices = tf.range(1, input_dim, 2)
+        pe = tf.tensor_scatter_nd_update(
+            pe,
+            tf.stack([
+                tf.repeat(tf.range(max_len), len(odd_indices)),
+                tf.tile(odd_indices, [max_len])
+            ], axis=1),
+            tf.reshape(cos_terms, [-1])
+        )
+        
+        # Store as non-trainable constant
+        self.pe = tf.constant(pe[tf.newaxis, :, :], dtype=tf.float32)
 
     def call(self, x):
         seq_len = tf.shape(x)[1]
@@ -27,130 +66,263 @@ class PatchAD(tf.keras.Model):
                  input_channels,
                  seq_length,
                  patch_sizes,
-                 d_model=256,
-                 num_layers=3,
+                 d_model=50,
+                 e_layer=3,
                  dropout=0.0,
                  activation="gelu",
                  norm="ln",
-                 name="patch_ad_model", **kwargs):
+                 mlp_hid_len_ratio=0.7,
+                 mlp_hid_chn_ratio=1.2,
+                 mlp_out_chn_ratio=1.0,
+                 mlp_hid_pch_ratio=1.2,
+                 mixer_mlp_ratio=0.5,
+                 name="patch_ad_model",
+                 **kwargs):
         super().__init__(name=name, **kwargs)
-        self.patch_sizes    = sorted(patch_sizes)
-        self.seq_length     = seq_length
+        
+        # Store model parameters
+        self.patch_sizes = patch_sizes
+        self.seq_length = seq_length
+        self.d_model = d_model
         self.input_channels = input_channels
-        self.d_model        = d_model
-
-        self.win_emb = PositionalEmbedding(input_channels, max_len=seq_length, name=f"{name}_pos_emb")
-        self.patch_num_emb  = [tf.keras.layers.Dense(d_model, name=f"{name}_patch_num_emb_p{p}") for p in self.patch_sizes]
-        self.patch_size_emb = [tf.keras.layers.Dense(d_model, name=f"{name}_patch_size_emb_p{p}") for p in self.patch_sizes]
-
+        self.e_layer = e_layer
+        
+        # Initialize activation function
+        self.activation_fn = gelu if activation == "gelu" else tf.keras.activations.get(activation)
+        
+        # Kernel initializer for all Dense layers
+        self.kernel_init = GlorotUniform()
+        
+        # 1. Positional Embedding
+        self.win_emb = PositionalEmbedding(input_channels, max_len=seq_length+100)
+        
+        # 2. Patch Embeddings (with proper initialization)
+        self.patch_num_embeddings = []
+        self.patch_size_embeddings = []
+        for p in patch_sizes:
+            self.patch_num_embeddings.append(
+                Dense(d_model, 
+                      kernel_initializer=self.kernel_init,
+                      name=f"patch_num_emb_{p}")
+            )
+            self.patch_size_embeddings.append(
+                Dense(d_model,
+                      kernel_initializer=self.kernel_init,
+                      name=f"patch_size_emb_{p}")
+            )
+        
+        # 3. Encoders
         self.patch_encoders = []
-        for i, p in enumerate(self.patch_sizes):
-            mixer_layers_list = []
-            N = seq_length // p
-            hid_mixer_dim = d_model
-            for layer_idx in range(num_layers):
-                mixer_layers_list.append(PatchMixerLayer(
-                    in_len=N,
-                    hid_len=hid_mixer_dim,
-                    in_chn=self.input_channels,
-                    hid_chn=hid_mixer_dim,
-                    out_chn=d_model,
-                    patch_size=p,
-                    hid_pch=hid_mixer_dim,
+        for i, p in enumerate(patch_sizes):
+            patch_size = p
+            patch_num = seq_length // patch_size
+            if seq_length % patch_size != 0:
+                raise ValueError(f"seq_length ({seq_length}) must be divisible by patch_size ({patch_size})")
+                
+            # Calculate hidden dimensions
+            hid_len = max(32, int(patch_num * mlp_hid_len_ratio))
+            hid_chn = max(1, int(input_channels * mlp_hid_chn_ratio))
+            out_chn = max(1, int(input_channels * mlp_out_chn_ratio))
+            hid_pch = max(32, int(patch_size * mlp_hid_pch_ratio))
+            
+            # Create encoder layers
+            enc_layers = [
+                PatchMixerLayer(
+                    in_len=seq_length,
+                    hid_len=hid_len,
+                    in_chn=input_channels,
+                    hid_chn=hid_chn,
+                    out_chn=out_chn,
+                    patch_size=patch_size,
+                    hid_pch=hid_pch,
                     d_model=d_model,
                     norm=norm,
                     activ=activation,
                     drop=dropout,
-                    jump_conn="proj",
-                    name=f"{name}_p{p}_mixer_layer_{layer_idx}"
-                ))
-            self.patch_encoders.append(EncoderEnsemble(mixer_layers_list, name=f"{name}_p{p}_encoder_ensemble"))
+                    jump_conn='proj',
+                    name=f"p{p}_layer{j}"
+                )
+                for j in range(e_layer)
+            ]
+            self.patch_encoders.append(
+                EncoderEnsemble(encoder_layers=enc_layers, name=f"p{p}_encoder")
+            )
+        
+        # 4. Mixers (with proper initialization)
+        mixer_hidden_dim = max(32, int(d_model * mixer_mlp_ratio))
+        self.patch_num_mixer = self._build_mixer("num", d_model, mixer_hidden_dim, norm, dropout)
+        self.patch_size_mixer = self._build_mixer("size", d_model, mixer_hidden_dim, norm, dropout)
+        
+        # 5. Projection Heads (NEW)
+        self.proj_num_heads = []
+        self.proj_size_heads = []
+        for i, p in enumerate(patch_sizes):
+             self.proj_num_heads.append(
+                 ProjectHead(dim=d_model, name=f"p{p}_proj_num_head")
+             )
+             self.proj_size_heads.append(
+                 ProjectHead(dim=d_model, name=f"p{p}_proj_size_head")
+             )
+        
+        # 6. Reconstruction Heads
+        self.recons_num_heads = []
+        self.recons_size_heads = []
+        self.rec_alpha = []
+        
+        for i, p in enumerate(patch_sizes):
+            patch_size = p
+            patch_num = seq_length // patch_size
+            
+            # Build reconstruction heads with proper initialization
+            self.recons_num_heads.append(
+                self._build_recons_head("num", p, patch_num, d_model, seq_length)
+            )
+            self.recons_size_heads.append(
+                self._build_recons_head("size", p, patch_size, d_model, seq_length)
+            )
+            
+            # Initialize reconstruction alpha weights
+            self.rec_alpha.append(
+                self.add_weight(
+                    name=f'rec_alpha_{p}',
+                    shape=(),
+                    initializer=tf.keras.initializers.Constant(0.5),
+                    trainable=True
+                )
+            )
 
-        self.recons_num  = []
-        self.recons_size = []
-        for i, p in enumerate(self.patch_sizes):
-            N = seq_length // p
-            self.recons_num.append(tf.keras.Sequential([
-                tf.keras.layers.LayerNormalization(epsilon=1e-5, name=f"{name}_p{p}_recons_num_norm"),
-                tf.keras.layers.Dense(p, name=f"{name}_p{p}_recons_num_dense"),
-            ], name=f"{name}_p{p}_recons_num_head"))
-            self.recons_size.append(tf.keras.Sequential([
-                tf.keras.layers.LayerNormalization(epsilon=1e-5, name=f"{name}_p{p}_recons_size_norm"),
-                tf.keras.layers.Dense(N, name=f"{name}_p{p}_recons_size_dense"),
-            ], name=f"{name}_p{p}_recons_size_head"))
+    def _build_mixer(self, mixer_type, d_model, hidden_dim, norm, dropout):
+        """Helper method to build mixer layers with consistent initialization."""
+        return Sequential([
+            MLPBlock(
+                dim=2,
+                in_features=d_model,
+                hid_features=hidden_dim,
+                out_features=d_model,
+                activ=self.activation_fn,
+                drop=dropout,
+                jump_conn='trunc',
+                norm=norm,
+                name=f"{mixer_type}_mixer_mlp"
+            ),
+            Softmax(axis=-1, name=f"{mixer_type}_mixer_softmax")
+        ], name=f"patch_{mixer_type}_mixer")
 
-        self.rec_alpha = self.add_weight(
-            'rec_alpha',
-            shape=(len(self.patch_sizes),),
-            initializer=tf.keras.initializers.Constant(0.5),
-            trainable=True
-        )
-
-        proj_dim = d_model
-        self.proj_head_inter = ProjectHead(proj_dim, name=f"{name}_proj_head_inter")
-        self.proj_head_intra = ProjectHead(proj_dim, name=f"{name}_proj_head_intra")
-        self.proj_head_inter.proj_dim = proj_dim
-        self.proj_head_intra.proj_dim = proj_dim
+    def _build_recons_head(self, head_type, patch_size, feature_size, d_model, seq_length):
+        """Helper method to build reconstruction heads with consistent initialization."""
+        return Sequential([
+            Reshape(
+                (-1, feature_size * d_model),
+                input_shape=(self.input_channels, feature_size, d_model),
+                name=f"p{patch_size}_rec_{head_type}_flatten"
+            ),
+            LayerNormalization(epsilon=1e-5, name=f"p{patch_size}_rec_{head_type}_norm1"),
+            Dense(
+                d_model,
+                kernel_initializer=self.kernel_init,
+                name=f"p{patch_size}_rec_{head_type}_dense1"
+            ),
+            Activation(self.activation_fn, name=f"p{patch_size}_rec_{head_type}_activ1"),
+            LayerNormalization(epsilon=1e-5, name=f"p{patch_size}_rec_{head_type}_norm2"),
+            Dense(
+                seq_length,
+                kernel_initializer=self.kernel_init,
+                name=f"p{patch_size}_rec_{head_type}_dense2"
+            ),
+            Permute((2, 1), name=f"p{patch_size}_rec_{head_type}_permute")
+        ], name=f"p{patch_size}_recons_{head_type}_head")
 
     def call(self, x, training=False):
-        B = tf.shape(x)[0]
-        T = self.seq_length
-        C = self.input_channels
-        D = self.d_model
-
-        x_embedded = self.win_emb(x)
-        r1_total = tf.zeros_like(x)
-        r2_total = tf.zeros_like(x)
-        last_scale_inter = None
-        last_scale_intra = None
-        last_scale_p = None
-
-        for idx, p in enumerate(self.patch_sizes):
-            N = T // p
-            x_patches = tf.reshape(x_embedded, (B, N, p, C))
-            inter_view_input = rearrange(x_patches, 'b n p c -> b c n p')
-            inter_view_embedded = self.patch_num_emb[idx](inter_view_input)
-            intra_view_input = rearrange(x_patches, 'b n p c -> b c p n')
-            intra_view_embedded = self.patch_size_emb[idx](intra_view_input)
-            encoder = self.patch_encoders[idx]
-            final_inter, final_intra, _, _ = encoder(inter_view_embedded, intra_view_embedded, training=training)
-            last_scale_inter = final_inter
-            last_scale_intra = final_intra
-            last_scale_p = p
-
-            r1_patches = self.recons_num[idx](final_inter)
-            r2_patches = self.recons_size[idx](final_intra)
-            r1_temp = rearrange(r1_patches, 'b c n p -> b c (n p)')
-            r1 = rearrange(r1_temp, 'b c t -> b t c')
-            r2_temp = rearrange(r2_patches, 'b c p n -> b c (p n)')
-            r2 = rearrange(r2_temp, 'b c t -> b t c')
-            alpha = tf.sigmoid(self.rec_alpha[idx])
-            r1_total += alpha * r1
-            r2_total += (1.0 - alpha) * r2
-
-        rec_final = r1_total + r2_total
-        reconstruction_inter = r1_total
-        reconstruction_intra = r2_total
-
-        # --- PatchAD/DCdetector upsampling ---
-        p = last_scale_p
-        N = T // p
-        # Inter: repeat each patch feature for each point in the patch
-        inter_avg_c = tf.reduce_mean(last_scale_inter, axis=1)  # [B, N, D]
-        upsampled_inter = tf.repeat(inter_avg_c, repeats=p, axis=1)  # [B, N*P, D] == [B, T, D]
-        # Intra: tile the patch's sequence for each patch
-        intra_avg_c = tf.reduce_mean(last_scale_intra, axis=1)  # [B, P, D]
-        upsampled_intra = tf.tile(intra_avg_c, [1, N, 1])  # [B, P*N, D] == [B, T, D]
-
-        proj_inter = self.proj_head_inter(upsampled_inter, training=training)
-        proj_intra = self.proj_head_intra(upsampled_intra, training=training)
-
-        return {
-            'reconstruction': rec_final,
-            'reconstruction_inter': reconstruction_inter,
-            'reconstruction_intra': reconstruction_intra,
-            'final_features_inter': upsampled_inter,
-            'final_features_intra': upsampled_intra,
-            'proj_inter': proj_inter,
-            'proj_intra': proj_intra
-        }
+        # Shape validation
+        input_shape = tf.shape(x)
+        B, L, C = input_shape[0], input_shape[1], input_shape[2]
+        
+        tf.debugging.assert_equal(
+            L, self.seq_length,
+            message=f"Input sequence length {L} does not match model's seq_length {self.seq_length}"
+        )
+        tf.debugging.assert_equal(
+            C, self.input_channels,
+            message=f"Input channel count {C} does not match model's input_channels {self.input_channels}"
+        )
+        
+        # Apply positional embedding
+        x_emb = self.win_emb(x, training=training)
+        
+        # Initialize output collections
+        all_patch_num_dists = []
+        all_patch_size_dists = []
+        all_proj_num = []      # NEW: For projection head outputs
+        all_proj_size = []     # NEW: For projection head outputs
+        all_scale_recons = []
+        all_patch_num_mx = []  # Initialize mixer output list
+        all_patch_size_mx = [] # Initialize mixer output list
+        
+        # Process each patch size
+        for patch_idx, patch_size in enumerate(self.patch_sizes):
+            patch_num = self.seq_length // patch_size
+            
+            # Prepare patches
+            x_patch_num = tf.reshape(x_emb, [B, patch_num, patch_size, C])
+            x_patch_num = tf.transpose(x_patch_num, perm=[0, 3, 1, 2])
+            
+            x_patch_size = tf.reshape(x_emb, [B, patch_size, patch_num, C])
+            x_patch_size = tf.transpose(x_patch_size, perm=[0, 3, 1, 2])
+            
+            # Apply embeddings
+            x_patch_num_emb = self.patch_num_embeddings[patch_idx](x_patch_num)
+            x_patch_size_emb = self.patch_size_embeddings[patch_idx](x_patch_size)
+            
+            # Process through encoder
+            final_dists_num, final_dists_size, layer_logits_num, layer_logits_size = (
+                self.patch_encoders[patch_idx](
+                    x_patch_num_emb, x_patch_size_emb,
+                    training=training
+                )
+            )
+            
+            # Collect distributions
+            all_patch_num_dists.extend(final_dists_num)
+            all_patch_size_dists.extend(final_dists_size)
+            
+            # Process each layer
+            layer_recons = []
+            for layer_idx in range(len(layer_logits_num)):
+                logits_num = layer_logits_num[layer_idx]
+                logits_size = layer_logits_size[layer_idx]
+                
+                # Calculate mixers
+                mean_logits_num = tf.reduce_mean(logits_num, axis=1)
+                mean_logits_size = tf.reduce_mean(logits_size, axis=1)
+                
+                # Apply Projection Heads (NEW)
+                proj_num = self.proj_num_heads[patch_idx](mean_logits_num, training=training)
+                proj_size = self.proj_size_heads[patch_idx](mean_logits_size, training=training)
+                patch_num_mx = self.patch_num_mixer(proj_num, training=training)
+                patch_size_mx = self.patch_size_mixer(proj_size, training=training)
+                
+                all_patch_num_mx.append(patch_num_mx)
+                all_patch_size_mx.append(patch_size_mx)
+                
+                # Calculate reconstructions
+                rec1 = self.recons_num_heads[patch_idx](logits_num, training=training)
+                rec2 = self.recons_size_heads[patch_idx](logits_size, training=training)
+                
+                # Combine reconstructions with learned alpha
+                alpha = tf.nn.sigmoid(self.rec_alpha[patch_idx])
+                rec_combined = rec1 * alpha + rec2 * (1.0 - alpha)
+                layer_recons.append(rec_combined)
+            
+            # Average reconstructions for this scale
+            if layer_recons:
+                scale_recons_avg = tf.reduce_mean(tf.stack(layer_recons, axis=0), axis=0)
+                all_scale_recons.append(scale_recons_avg)
+        
+        # Final reconstruction
+        if all_scale_recons:
+            final_rec_x = tf.reduce_mean(tf.stack(all_scale_recons, axis=0), axis=0)
+        else:
+            tf.print("Warning: No reconstructions generated, returning zeros")
+            final_rec_x = tf.zeros_like(x)
+        
+        return all_patch_num_dists, all_patch_size_dists, all_patch_num_mx, all_patch_size_mx, final_rec_x

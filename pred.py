@@ -95,7 +95,7 @@ def objective_patch(trial):
     params['NO_STRIDES'] = trial.suggest_int('NO_STRIDES', 16, 64*2, step=32)
 
     # Timing parameters remain the same
-    params['HORIZON_MS'] = trial.suggest_int('HORIZON_MS', 0, 10, step=2)
+    params['HORIZON_MS'] = 0#trial.suggest_int('HORIZON_MS', 0, 10, step=2)
     params['SHIFT_MS'] = 0
 
     params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.000001, 1-0.000001, log=True)
@@ -145,13 +145,13 @@ def objective_patch(trial):
     print(params['TYPE_LOSS'])
     # init_lib = ['He', 'Glo']
     # par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
-    par_init = 'Glo'
+    par_init = 'He'
     # norm_lib = ['LN','BN','GN','WN']
     # par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
     par_norm = 'LN'
     # act_lib = ['RELU', 'ELU', 'GELU']
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    par_act = 'GELU'
+    par_act = 'ELU'
 
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'Adam'
@@ -241,12 +241,17 @@ def objective_patch(trial):
     for ii in range(params['NO_DILATIONS']):
         patches.append(patch_lib[ii])
     print(patches)
-    model = build_DBI_TCN(params["NO_TIMEPOINTS"], 
-                        input_chans=8, 
-                        patch_sizes=patches, 
-                        d_model=params['NO_FILTERS'], 
-                        num_layers=params['NO_KERNELS'], 
-                        params=params)
+    params['seq_length'] = params["NO_TIMEPOINTS"]*2 # Or however seq_length is determined
+    params['input_channels'] = params["NO_CHANNELS"] # Or however input_channels is determined
+    params['patch_sizes'] = patches # Or however patch_size is determined
+    
+    model = build_DBI_TCN(params=params) # Pass only the params dictionary
+    # model = build_DBI_TCN(params["NO_TIMEPOINTS"], 
+    #                     input_chans=8, 
+    #                     patch_sizes=patches, 
+    #                     d_model=params['NO_FILTERS'], 
+    #                     num_layers=params['NO_KERNELS'], 
+    #                     params=params)
     model.summary()
     from model.training import TerminateOnNaN
     terminate_on_nan_callback = TerminateOnNaN()
@@ -286,6 +291,7 @@ def objective_patch(trial):
     # Train and evaluate
     history = model.fit(
         train_dataset,
+        steps_per_epoch=5,
         validation_data=val_dataset,
         epochs=params['NO_EPOCHS'],
         callbacks=callbacks,
@@ -789,7 +795,7 @@ if mode == 'train':
         model, train_model = build_DBI_TCN_Horizon_Updated(input_timepoints=params['NO_TIMEPOINTS'], input_chans=8, embedding_dim=params['NO_FILTERS'], params=params)
         from model.input_proto import rippleAI_load_dataset
     elif model_name.find('Patch') != -1:
-        from model.model_fn import build_model_PatchOnly as build_DBI_TCN
+        from model.model_fn import build_DBI_Patch as build_DBI_TCN
         from model.input_augment_weighted import rippleAI_load_dataset
     else:
         from model.model_fn import build_DBI_TCN
