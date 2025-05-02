@@ -29,7 +29,7 @@ import glob
 import importlib
 from tensorflow.keras import callbacks as cb
 
-
+tf.config.run_functions_eagerly(False)
 def objective_patch(trial):
     """Objective function for Optuna optimization"""
     tf.compat.v1.reset_default_graph()
@@ -92,50 +92,30 @@ def objective_patch(trial):
     # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
     params['NO_TIMEPOINTS'] = 64#*3
     # params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
-    params['NO_STRIDES'] = trial.suggest_int('NO_STRIDES', 16, 64*2, step=32)
+    params['NO_STRIDES'] = 32#trial.suggest_int('NO_STRIDES', 16, 64*2, step=32)
 
     # Timing parameters remain the same
     params['HORIZON_MS'] = 0#trial.suggest_int('HORIZON_MS', 0, 10, step=2)
     params['SHIFT_MS'] = 0
 
-    params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.000001, 1-0.000001, log=True)
-    # params['LOSS_WEIGHT'] = 7.5e-4
-
-    entropyLib = [0, 0.5, 1, 3]
-    entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
-    params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
-
-    # params['HYPER_TMSE'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
-    # params['HYPER_BARLOW'] = 2e-5
-    # params['HYPER_BARLOW'] = trial.suggest_float('HYPER_BARLOW', 0.000001, 10.0, log=True)
-    # params['HYPER_MONO'] = trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
-    params['HYPER_MONO'] = 0 #trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
-
-    # Model parameters matching training format
-    params['NO_KERNELS'] = trial.suggest_int('NO_KERNELS', 1, 6) # for kernels 2,3,4,5,6
-    # params['NO_KERNELS'] = 4
-    # if params['NO_TIMEPOINTS'] == 32:
-    #     dil_lib = [4,3,2,2,2]           # for kernels 2,3,4,5,6
-    # elif params['NO_TIMEPOINTS'] == 64:
-    #     dil_lib = [5,4,3,3,3]           # for kernels 2,3,4,5,6
-    # elif params['NO_TIMEPOINTS'] == 128:
-    #     dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]
-    # elif params['NO_TIMEPOINTS'] == 196:
-    #     dil_lib = [7,6,5,5,5]           # for kernels 2,3,4,5,6
-    # elif params['NO_TIMEPOINTS'] == 384:
-    #     dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
-    # elif params['NO_TIMEPOINTS'] == 128*12:
-    #     dil_lib = [12,12,8,12,12,12]          # for kernels 2,3,4,5,6]
-    # elif params['NO_TIMEPOINTS'] == 128*3:
-    #     dil_lib = [12,12,6,12,12,12]          # for kernels 2,3,4,5,6]
-
-    # params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
+    params['WEIGHT_Recon'] = trial.suggest_float('WEIGHT_Recon', 0.000001, 10, log=True)
+    params['WEIGHT_Patch'] = trial.suggest_float('WEIGHT_Patch', 0.000001, 10, log=True)
+    
+    
+    # entropyLib = [0, 0.5, 1, 3]
+    # entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
+    # params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
+    # params['HYPER_MONO'] = 0
+    params['NO_KERNELS'] = trial.suggest_int('NO_KERNELS', 1, 4) # for kernels 2,3,4,5,6
     params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 1, 5)
-    params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128, 256])
-    # params['NO_FILTERS'] = 64
-    ax = trial.suggest_int('AX', 25, 75, step=25)
-    gx = trial.suggest_int('GX', 50, 200, step=50)
-
+    params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
+    
+    ax = 25
+    gx = 150
+    # ax = trial.suggest_int('AX', 25, 75, step=25)
+    # gx = trial.suggest_int('GX', 50, 200, step=50)
+    params['focal_alpha'] = ax
+    params['focal_gamma'] = gx
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}Entropy'.format(ax, gx)
 
@@ -176,22 +156,6 @@ def objective_patch(trial):
     params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
     if params['USE_Aug']:
         params['TYPE_ARCH'] += 'Aug'
-
-    # if (not 'Cori' in params['TYPE_ARCH']) and  (not 'SingleCh' in params['TYPE_MODEL']):
-    #     params['TYPE_LOSS'] += 'BarAug'
-    # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
-    # params['USE_CSD'] = trial.suggest_categorical('USE_CSD', [True, False])
-    # if params['USE_CSD']:
-    #     params['TYPE_ARCH'] += 'CSD'
-    # params['Dropout'] = trial.suggest_int('Dropout', 0, 10)
-    # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
-    # if params['USE_L2Reg']:
-    #     params['TYPE_LOSS'] += 'L2Reg'
-
-    drop_lib = [0, 0.05, 0.1, 0.2, 0.5]
-    drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3,4])
-    if drop_ind > 0:
-        params['TYPE_ARCH'] += f"Drop{int(drop_lib[drop_ind]*100):02d}"
 
     params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
 
@@ -291,7 +255,7 @@ def objective_patch(trial):
     # Train and evaluate
     history = model.fit(
         train_dataset,
-        steps_per_epoch=5,
+        # steps_per_epoch=5,
         validation_data=val_dataset,
         epochs=params['NO_EPOCHS'],
         callbacks=callbacks,

@@ -63,23 +63,23 @@ class PositionalEmbedding(tf.keras.layers.Layer):
 
 class PatchAD(tf.keras.Model):
     def __init__(self,
-                 input_channels,
-                 seq_length,
-                 patch_sizes,
-                 d_model=50,
-                 e_layer=3,
-                 dropout=0.0,
-                 activation="gelu",
-                 norm="ln",
-                 mlp_hid_len_ratio=0.7,
-                 mlp_hid_chn_ratio=1.2,
-                 mlp_out_chn_ratio=1.0,
-                 mlp_hid_pch_ratio=1.2,
-                 mixer_mlp_ratio=0.5,
-                 name="patch_ad_model",
-                 **kwargs):
-        super().__init__(name=name, **kwargs)
+                input_channels,
+                seq_length,
+                patch_sizes,
+                d_model=50,
+                e_layer=3,
+                dropout=0.0,
+                activation="gelu",
+                norm="ln",
+                mlp_hid_len_ratio=0.7,
+                mlp_hid_chn_ratio=1.2,
+                mlp_out_chn_ratio=1.0,
+                mlp_hid_pch_ratio=1.2,
+                mixer_mlp_ratio=0.5,
+                name="patch_ad_model",
+                **kwargs):
         
+        super().__init__(name=name, **kwargs)
         # Store model parameters
         self.patch_sizes = patch_sizes
         self.seq_length = seq_length
@@ -148,11 +148,38 @@ class PatchAD(tf.keras.Model):
                 EncoderEnsemble(encoder_layers=enc_layers, name=f"p{p}_encoder")
             )
         
-        # 4. Mixers (with proper initialization)
+
+        # 4. Mixers (directly built instead of using Sequential)
         mixer_hidden_dim = max(32, int(d_model * mixer_mlp_ratio))
-        self.patch_num_mixer = self._build_mixer("num", d_model, mixer_hidden_dim, norm, dropout)
-        self.patch_size_mixer = self._build_mixer("size", d_model, mixer_hidden_dim, norm, dropout)
         
+        # Num mixer layers
+        self.num_mixer_mlp = MLPBlock(
+            dim=2,
+            in_features=d_model,
+            hid_features=mixer_hidden_dim,
+            out_features=d_model,
+            activ=self.activation_fn,
+            drop=dropout,
+            jump_conn='trunc',
+            norm=norm,
+            name="num_mixer_mlp"
+        )
+        self.num_mixer_softmax = Softmax(axis=-1, name="num_mixer_softmax")
+        
+        # Size mixer layers
+        self.size_mixer_mlp = MLPBlock(
+            dim=2,
+            in_features=d_model,
+            hid_features=mixer_hidden_dim,
+            out_features=d_model,
+            activ=self.activation_fn,
+            drop=dropout,
+            jump_conn='trunc',
+            norm=norm,
+            name="size_mixer_mlp"
+        )
+        self.size_mixer_softmax = Softmax(axis=-1, name="size_mixer_softmax")
+
         # 5. Projection Heads (NEW)
         self.proj_num_heads = []
         self.proj_size_heads = []
@@ -173,13 +200,37 @@ class PatchAD(tf.keras.Model):
             patch_size = p
             patch_num = seq_length // patch_size
             
-            # Build reconstruction heads with proper initialization
-            self.recons_num_heads.append(
-                self._build_recons_head("num", p, patch_num, d_model, seq_length)
-            )
-            self.recons_size_heads.append(
-                self._build_recons_head("size", p, patch_size, d_model, seq_length)
-            )
+            # Build num reconstruction head layers
+            num_head = {
+                'reshape': Reshape((-1, patch_num * d_model),
+                                input_shape=(self.input_channels, patch_num, d_model),
+                                name=f"p{p}_rec_num_flatten"),
+                'norm1': LayerNormalization(epsilon=1e-5, name=f"p{p}_rec_num_norm1"),
+                'dense1': Dense(d_model, kernel_initializer=self.kernel_init,
+                            name=f"p{p}_rec_num_dense1"),
+                'activ1': Activation(self.activation_fn, name=f"p{p}_rec_num_activ1"),
+                'norm2': LayerNormalization(epsilon=1e-5, name=f"p{p}_rec_num_norm2"),
+                'dense2': Dense(seq_length, kernel_initializer=self.kernel_init,
+                            name=f"p{p}_rec_num_dense2"),
+                'permute': Permute((2, 1), name=f"p{p}_rec_num_permute")
+            }
+            self.recons_num_heads.append(num_head)
+            
+            # Build size reconstruction head layers
+            size_head = {
+                'reshape': Reshape((-1, patch_size * d_model),
+                                input_shape=(self.input_channels, patch_size, d_model),
+                                name=f"p{p}_rec_size_flatten"),
+                'norm1': LayerNormalization(epsilon=1e-5, name=f"p{p}_rec_size_norm1"),
+                'dense1': Dense(d_model, kernel_initializer=self.kernel_init,
+                            name=f"p{p}_rec_size_dense1"),
+                'activ1': Activation(self.activation_fn, name=f"p{p}_rec_size_activ1"),
+                'norm2': LayerNormalization(epsilon=1e-5, name=f"p{p}_rec_size_norm2"),
+                'dense2': Dense(seq_length, kernel_initializer=self.kernel_init,
+                            name=f"p{p}_rec_size_dense2"),
+                'permute': Permute((2, 1), name=f"p{p}_rec_size_permute")
+            }
+            self.recons_size_heads.append(size_head)
             
             # Initialize reconstruction alpha weights
             self.rec_alpha.append(
@@ -190,47 +241,6 @@ class PatchAD(tf.keras.Model):
                     trainable=True
                 )
             )
-
-    def _build_mixer(self, mixer_type, d_model, hidden_dim, norm, dropout):
-        """Helper method to build mixer layers with consistent initialization."""
-        return Sequential([
-            MLPBlock(
-                dim=2,
-                in_features=d_model,
-                hid_features=hidden_dim,
-                out_features=d_model,
-                activ=self.activation_fn,
-                drop=dropout,
-                jump_conn='trunc',
-                norm=norm,
-                name=f"{mixer_type}_mixer_mlp"
-            ),
-            Softmax(axis=-1, name=f"{mixer_type}_mixer_softmax")
-        ], name=f"patch_{mixer_type}_mixer")
-
-    def _build_recons_head(self, head_type, patch_size, feature_size, d_model, seq_length):
-        """Helper method to build reconstruction heads with consistent initialization."""
-        return Sequential([
-            Reshape(
-                (-1, feature_size * d_model),
-                input_shape=(self.input_channels, feature_size, d_model),
-                name=f"p{patch_size}_rec_{head_type}_flatten"
-            ),
-            LayerNormalization(epsilon=1e-5, name=f"p{patch_size}_rec_{head_type}_norm1"),
-            Dense(
-                d_model,
-                kernel_initializer=self.kernel_init,
-                name=f"p{patch_size}_rec_{head_type}_dense1"
-            ),
-            Activation(self.activation_fn, name=f"p{patch_size}_rec_{head_type}_activ1"),
-            LayerNormalization(epsilon=1e-5, name=f"p{patch_size}_rec_{head_type}_norm2"),
-            Dense(
-                seq_length,
-                kernel_initializer=self.kernel_init,
-                name=f"p{patch_size}_rec_{head_type}_dense2"
-            ),
-            Permute((2, 1), name=f"p{patch_size}_rec_{head_type}_permute")
-        ], name=f"p{patch_size}_recons_{head_type}_head")
 
     def call(self, x, training=False):
         # Shape validation
@@ -298,16 +308,27 @@ class PatchAD(tf.keras.Model):
                 # Apply Projection Heads (NEW)
                 proj_num = self.proj_num_heads[patch_idx](mean_logits_num, training=training)
                 proj_size = self.proj_size_heads[patch_idx](mean_logits_size, training=training)
-                patch_num_mx = self.patch_num_mixer(proj_num, training=training)
-                patch_size_mx = self.patch_size_mixer(proj_size, training=training)
+                patch_num_mx = self.num_mixer_softmax(self.num_mixer_mlp(proj_num, training=training))
+                patch_size_mx = self.size_mixer_softmax(self.size_mixer_mlp(proj_size, training=training))
+
                 
                 all_patch_num_mx.append(patch_num_mx)
                 all_patch_size_mx.append(patch_size_mx)
                 
                 # Calculate reconstructions
-                rec1 = self.recons_num_heads[patch_idx](logits_num, training=training)
-                rec2 = self.recons_size_heads[patch_idx](logits_size, training=training)
-                
+                def apply_recons_head(x, head_layers):
+                    x = head_layers['reshape'](x)
+                    x = head_layers['norm1'](x)
+                    x = head_layers['dense1'](x)
+                    x = head_layers['activ1'](x)
+                    x = head_layers['norm2'](x)
+                    x = head_layers['dense2'](x)
+                    x = head_layers['permute'](x)
+                    return x
+
+                rec1 = apply_recons_head(logits_num, self.recons_num_heads[patch_idx])
+                rec2 = apply_recons_head(logits_size, self.recons_size_heads[patch_idx])                
+
                 # Combine reconstructions with learned alpha
                 alpha = tf.nn.sigmoid(self.rec_alpha[patch_idx])
                 rec_combined = rec1 * alpha + rec2 * (1.0 - alpha)

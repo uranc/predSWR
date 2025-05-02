@@ -1174,53 +1174,64 @@ def build_DBI_Patch(params):
     d_model = params['NO_FILTERS']
     batch_size = tf.shape(input_layer)[0]
 
-    def upsample_and_combine_repeat(tensor_list, target_length, name_prefix):
-        """Upsamples using tf.repeat (inter-patch style) and averages."""
-        upsampled_tensors = []
-        for i, tensor in enumerate(tensor_list):
-            current_length = tf.shape(tensor)[1]
-            # Calculate repeats needed (use ceil to ensure coverage)
-            repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
-            repeated_tensor = tf.repeat(tensor, repeats=repeats, axis=1, name=f'{name_prefix}_repeat_{i}')
-            # Trim to exact target length
-            upsampled_tensors.append(repeated_tensor[:, :target_length, :])
+    # def upsample_and_combine_repeat(tensor_list, target_length, name_prefix):
+    #     """Upsamples using tf.repeat (inter-patch style) and averages."""
+    #     upsampled_tensors = []
+    #     for i, tensor in enumerate(tensor_list):
+    #         current_length = tf.shape(tensor)[1]
+    #         # Calculate repeats needed (use ceil to ensure coverage)
+    #         repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
+    #         repeated_tensor = tf.repeat(tensor, repeats=repeats, axis=1, name=f'{name_prefix}_repeat_{i}')
+    #         # Trim to exact target length
+    #         upsampled_tensors.append(repeated_tensor[:, :target_length, :])
 
-        # Stack along a new dimension (axis=0) and average
-        stacked_upsampled = tf.stack(upsampled_tensors, axis=0) # Shape [num_scales, B, target_length, D]
-        combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, name=f'{name_prefix}_combined') # Shape [B, target_length, D]
-        return combined_tensor
+    #     # Stack along a new dimension (axis=0) and average
+    #     stacked_upsampled = tf.stack(upsampled_tensors, axis=0) # Shape [num_scales, B, target_length, D]
+    #     combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, name=f'{name_prefix}_combined') # Shape [B, target_length, D]
+    #     return combined_tensor
 
-    def upsample_and_combine_tile(tensor_list, target_length, name_prefix):
-        """Upsamples using tf.tile (intra-patch style) and averages."""
-        upsampled_tensors = []
-        for i, tensor in enumerate(tensor_list):
-            current_length = tf.shape(tensor)[1]
-            # Calculate repeats needed (use ceil to ensure coverage)
-            repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
-            B = tf.shape(tensor)[0]
-            D = tf.shape(tensor)[2]
+    # def upsample_and_combine_tile(tensor_list, target_length, name_prefix):
+    #     """Upsamples using tf.tile (intra-patch style) and averages."""
+    #     upsampled_tensors = []
+    #     for i, tensor in enumerate(tensor_list):
+    #         current_length = tf.shape(tensor)[1]
+    #         # Calculate repeats needed (use ceil to ensure coverage)
+    #         repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
+    #         B = tf.shape(tensor)[0]
+    #         D = tf.shape(tensor)[2]
 
-            # Reshape [B, L, D] -> [B, L, 1, D]
-            reshaped = tf.reshape(tensor, [B, current_length, 1, D])
-            # Tile along the new dimension: [B, L, repeats, D]
-            tiled = tf.tile(reshaped, [1, 1, repeats, 1], name=f'{name_prefix}_tile_{i}')
-            # Reshape back: [B, L * repeats, D]
-            final_shape = [B, current_length * repeats, D]
-            tiled_tensor = tf.reshape(tiled, final_shape)
-            # Trim to exact target length
-            upsampled_tensors.append(tiled_tensor[:, :target_length, :])
+    #         # Reshape [B, L, D] -> [B, L, 1, D]
+    #         reshaped = tf.reshape(tensor, [B, current_length, 1, D])
+    #         # Tile along the new dimension: [B, L, repeats, D]
+    #         tiled = tf.tile(reshaped, [1, 1, repeats, 1], name=f'{name_prefix}_tile_{i}')
+    #         # Reshape back: [B, L * repeats, D]
+    #         final_shape = [B, current_length * repeats, D]
+    #         tiled_tensor = tf.reshape(tiled, final_shape)
+    #         # Trim to exact target length
+    #         upsampled_tensors.append(tiled_tensor[:, :target_length, :])
 
-        # Stack along a new dimension (axis=0) and average
-        stacked_upsampled = tf.stack(upsampled_tensors, axis=0) # Shape [num_scales, B, target_length, D]
-        combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, name=f'{name_prefix}_combined') # Shape [B, target_length, D]
-        return combined_tensor
+        # # Stack along a new dimension (axis=0) and average
+        # stacked_upsampled = tf.stack(upsampled_tensors, axis=0) # Shape [num_scales, B, target_length, D]
+        # combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, name=f'{name_prefix}_combined') # Shape [B, target_length, D]
+        # return combined_tensor
 
-    # Upsample and combine features from different scales using repeat/tile
-    combined_num_dists = upsample_and_combine_repeat(num_dists, target_seq_length, 'num_dists')
-    combined_size_dists = upsample_and_combine_tile(size_dists, target_seq_length, 'size_dists')
-    combined_num_mx = upsample_and_combine_repeat(num_mx, target_seq_length, 'num_mx')
-    combined_size_mx = upsample_and_combine_tile(size_mx, target_seq_length, 'size_mx')
+    # # Upsample and combine features from different scales using repeat/tile
+    # combined_num_dists = upsample_and_combine_repeat(num_dists, target_seq_length, 'num_dists')
+    # combined_size_dists = upsample_and_combine_tile(size_dists, target_seq_length, 'size_dists')
+    # combined_num_mx = upsample_and_combine_repeat(num_mx, target_seq_length, 'num_mx')
+    # combined_size_mx = upsample_and_combine_tile(size_mx, target_seq_length, 'size_mx')
 
+    # Create upsampling layers
+    upsample_repeat = UpsampleAndCombineRepeat(name_prefix='num_dists')
+    upsample_tile = UpsampleAndCombineTile(name_prefix='size_dists')
+
+    # Apply upsampling
+    combined_num_dists = upsample_repeat([num_dists, target_seq_length])
+    combined_size_dists = upsample_tile([size_dists, target_seq_length])
+    combined_num_mx = upsample_repeat([num_mx, target_seq_length])
+    combined_size_mx = upsample_tile([size_mx, target_seq_length])
+
+    # ... (rest of the code remains the same)
 
     # --- Classification Head ---
     # Combine features relevant for classification (e.g., distributions)
@@ -1241,47 +1252,15 @@ def build_DBI_Patch(params):
                                   name='classification_output')(cls_features) # Shape [B, L, 1]
 
 
-    # --- KL Loss Calculation (using original lists) ---
-    kl_loss = 0.0
-    kl_weight = params.get('kl_weight', 0.1) # Use a weight for this loss component
-    if kl_weight > 0:
-        try:
-            # Use the pytorch_style loss function which expects lists
-            # Ensure it implements the logic matching the original snippet
-            kl_loss = pytorch_style_patch_loss(
-                patch_num_dist_list=num_dists,
-                patch_size_dist_list=size_dists,
-                patch_num_mx_list=num_mx,
-                patch_size_mx_list=size_mx,
-                temp=params.get('patch_ad_temp', 1.0),
-                alpha=params.get('patch_mx_coeff', 0.5) # Corresponds to patch_mx in original
-            )
-            # Ensure kl_loss is a scalar
-            kl_loss = tf.reduce_mean(kl_loss)
-        except NameError:
-             tf.print("Warning: pytorch_style_patch_loss not found or imported. KL loss component skipped.")
-             kl_loss = 0.0
-        except Exception as e:
-            tf.print(f"Warning: Error calculating PatchAD KL loss: {e}. Component skipped.")
-            kl_loss = 0.0
-
     # --- Final Model Output ---
-    # Output only reconstruction and classification. KL loss is added separately.
-    # If combined features are needed for metrics/analysis, include them.
-    # For simplicity, let's only output recons and class for now.
-    final_output = Concatenate(axis=-1, name='model_output')([
-        reconstruction,          # [B, L, C]
-        classification_output,   # [B, L, 1]
-        # combined_num_dists,    # Optional: [B, L, D]
-        # combined_size_dists,   # Optional: [B, L, D]
-        # combined_num_mx,       # Optional: [B, L, D]
-        # combined_size_mx       # Optional: [B, L, D]
-    ])
-
-    # --- Add KL Loss ---
-    if kl_weight > 0 and isinstance(kl_loss, tf.Tensor): # Check if kl_loss is a valid tensor
-         model.add_loss(kl_weight * kl_loss)
-         tf.print("PatchAD KL Loss added to the model.")
+    final_output = tf.concat([
+        reconstruction,                    # [B, L, C]
+        classification_output,            # [B, L, 1]
+        combined_num_dists,              # [B, L, D]
+        combined_size_dists,             # [B, L, D]
+        combined_num_mx,                 # [B, L, D]
+        combined_size_mx                 # [B, L, D]
+    ], axis=-1)
 
     # Create the Model
     model = Model(inputs=input_layer, outputs=final_output)
@@ -1290,8 +1269,8 @@ def build_DBI_Patch(params):
     model._is_classification_only = False
     hori_shift = 0 # Set horizon shift for metrics
     loss_weight = params.get('LOSS_WEIGHT', 1.0) # Default to 1.0 if not specified
-    loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params)
-
+    # loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params)
+    loss_fn = combined_mse_fbfce_loss(params)
     # Compile the model
     # Ensure `combined_mse_fbfce_loss` is adapted for this output structure
     model.compile(
@@ -1304,113 +1283,6 @@ def build_DBI_Patch(params):
     )
 
     return model
-
-def combined_mse_fbfce_loss(params):
-    """
-    Loss function that handles the concatenated outputs from build_DBI_Patch:
-    - reconstruction           [B, L, C]
-    - classification_logits   [B, L, 1]
-    - stacked_num_dists      [B, L, N*D]
-    - stacked_size_dists     [B, L, N*D]
-    - stacked_num_mx         [B, L, N*D]
-    - stacked_size_mx        [B, L, N*D]
-    """
-    # Initialize loss parameters
-    fce_alpha = params.get('fce_alpha', 0.65)
-    fce_gamma = params.get('fce_gamma', 2.0)
-    mse_weight = params.get('mse_weight', 1.0)
-    kl_weight = params.get('kl_weight', 1.0)
-    patch_mx_coeff = params.get('patch_mx_coeff', 0.5)
-    patch_ad_temp = params.get('patch_ad_temp', 1.0)
-
-    # fbfce_loss_fn = SigmoidFocalCrossEntropy(
-    #     alpha=fce_alpha,
-    #     gamma=fce_gamma,
-    #     from_logits=True,
-    #     reduction=tf.keras.losses.Reduction.NONE
-    # )
-    fbfce_loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
-        apply_class_balancing=alpha>0,
-        from_logits=False,
-        alpha=fce_alpha if fce_alpha > 0 else None,
-        gamma=fce_gamma,
-        reduction=tf.keras.losses.Reduction.NONE
-    )    
-
-    def loss(y_true, y_pred):
-        """
-        Args:
-            y_true: [B, L, C+1] - original_input (C) + classification_label (1)
-            y_pred: [B, L, C+1+N*D*4] - Concatenated outputs from build_DBI_Patch
-        """
-        # Get dimensions
-        input_channels = params['input_channels']
-        d_model = params['NO_FILTERS']
-        num_patches = len(params['patch_sizes'])
-        
-        # 1. Split ground truth
-        input_true = y_true[:, :, :input_channels]
-        label_true = y_true[:, :, input_channels:input_channels+1]
-        
-        # 2. Split predictions
-        # Reconstruction and classification
-        reconstruction = y_pred[:, :, :input_channels]
-        classification_logits = y_pred[:, :, input_channels:input_channels+1]
-        current_idx = input_channels + 1
-
-        # PatchAD distributions and mixers
-        num_features = num_patches * d_model
-        num_dists = tf.reshape(y_pred[:, :, current_idx:current_idx+num_features], 
-                             [-1, tf.shape(y_pred)[1], num_patches, d_model])
-        current_idx += num_features
-        
-        size_dists = tf.reshape(y_pred[:, :, current_idx:current_idx+num_features],
-                              [-1, tf.shape(y_pred)[1], num_patches, d_model])
-        current_idx += num_features
-        
-        num_mx = tf.reshape(y_pred[:, :, current_idx:current_idx+num_features],
-                          [-1, tf.shape(y_pred)[1], num_patches, d_model])
-        current_idx += num_features
-        
-        size_mx = tf.reshape(y_pred[:, :, current_idx:current_idx+num_features],
-                           [-1, tf.shape(y_pred)[1], num_patches, d_model])
-
-        # 3. Calculate losses
-        # MSE reconstruction loss
-        mse_loss = tf.reduce_mean(tf.square(input_true - reconstruction))
-        
-        # Classification loss
-        cls_loss = tf.reduce_mean(fbfce_loss_fn(label_true, classification_logits))
-
-        # # PatchAD KL losses
-        # # Term 1: num_dist vs size_mx
-        # cont_loss1_p, _ = tf_anomaly_score(
-        #     num_dists, size_mx, params['seq_length'], True, 
-        #     patch_ad_temp, w_de=True
-        # )
-        
-        # # Term 2: num_mx vs size_dist
-        # cont_loss2_p, _ = tf_anomaly_score(
-        #     num_mx, size_dists, params['seq_length'], True,
-        #     patch_ad_temp, w_de=True
-        # )
-        
-        # # Term 3: num_dist vs size_dist
-        # diff_loss_p, diff_loss_q = tf_anomaly_score(
-        #     num_dists, size_dists, params['seq_length'], True,
-        #     patch_ad_temp, w_de=True
-        # )
-
-        # # Combine KL terms
-        # kl_loss = (patch_mx_coeff * (cont_loss1_p + cont_loss2_p) + 
-        #           (1.0 - patch_mx_coeff) * (diff_loss_p - diff_loss_q))
-
-        # 4. Combine all losses
-        total_loss = mse_weight * mse_loss + cls_loss# + kl_weight * kl_loss
-        
-        return total_loss
-
-    return loss
 
 def build_CAD_Downsampler(input_shape=(1536*2, 8), target_length=128*2, embed_dim=32):
     """
@@ -2492,3 +2364,131 @@ def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None
 
     return loss_fn
 
+class UpsampleAndCombineRepeat(tf.keras.layers.Layer):
+    """Layer that upsamples tensors using tf.repeat and combines them."""
+    
+    def __init__(self, name_prefix, **kwargs):
+        super().__init__(**kwargs)
+        self.name_prefix = name_prefix
+
+    def call(self, inputs):
+        tensor_list, target_length = inputs
+        upsampled_tensors = []
+        
+        for i, tensor in enumerate(tensor_list):
+            current_length = tf.shape(tensor)[1]
+            # Calculate repeats needed (use ceil to ensure coverage)
+            repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
+            repeated_tensor = tf.repeat(tensor, repeats=repeats, axis=1, 
+                                      name=f'{self.name_prefix}_repeat_{i}')
+            # Trim to exact target length
+            upsampled_tensors.append(repeated_tensor[:, :target_length, :])
+
+        # Stack along a new dimension (axis=0) and average
+        stacked_upsampled = tf.stack(upsampled_tensors, axis=0)  
+        combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, 
+                                       name=f'{self.name_prefix}_combined')
+        return combined_tensor
+
+class UpsampleAndCombineTile(tf.keras.layers.Layer):
+    """Layer that upsamples tensors using tf.tile and combines them."""
+    
+    def __init__(self, name_prefix, **kwargs):
+        super().__init__(**kwargs)
+        self.name_prefix = name_prefix
+
+    def call(self, inputs):
+        tensor_list, target_length = inputs
+        upsampled_tensors = []
+        
+        for i, tensor in enumerate(tensor_list):
+            current_length = tf.shape(tensor)[1]
+            # Calculate repeats needed (use ceil to ensure coverage)
+            repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
+            B = tf.shape(tensor)[0]
+            D = tf.shape(tensor)[2]
+
+            # Reshape [B, L, D] -> [B, L, 1, D]
+            reshaped = tf.reshape(tensor, [B, current_length, 1, D])
+            # Tile along the new dimension: [B, L, repeats, D]
+            tiled = tf.tile(reshaped, [1, 1, repeats, 1], 
+                           name=f'{self.name_prefix}_tile_{i}')
+            # Reshape back: [B, L * repeats, D]
+            final_shape = [B, current_length * repeats, D]
+            tiled_tensor = tf.reshape(tiled, final_shape)
+            # Trim to exact target length
+            upsampled_tensors.append(tiled_tensor[:, :target_length, :])
+
+        # Stack along a new dimension (axis=0) and average
+        stacked_upsampled = tf.stack(upsampled_tensors, axis=0)
+        combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0,
+                                       name=f'{self.name_prefix}_combined')
+        return combined_tensor
+    
+def combined_mse_fbfce_loss(params):
+    def loss(y_true, y_pred):
+        # Get dimensions from params  
+        input_channels = params['input_channels']
+        d_model = params['NO_FILTERS']
+        
+        # Slice tensors
+        current_idx = 0
+        reconstruction = y_pred[:, :, current_idx:current_idx + input_channels]
+        current_idx += input_channels
+        
+        classification_output = y_pred[:, :, current_idx:current_idx + 1]
+        current_idx += 1
+        
+        num_dists = y_pred[:, :, current_idx:current_idx + d_model]
+        current_idx += d_model
+        
+        size_dists = y_pred[:, :, current_idx:current_idx + d_model]
+        current_idx += d_model
+        
+        num_mx = y_pred[:, :, current_idx:current_idx + d_model]
+        current_idx += d_model
+        
+        size_mx = y_pred[:, :, current_idx:current_idx + d_model]
+        
+        # Slice y_true
+        true_signal = y_true[:, :, :input_channels]
+        true_labels = y_true[:, :, input_channels:input_channels + 1]
+        
+        # Calculate reconstruction loss
+        recon_loss = tf.reduce_mean(tf.square(true_signal - reconstruction))
+        
+        # Calculate patch loss
+        patch_loss_val = tf_anomaly_score( # Renamed variable
+            [num_dists], [size_mx],
+            params['seq_length'],
+            True,
+            params.get('patch_ad_temp', 1.0)
+        )
+        # Ensure patch_loss is a scalar tensor
+        patch_loss = tf.reduce_mean(patch_loss_val) # Use reduce_mean to ensure scalar
+
+        # Extract alpha and gamma parameters
+        alpha = params['focal_alpha'] if 'focal_alpha' in params else 0.25
+        gamma = params['focal_gamma'] if 'focal_gamma' in params else 1.50
+
+        use_class_balancing = alpha > 0
+        focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
+            apply_class_balancing=use_class_balancing,
+            alpha=alpha if alpha > 0 else None,
+            gamma=gamma,
+            reduction=tf.keras.losses.Reduction.NONE
+        )
+        loss_values = focal_loss(true_labels, classification_output)
+        cls_loss = tf.reduce_mean(loss_values)
+
+
+        # Convert weights to tensors and ensure correct dtype
+        weight_recon = tf.cast(params.get('WEIGHT_Recon', 1.0), dtype=tf.float32)
+        weight_patch = tf.cast(params.get('WEIGHT_Patch', 1.0), dtype=tf.float32)
+        weight_class = tf.cast(params.get('WEIGHT_Class', 1.0), dtype=tf.float32)
+
+        # Calculate total loss using tensor operations
+        total_loss = weight_recon * recon_loss + weight_patch * patch_loss + weight_class * cls_loss
+        return total_loss
+        
+    return loss
