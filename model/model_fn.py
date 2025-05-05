@@ -14,7 +14,6 @@ from tensorflow.keras import applications
 from model.patchAD.patch_ad import PatchAD
 from .patchAD.loss import tf_anomaly_score # Import the missing function
 from .patchAD.patch_ad import PatchAD # Use relative import
-from .patchAD.loss import pytorch_style_patch_loss # Ensure this is imported
 from tensorflow.keras.layers import Layer, Input, Flatten, Dense, Dropout, RepeatVector, Concatenate
 from tensorflow.keras.models import Model
 from tensorflow_addons.losses import SigmoidFocalCrossEntropy
@@ -936,179 +935,6 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
     return model
 
-# def build_DBI_Patch(input_timepoints, input_chans=8, patch_sizes=[2, 4, 8, 16],
-#                              d_model=32, num_layers=3, params=None):
-#     """
-#     Builds a Pure PatchAD-based model for classification using projected features.
-
-#     Architecture:
-#     Input -> Preprocessing -> PatchAD Module -> Aggregation (proj_inter/intra) -> Classifier Head (MLP)
-
-#     Returns a compiled Keras model.
-#     """
-#     if params is None:
-#         raise ValueError("params dictionary cannot be None for build_model_PatchAD")
-
-#     # --- Parameter Extraction from params dict ---
-#     flag_sigmoid = 'SigmoidFoc' in params.get('TYPE_LOSS', '')
-#     print('Using Sigmoid:', flag_sigmoid)
-
-#     # Activation
-#     if params.get('TYPE_REG', '').find('RELU') > -1:
-#         this_activation = 'relu'
-#     elif params.get('TYPE_REG', '').find('GELU') > -1:
-#         this_activation = gelu # Or 'gelu' string if using TF >= 2.4
-#     elif params.get('TYPE_REG', '').find('ELU') > -1:
-#         this_activation = ELU(alpha=1)
-#     else:
-#         this_activation = 'gelu' # Default for PatchAD/Mixers
-
-#     # Normalization for PatchAD internal layers
-#     if params.get('TYPE_REG', '').find('BN') > -1:
-#         patch_norm = 'bn'
-#     elif params.get('TYPE_REG', '').find('LN') > -1:
-#         patch_norm = 'ln'
-#     else:
-#         patch_norm = 'ln' # Default
-
-#     # Dropout
-#     r_drop = 0.0
-#     if params.get('TYPE_ARCH', '').find('Drop') > -1:
-#         try:
-#             drop_idx = params['TYPE_ARCH'].find('Drop') + 4
-#             r_drop = float(params['TYPE_ARCH'][drop_idx:drop_idx+2]) / 100
-#             print(f'Using Dropout: {r_drop}')
-#         except (ValueError, IndexError):
-#             print("Warning: Could not parse dropout rate, defaulting to 0.0")
-#             r_drop = 0.0
-
-#     # Kernel Initializer
-#     if params.get('TYPE_REG', '').find('Glo') > -1:
-#         print('Using Glorot Initializer')
-#         this_kernel_initializer = 'glorot_uniform'
-#     elif params.get('TYPE_REG', '').find('He') > -1:
-#         print('Using He Initializer')
-#         this_kernel_initializer = 'he_normal'
-#     else:
-#         this_kernel_initializer = 'glorot_uniform' # Default
-
-#     # Optimizer
-#     lr = params.get('LEARNING_RATE', 1e-4)
-#     if params.get('TYPE_REG', '').find('AdamW') > -1:
-#         print('Using AdamW Optimizer')
-#         this_optimizer = tf.keras.optimizers.AdamW(learning_rate=lr, clipnorm=1.0)
-#     elif params.get('TYPE_REG', '').find('Adam') > -1:
-#         print('Using Adam Optimizer')
-#         this_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-#     elif params.get('TYPE_REG', '').find('SGD') > -1:
-#         print('Using SGD Optimizer')
-#         this_optimizer = tf.keras.optimizers.SGD(learning_rate=lr, momentum=0.9)
-#     else:
-#         print('Defaulting to Adam Optimizer')
-#         this_optimizer = tf.keras.optimizers.Adam(learning_rate=lr)
-
-#     # --- Model Definition ---
-#     inputs = Input(shape=(input_timepoints*2, input_chans), name='inputs')
-
-#     # Input Normalization (optional, based on params)
-#     if params.get('TYPE_ARCH', '').find('ZNorm') > -1:
-#         print('Using ZNorm Input Normalization')
-#         normalized = Lambda(lambda x: (x - tf.reduce_mean(x, axis=1, keepdims=True)) /
-#                             (tf.math.reduce_std(x, axis=1, keepdims=True) + 1e-6),
-#                             name='norm')(inputs)
-#     else:
-#         normalized = inputs
-
-#     # PatchAD Module
-#     patchAD = PatchAD(
-#         input_channels=input_chans, # Pass input_chans correctly
-#         seq_length=input_timepoints*2,
-#         patch_sizes=patch_sizes,
-#         d_model=d_model,
-#         num_layers=num_layers,
-#         dropout=r_drop,
-#         activation=this_activation,
-#         norm=patch_norm,
-#         name="patch_ad_model" # Added name for clarity
-#     )
-#     # Build the module explicitly (optional but good practice)
-#     # patchad_module.build((None, input_timepoints, input_chans)) # Build is called implicitly during first call
-
-#     # Apply the PatchAD module to the normalized input
-#     # Pass training=True if you want dropout etc. active during training inference in this build function
-#     # Usually, you'd rely on the model.fit() `training` argument.
-#     outputs = patchAD(normalized) # outputs is a dict: {'reconstruction', 'proj_inter', 'proj_intra'}
-
-#     recons = outputs['reconstruction']
-
-#     #     'reconstruction': rec_final,                # Final combined reconstruction [B, T, C]
-#     #     'reconstruction_inter': reconstruction_inter, # Accumulated weighted inter part [B, T, C]
-#     #     'reconstruction_intra': reconstruction_intra, # Accumulated weighted intra part [B, T, C]
-#     #     'final_features_inter': upsampled_inter,      # Upsampled inter features from last scale [B, T, D]
-#     #     'final_features_intra': upsampled_intra,      # Upsampled intra features from last scale [B, T, D]
-#     #     'proj_inter': proj_inter,                   # Projected inter features [B, T, proj_dim]
-#     #     'proj_intra': proj_intra                    # Projected intra features [B, T, proj_dim]
-
-
-#     # Classification Head using projected features
-#     # The keys should be 'proj_inter' and 'proj_intra' based on PatchAD's return dict
-#     concat_proj = tf.concat((outputs['proj_inter'],
-#                               outputs['proj_intra']), axis=-1) # Shape: [B, T, 2*proj_dim]
-#     concat_feats = tf.concat((
-#                               outputs['final_features_inter'],
-#                               outputs['final_features_intra']), axis=-1) # Shape: [B, 2*proj_dim]
-#     # concat_feats = tf.transpose(tf.expand_dims(concat_feats, axis=-1), perm=[0, 2, 1]) # Shape: [B, 1, 2*proj_dim]
-#     # Apply Dense layer for classification.
-
-#     if params['TYPE_ARCH'].find('L2N')>-1:
-#         concat_feats = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1))(concat_feats)
-
-#     # Using params for activation and initializer
-#     # classification_output = Dense(
-#     #     1,
-#     #     activation='sigmoid', # Often sigmoid for binary classification output layer
-#     #     kernel_initializer='glorot_uniform',
-#     #     name='classifier_dense'
-#     # )(concat_feats) # Output shape [B, classifier_hidden_dim]
-
-#     classification_output = Conv1D(1,
-#                                    kernel_size=1,
-#                                    kernel_initializer='glorot_uniform',
-#                                    use_bias=True,
-#                                    activation='sigmoid',
-#                                    name='tmp_class')(concat_feats)
-
-
-#     outs = Concatenate(axis=-1)([recons, classification_output, concat_proj, concat_feats]) # Concatenate reconstruction and classification output
-#     # Define the final model
-#     model = Model(inputs=inputs, outputs=outs, name='PatchAD_Model')
-#     model._is_classification_only = False # Set classification flag for metrics
-
-#     f1_metric = MaxF1MetricHorizon(model=model)
-#     event_f1_metric = EventAwareF1(model=model)
-#     fp_event_metric = EventFalsePositiveRateMetric(model=model)
-
-#     # Create loss function without calling it
-#     hori_shift = 0
-#     loss_weight = params.get('LOSS_WEIGHT', 1.0)
-#     loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-
-#     model.compile(optimizer=this_optimizer,
-#                   loss=loss_fn,
-#                   metrics=[f1_metric, event_f1_metric, fp_event_metric])
-
-
-#     # --- Load Weights ---
-#     if params and 'WEIGHT_FILE' in params and params['WEIGHT_FILE']:
-#         weight_file = params['WEIGHT_FILE']
-#         print(f'Loading weights from: {weight_file}')
-#         try:
-#             model.load_weights(weight_file)
-#         except Exception as e:
-#             print(f"Error loading weights: {e}")
-#             # Decide if you want to raise the error or just continue with initialized weights
-#             # raise e
-
 def build_DBI_Patch(params):
     """Builds model with concatenated outputs based on actual PatchAD returns."""
 
@@ -1210,18 +1036,19 @@ def build_DBI_Patch(params):
     #         # Trim to exact target length
     #         upsampled_tensors.append(tiled_tensor[:, :target_length, :])
 
-        # # Stack along a new dimension (axis=0) and average
-        # stacked_upsampled = tf.stack(upsampled_tensors, axis=0) # Shape [num_scales, B, target_length, D]
-        # combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, name=f'{name_prefix}_combined') # Shape [B, target_length, D]
-        # return combined_tensor
+    #     # Stack along a new dimension (axis=0) and average
+    #     stacked_upsampled = tf.stack(upsampled_tensors, axis=0) # Shape [num_scales, B, target_length, D]
+    #     combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, name=f'{name_prefix}_combined') # Shape [B, target_length, D]
+    #     return combined_tensor
 
+    # pdb.set_trace()
     # # Upsample and combine features from different scales using repeat/tile
     # combined_num_dists = upsample_and_combine_repeat(num_dists, target_seq_length, 'num_dists')
     # combined_size_dists = upsample_and_combine_tile(size_dists, target_seq_length, 'size_dists')
     # combined_num_mx = upsample_and_combine_repeat(num_mx, target_seq_length, 'num_mx')
     # combined_size_mx = upsample_and_combine_tile(size_mx, target_seq_length, 'size_mx')
 
-    # Create upsampling layers
+    # # Create upsampling layers
     upsample_repeat = UpsampleAndCombineRepeat(name_prefix='num_dists')
     upsample_tile = UpsampleAndCombineTile(name_prefix='size_dists')
 
@@ -1231,15 +1058,13 @@ def build_DBI_Patch(params):
     combined_num_mx = upsample_repeat([num_mx, target_seq_length])
     combined_size_mx = upsample_tile([size_mx, target_seq_length])
 
-    # ... (rest of the code remains the same)
-
     # --- Classification Head ---
     # Combine features relevant for classification (e.g., distributions)
     cls_features = tf.concat([
         combined_num_dists,
         combined_size_dists,
-        # combined_num_mx, # Optional
-        # combined_size_mx
+        combined_num_mx, # Optional
+        combined_size_mx
     ], axis=-1, name='cls_features_concat') # Shape [B, L, D*2 or D*4]
 
     # Apply L2 Normalization if specified
@@ -1247,19 +1072,19 @@ def build_DBI_Patch(params):
         cls_features = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1), name='l2_norm_cls')(cls_features)
 
     # Final classification layer
-    classification_output = Dense(1, kernel_initializer=this_kernel_initializer,
+    classification_output = Dense(1, kernel_initializer=tf.keras.initializers.GlorotUniform(),
+                                  use_bias=True,
                                   activation='sigmoid', # Use sigmoid for probability
                                   name='classification_output')(cls_features) # Shape [B, L, 1]
-
 
     # --- Final Model Output ---
     final_output = tf.concat([
         reconstruction,                    # [B, L, C]
         classification_output,            # [B, L, 1]
-        combined_num_dists,              # [B, L, D]
-        combined_size_dists,             # [B, L, D]
-        combined_num_mx,                 # [B, L, D]
-        combined_size_mx                 # [B, L, D]
+        combined_num_dists,              # [B, L, D*(Patch*Levels)]
+        combined_size_dists,             # [B, L, D*(Patch*Levels)]
+        combined_num_mx,                 # [B, L, D*(Patch*Levels)]
+        combined_size_mx                 # [B, L, D*(Patch*Levels)]
     ], axis=-1)
 
     # Create the Model
@@ -1269,8 +1094,8 @@ def build_DBI_Patch(params):
     model._is_classification_only = False
     hori_shift = 0 # Set horizon shift for metrics
     loss_weight = params.get('LOSS_WEIGHT', 1.0) # Default to 1.0 if not specified
-    # loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params)
-    loss_fn = combined_mse_fbfce_loss(params)
+    loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params)
+    # loss_fn = combined_mse_fbfce_loss(params)
     # Compile the model
     # Ensure `combined_mse_fbfce_loss` is adapted for this output structure
     model.compile(
@@ -1852,7 +1677,6 @@ class RobustF1Metric(tf.keras.metrics.Metric):
         self.pred_count.assign(0.0)
         self.temp_diff_sum.assign(0.0)
 
-
 def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None):
     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
     is_classification_only = 'Only' in  params['TYPE_ARCH']
@@ -1871,6 +1695,7 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
     Returns:
     - Combined loss value.
     """
+    @tf.function
     def loss_fn(y_true, y_pred, loss_weight=loss_weight, horizon=horizon, flag_sigmoid=flag_sigmoid, is_classification_only=is_classification_only, is_cad=is_cad):
         # Get the last dimension size and determine mode
         # print(y_true.shape)
@@ -2258,10 +2083,11 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
         # total_loss = add_extra_losses(total_loss, y_true_exp, y_pred_exp, sample_weight,
         #                              params, model, prediction_targets, prediction_out, this_op)
 
-        if is_patch:
-            from model.patchAD.loss import patch_loss
-            total_loss += loss_weight*patch_loss(prediction_targets, prediction_out, proj_inter, proj_intra, x_inter, x_intra)
-        elif not is_classification_only:
+        # if is_patch:
+        #     from model.patchAD.loss import patch_loss
+        #     total_loss += loss_weight*patch_loss(prediction_targets, prediction_out, proj_inter, proj_intra, x_inter, x_intra)
+        # elif not is_classification_only:
+        if not is_classification_only:
             mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out))
             total_loss += loss_weight * mse_loss
 
@@ -2385,10 +2211,10 @@ class UpsampleAndCombineRepeat(tf.keras.layers.Layer):
             upsampled_tensors.append(repeated_tensor[:, :target_length, :])
 
         # Stack along a new dimension (axis=0) and average
-        stacked_upsampled = tf.stack(upsampled_tensors, axis=0)  
-        combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, 
-                                       name=f'{self.name_prefix}_combined')
-        return combined_tensor
+        stacked_upsampled = tf.concat(upsampled_tensors, axis=2)  
+        # combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, 
+                                    #    name=f'{self.name_prefix}_combined')
+        return stacked_upsampled
 
 class UpsampleAndCombineTile(tf.keras.layers.Layer):
     """Layer that upsamples tensors using tf.tile and combines them."""
@@ -2420,16 +2246,18 @@ class UpsampleAndCombineTile(tf.keras.layers.Layer):
             upsampled_tensors.append(tiled_tensor[:, :target_length, :])
 
         # Stack along a new dimension (axis=0) and average
-        stacked_upsampled = tf.stack(upsampled_tensors, axis=0)
-        combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0,
-                                       name=f'{self.name_prefix}_combined')
-        return combined_tensor
+        stacked_upsampled = tf.concat(upsampled_tensors, axis=2)
+        # combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0,
+        #                                name=f'{self.name_prefix}_combined')
+        return stacked_upsampled
     
 def combined_mse_fbfce_loss(params):
     def loss(y_true, y_pred):
         # Get dimensions from params  
         input_channels = params['input_channels']
         d_model = params['NO_FILTERS']
+        n_patch = params['NO_DILATIONS']
+        n_layer = params['NO_KERNELS']
         
         # Slice tensors
         current_idx = 0
@@ -2439,16 +2267,37 @@ def combined_mse_fbfce_loss(params):
         classification_output = y_pred[:, :, current_idx:current_idx + 1]
         current_idx += 1
         
-        num_dists = y_pred[:, :, current_idx:current_idx + d_model]
-        current_idx += d_model
+        # Split tensor into n_layer*n_patch tensors of d_model dimension
+        num_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+        num_dists = []
+        for i in range(n_layer*n_patch):
+            start_idx = i * d_model
+            end_idx = (i + 1) * d_model
+            num_dists.append(num_dists_full[:, :, start_idx:end_idx])
+        current_idx += d_model*n_layer*n_patch
         
-        size_dists = y_pred[:, :, current_idx:current_idx + d_model]
-        current_idx += d_model
+        size_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch] 
+        size_dists = []
+        for i in range(n_layer*n_patch):
+            start_idx = i * d_model
+            end_idx = (i + 1) * d_model
+            size_dists.append(size_dists_full[:, :, start_idx:end_idx])
+        current_idx += d_model*n_layer*n_patch
         
-        num_mx = y_pred[:, :, current_idx:current_idx + d_model]
-        current_idx += d_model
-        
-        size_mx = y_pred[:, :, current_idx:current_idx + d_model]
+        num_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+        num_mx = []
+        for i in range(n_layer*n_patch):
+            start_idx = i * d_model
+            end_idx = (i + 1) * d_model
+            num_mx.append(num_mx_full[:, :, start_idx:end_idx])
+        current_idx += d_model*n_layer*n_patch
+
+        size_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+        size_mx = []
+        for i in range(n_layer*n_patch):
+            start_idx = i * d_model
+            end_idx = (i + 1) * d_model
+            size_mx.append(size_mx_full[:, :, start_idx:end_idx])
         
         # Slice y_true
         true_signal = y_true[:, :, :input_channels]
@@ -2457,19 +2306,36 @@ def combined_mse_fbfce_loss(params):
         # Calculate reconstruction loss
         recon_loss = tf.reduce_mean(tf.square(true_signal - reconstruction))
         
-        # Calculate patch loss
-        patch_loss_val = tf_anomaly_score( # Renamed variable
-            [num_dists], [size_mx],
+        loss_cont = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+            num_dists, size_dists,
             params['seq_length'],
             True,
             params.get('patch_ad_temp', 1.0)
-        )
+        ))
+
+        # Calculate patch loss
+        Np_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+            num_mx, size_dists,
+            params['seq_length'],
+            True,
+            params.get('patch_ad_temp', 1.0)
+        ))
+
+        Pp_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+            num_dists, size_mx,
+            params['seq_length'],
+            True,
+            params.get('patch_ad_temp', 1.0)
+        ))
+
+        loss_proj = Np_proj + Pp_proj
         # Ensure patch_loss is a scalar tensor
-        patch_loss = tf.reduce_mean(patch_loss_val) # Use reduce_mean to ensure scalar
+        proj_weight = params.get('patch_ad_proj', 0.2)
+        patch_loss = (1-proj_weight)*tf.reduce_mean(loss_cont)+proj_weight*tf.reduce_mean(loss_proj)
 
         # Extract alpha and gamma parameters
         alpha = params['focal_alpha'] if 'focal_alpha' in params else 0.25
-        gamma = params['focal_gamma'] if 'focal_gamma' in params else 1.50
+        gamma = params['focal_gamma'] if 'focal_gamma' in params else 3.50
 
         use_class_balancing = alpha > 0
         focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
@@ -2488,7 +2354,8 @@ def combined_mse_fbfce_loss(params):
         weight_class = tf.cast(params.get('WEIGHT_Class', 1.0), dtype=tf.float32)
 
         # Calculate total loss using tensor operations
-        total_loss = weight_recon * recon_loss + weight_patch * patch_loss + weight_class * cls_loss
+        total_loss = patch_loss#cls_loss#recon_loss#cls_loss#weight_class * cls_loss#weight_recon * recon_loss
+        #+ weight_class * cls_loss#* recon_loss + weight_patch * patch_loss + weight_class * cls_loss
         return total_loss
         
     return loss

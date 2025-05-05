@@ -5,7 +5,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.initializers import GlorotUniform
 from tensorflow_addons.activations import gelu
 from .modules import PatchMixerLayer, MLPBlock, EncoderEnsemble, ProjectHead
-
+import pdb
 
 class PositionalEmbedding(tf.keras.layers.Layer):
     def __init__(self, input_dim, max_len=5000, name="positional_embedding", **kwargs):
@@ -69,7 +69,7 @@ class PatchAD(tf.keras.Model):
                 d_model=50,
                 e_layer=3,
                 dropout=0.0,
-                activation="gelu",
+                activation="elu",
                 norm="ln",
                 mlp_hid_len_ratio=0.7,
                 mlp_hid_chn_ratio=1.2,
@@ -91,7 +91,7 @@ class PatchAD(tf.keras.Model):
         self.activation_fn = gelu if activation == "gelu" else tf.keras.activations.get(activation)
         
         # Kernel initializer for all Dense layers
-        self.kernel_init = GlorotUniform()
+        # self.kernel_init = GlorotUniform()
         
         # 1. Positional Embedding
         self.win_emb = PositionalEmbedding(input_channels, max_len=seq_length+100)
@@ -102,12 +102,12 @@ class PatchAD(tf.keras.Model):
         for p in patch_sizes:
             self.patch_num_embeddings.append(
                 Dense(d_model, 
-                      kernel_initializer=self.kernel_init,
+                      kernel_initializer=tf.keras.initializers.GlorotUniform(),
                       name=f"patch_num_emb_{p}")
             )
             self.patch_size_embeddings.append(
                 Dense(d_model,
-                      kernel_initializer=self.kernel_init,
+                      kernel_initializer=tf.keras.initializers.GlorotUniform(),
                       name=f"patch_size_emb_{p}")
             )
         
@@ -206,11 +206,11 @@ class PatchAD(tf.keras.Model):
                                 input_shape=(self.input_channels, patch_num, d_model),
                                 name=f"p{p}_rec_num_flatten"),
                 'norm1': LayerNormalization(epsilon=1e-5, name=f"p{p}_rec_num_norm1"),
-                'dense1': Dense(d_model, kernel_initializer=self.kernel_init,
+                'dense1': Dense(d_model, kernel_initializer=tf.keras.initializers.GlorotUniform(),
                             name=f"p{p}_rec_num_dense1"),
                 'activ1': Activation(self.activation_fn, name=f"p{p}_rec_num_activ1"),
                 'norm2': LayerNormalization(epsilon=1e-5, name=f"p{p}_rec_num_norm2"),
-                'dense2': Dense(seq_length, kernel_initializer=self.kernel_init,
+                'dense2': Dense(seq_length, kernel_initializer=tf.keras.initializers.GlorotUniform(),
                             name=f"p{p}_rec_num_dense2"),
                 'permute': Permute((2, 1), name=f"p{p}_rec_num_permute")
             }
@@ -222,11 +222,11 @@ class PatchAD(tf.keras.Model):
                                 input_shape=(self.input_channels, patch_size, d_model),
                                 name=f"p{p}_rec_size_flatten"),
                 'norm1': LayerNormalization(epsilon=1e-5, name=f"p{p}_rec_size_norm1"),
-                'dense1': Dense(d_model, kernel_initializer=self.kernel_init,
+                'dense1': Dense(d_model, kernel_initializer=tf.keras.initializers.GlorotUniform(),
                             name=f"p{p}_rec_size_dense1"),
                 'activ1': Activation(self.activation_fn, name=f"p{p}_rec_size_activ1"),
                 'norm2': LayerNormalization(epsilon=1e-5, name=f"p{p}_rec_size_norm2"),
-                'dense2': Dense(seq_length, kernel_initializer=self.kernel_init,
+                'dense2': Dense(seq_length, kernel_initializer=tf.keras.initializers.GlorotUniform(),
                             name=f"p{p}_rec_size_dense2"),
                 'permute': Permute((2, 1), name=f"p{p}_rec_size_permute")
             }
@@ -302,15 +302,15 @@ class PatchAD(tf.keras.Model):
                 logits_size = layer_logits_size[layer_idx]
                 
                 # Calculate mixers
-                mean_logits_num = tf.reduce_mean(logits_num, axis=1)
-                mean_logits_size = tf.reduce_mean(logits_size, axis=1)
+                mean_logits_num = tf.reduce_mean(logits_num, axis=1)#, keepdims=True)  # [B, C, N, D] → [B, 1, N, D]
+                mean_logits_size = tf.reduce_mean(logits_size, axis=1)#, keepdims=True)  # [B, C, P, D] → [B, 1, P, D]
                 
                 # Apply Projection Heads (NEW)
                 proj_num = self.proj_num_heads[patch_idx](mean_logits_num, training=training)
                 proj_size = self.proj_size_heads[patch_idx](mean_logits_size, training=training)
                 patch_num_mx = self.num_mixer_softmax(self.num_mixer_mlp(proj_num, training=training))
                 patch_size_mx = self.size_mixer_softmax(self.size_mixer_mlp(proj_size, training=training))
-
+                
                 
                 all_patch_num_mx.append(patch_num_mx)
                 all_patch_size_mx.append(patch_size_mx)
@@ -325,7 +325,7 @@ class PatchAD(tf.keras.Model):
                     x = head_layers['dense2'](x)
                     x = head_layers['permute'](x)
                     return x
-
+                
                 rec1 = apply_recons_head(logits_num, self.recons_num_heads[patch_idx])
                 rec2 = apply_recons_head(logits_size, self.recons_size_heads[patch_idx])                
 

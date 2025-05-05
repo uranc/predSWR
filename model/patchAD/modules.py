@@ -9,6 +9,8 @@ def get_activation_tf(activ_str):
         return gelu
     elif activ_str == "relu":
         return tf.nn.relu
+    elif activ_str == 'elu':
+        return tf.nn.elu
     else:
         return tf.identity
 
@@ -21,7 +23,7 @@ def get_norm_tf(norm_str, features_dim, name=None):
 
 class MLPBlock(tf.keras.layers.Layer):
     def __init__(self, dim, in_features, hid_features, out_features, 
-                 activ="gelu", drop=0.0, jump_conn="proj", norm="ln", 
+                 activ="elu", drop=0.0, jump_conn="proj", norm="ln", 
                  name=None, **kwargs):
         super().__init__(name=name, **kwargs)
         self.dim = dim  # Dimension to apply MLP over
@@ -34,18 +36,18 @@ class MLPBlock(tf.keras.layers.Layer):
         self.norm_type = norm
         
         # Initialize all layers with proper initializers
-        kernel_init = tf.keras.initializers.GlorotUniform()
+        # kernel_init = tf.keras.initializers.GlorotUniform()
         
         # Core MLP layers
         self.norm1 = get_norm_tf(norm, in_features, name=f"{name}_norm1" if name else None)
         self.fc1 = Dense(hid_features, 
-                        kernel_initializer=kernel_init,
+                        kernel_initializer=tf.keras.initializers.GlorotUniform(),
                         use_bias=True,
                         name=f"{name}_fc1" if name else None)
         
         self.norm2 = get_norm_tf(norm, hid_features, name=f"{name}_norm2" if name else None)
         self.fc2 = Dense(out_features,
-                        kernel_initializer=kernel_init,
+                        kernel_initializer=tf.keras.initializers.GlorotUniform(),
                         use_bias=True,
                         name=f"{name}_fc2" if name else None)
         
@@ -60,7 +62,7 @@ class MLPBlock(tf.keras.layers.Layer):
         if jump_conn == "proj":
             if in_features != out_features:
                 self.skip_proj = Dense(out_features,
-                                     kernel_initializer=kernel_init,
+                                     kernel_initializer=tf.keras.initializers.GlorotUniform(),
                                      use_bias=False,
                                      name=f"{name}_skip" if name else None)
             # else: # Implicitly handle identity skip if not proj needed
@@ -149,7 +151,7 @@ class MLPBlock(tf.keras.layers.Layer):
 
 class PatchMixerLayer(tf.keras.layers.Layer):
     def __init__(self, in_len, hid_len, in_chn, hid_chn, out_chn,
-                 patch_size, hid_pch, d_model, norm="ln", activ="gelu", 
+                 patch_size, hid_pch, d_model, norm="ln", activ="elu", 
                  drop=0.0, jump_conn="proj", name=None, **kwargs):
         super().__init__(name=name, **kwargs)
         
@@ -174,7 +176,7 @@ class PatchMixerLayer(tf.keras.layers.Layer):
         self.num_patches = in_len // patch_size
         
         # Initialize kernel properly for all layers
-        kernel_init = tf.keras.initializers.GlorotUniform()
+        # kernel_init = tf.keras.initializers.GlorotUniform()
         
         # Channel mixing layers (dim=1)
         self.ch_mixing1 = MLPBlock(
@@ -310,7 +312,6 @@ class EncoderEnsemble(tf.keras.layers.Layer):
 
     @tf.function
     def call(self, x_patch_num, x_patch_size, training=False):
-        # ... (call method remains the same) ...
         # Input validation
         tf.debugging.assert_rank(x_patch_num, 4, "x_patch_num must have rank 4")
         tf.debugging.assert_rank(x_patch_size, 4, "x_patch_size must have rank 4")
@@ -396,7 +397,7 @@ class EncoderEnsemble(tf.keras.layers.Layer):
         return cls(encoder_layers=encoder_layers, **config)
 
 class ProjectHead(tf.keras.layers.Layer):
-    def __init__(self, dim, hidden_dim=None, dropout=0.1, activation='gelu', name=None, **kwargs):
+    def __init__(self, dim, hidden_dim=None, dropout=0.1, activation='elu', name=None, **kwargs):
         super().__init__(name=name, **kwargs)
         
         # If hidden_dim not specified, use 2x input dim
@@ -409,11 +410,11 @@ class ProjectHead(tf.keras.layers.Layer):
         self.activation_name = activation
 
         # Proper initialization for all layers
-        kernel_init = tf.keras.initializers.GlorotUniform()
+        # kernel_init = tf.keras.initializers.GlorotUniform()
         
         # Define individual layers
         self.fc1 = Dense(hidden_dim, 
-                         kernel_initializer=kernel_init,
+                         kernel_initializer=tf.keras.initializers.GlorotUniform(),
                          use_bias=True,
                          name=f"{name}_fc1" if name else None)
         self.norm1 = LayerNormalization(epsilon=1e-5, 
@@ -423,7 +424,7 @@ class ProjectHead(tf.keras.layers.Layer):
                                            name=f"{name}_activ" if name else None)
         self.dropout_layer = Dropout(dropout)
         self.fc2 = Dense(dim,
-                         kernel_initializer=kernel_init,
+                         kernel_initializer=tf.keras.initializers.GlorotUniform(),
                          use_bias=True,
                          name=f"{name}_fc2" if name else None)
         self.norm2 = LayerNormalization(epsilon=1e-5,
