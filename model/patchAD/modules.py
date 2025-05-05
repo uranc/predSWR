@@ -74,6 +74,7 @@ class MLPBlock(tf.keras.layers.Layer):
         # else: # No skip connection or identity
             # self.skip_proj = lambda x: x # Lambdas are not easily serializable
 
+    @tf.function
     def call(self, x, training=False):
         # Save original input for skip connection
         identity = x

@@ -242,6 +242,7 @@ class PatchAD(tf.keras.Model):
                 )
             )
 
+    @tf.function
     def call(self, x, training=False):
         # Shape validation
         input_shape = tf.shape(x)
