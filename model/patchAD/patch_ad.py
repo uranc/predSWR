@@ -5,62 +5,43 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.initializers import GlorotUniform
 from tensorflow_addons.activations import gelu
 from .modules import PatchMixerLayer, MLPBlock, EncoderEnsemble, ProjectHead
+import numpy as np
 import pdb
 
+
+# ...existing code...
 class PositionalEmbedding(tf.keras.layers.Layer):
     def __init__(self, input_dim, max_len=5000, name="positional_embedding", **kwargs):
         super().__init__(name=name, **kwargs)
-        
-        # Create position and dimension indices
-        position = tf.range(max_len, dtype=tf.float32)[:, tf.newaxis]  # [max_len, 1]
-        
-        # Calculate number of dimensions for sin/cos terms
-        half_dim = input_dim // 2
-        div_term = tf.exp(
-            tf.range(0, half_dim, dtype=tf.float32) * (-tf.math.log(10000.0) / half_dim)
-        )
-        
-        # Initialize PE matrix
-        pe = tf.zeros((max_len, input_dim))
-        
-        # Calculate sin terms for even indices
-        angles = tf.matmul(position, div_term[tf.newaxis, :])  # [max_len, half_dim]
-        sin_terms = tf.sin(angles)
-        
-        # Update even indices (0, 2, 4, ...)
-        even_indices = tf.range(0, input_dim, 2)
-        pe = tf.tensor_scatter_nd_update(
-            pe,
-            tf.stack([
-                tf.repeat(tf.range(max_len), len(even_indices)),
-                tf.tile(even_indices, [max_len])
-            ], axis=1),
-            tf.reshape(sin_terms, [-1])
-        )
-        
-        # Calculate cos terms for odd indices
-        if input_dim % 2 != 0:  # Handle odd input_dim
-            div_term = div_term[:-1]  # Remove last element
-        cos_terms = tf.cos(angles[:, :input_dim//2])  # Only use needed terms
-        
-        # Update odd indices (1, 3, 5, ...)
-        odd_indices = tf.range(1, input_dim, 2)
-        pe = tf.tensor_scatter_nd_update(
-            pe,
-            tf.stack([
-                tf.repeat(tf.range(max_len), len(odd_indices)),
-                tf.tile(odd_indices, [max_len])
-            ], axis=1),
-            tf.reshape(cos_terms, [-1])
-        )
-        
-        # Store as non-trainable constant
-        self.pe = tf.constant(pe[tf.newaxis, :, :], dtype=tf.float32)
+        self.input_dim = input_dim
+        self.max_len = max_len
 
-    def call(self, x):
-        seq_len = tf.shape(x)[1]
-        return x + self.pe[:, :seq_len, :]
+        # Compute positional encodings using numpy
+        pos = np.arange(max_len)[:, np.newaxis]
+        dim_range = np.arange(input_dim)[np.newaxis, :]
+        angle_rates = 1 / np.power(10000, (2 * (dim_range // 2)) / np.float32(input_dim))
+        angles = pos * angle_rates
 
+        # Apply sin to even indices, cos to odd indices
+        embeddings = np.where(dim_range % 2 == 0, np.sin(angles), np.cos(angles)).astype(np.float32)
+
+        # Create as non-trainable weight
+        self.embedding_matrix = self.add_weight(
+            name='positional_embeddings',
+            shape=(max_len, input_dim),
+            initializer=tf.constant_initializer(embeddings),
+            trainable=False
+        )
+
+    @tf.function
+    def call(self, inputs):
+        seq_len = tf.shape(inputs)[1]
+        # Use tf.slice for graph compatibility
+        # Original: return inputs + self.embedding_matrix[:seq_len][tf.newaxis, :, :]
+        sliced_embeddings = tf.slice(self.embedding_matrix, [0, 0], [seq_len, self.input_dim])
+        return inputs + sliced_embeddings[tf.newaxis, :, :]
+    
+    
 class PatchAD(tf.keras.Model):
     def __init__(self,
                 input_channels,

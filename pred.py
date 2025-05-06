@@ -29,14 +29,16 @@ import glob
 import importlib
 from tensorflow.keras import callbacks as cb
 
-tf.config.run_functions_eagerly(False)
+# tf.config.run_functions_eagerly(False)
+# tf.compat.v1.disable_eager_execution()
 def objective_patch(trial):
     """Objective function for Optuna optimization"""
-    tf.compat.v1.reset_default_graph()
+    # tf.compat.v1.reset_default_graph()
     if tf.config.list_physical_devices('GPU'):
         tf.keras.backend.clear_session()
-    tf.config.run_functions_eagerly(False)
-
+    # tf.config.run_functions_eagerly(False)
+    # tf.compat.v1.disable_eager_execution()
+    # tf.debugging.set_log_device_placement(True)
     # Start with base parameters
     params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*8,
             'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
@@ -232,11 +234,13 @@ def objective_patch(trial):
     model.summary()
     from model.training import TerminateOnNaN
     terminate_on_nan_callback = TerminateOnNaN()
+    # tf.profiler.experimental.start('logdir')
 
     # Setup callbacks including the verifier
     callbacks = [cb.TensorBoard(log_dir=f"{study_dir}/",
                                       write_graph=True,
                                       write_images=True,
+                                    #   profile_batch='10,15',
                                       update_freq='epoch'),
                 cb.EarlyStopping(monitor='val_event_f1',  # Change monitor
                                 patience=50,
@@ -268,12 +272,13 @@ def objective_patch(trial):
     # Train and evaluate
     history = model.fit(
         train_dataset,
-        # steps_per_epoch=5,
+        # steps_per_epoch=30,
         validation_data=val_dataset,
         epochs=params['NO_EPOCHS'],
         callbacks=callbacks,
         verbose=1
     )
+    # tf.profiler.experimental.stop()
     val_accuracy = (max(history.history['val_event_f1'])+max(history.history['val_f1']))/2
     val_accuracy_mean = (np.mean(history.history['val_event_f1'])+np.mean(history.history['val_f1']))/2
     val_accuracy = (val_accuracy + val_accuracy_mean)/2
@@ -1386,7 +1391,7 @@ elif mode == 'predict':
             
         from model.model_fn import CSDLayer
         from tcn import TCN
-        from keras.models import load_model
+        from tensorflow.keras.models import load_model
         # Load weights
         params['mode'] = 'predict'
         # weight_file = f"{study_dir}/last.weights.h5"
@@ -1544,7 +1549,7 @@ elif mode == 'predict':
     TP=np.zeros(shape=(1,len(th_arr)))
     FN=np.zeros(shape=(1,len(th_arr)))
     IOU=np.zeros(shape=(1,len(th_arr)))
-    from keras.utils import timeseries_dataset_from_array
+    from tensorflow.keras.utils import timeseries_dataset_from_array
     if model_name == 'RippleNet':
         sample_length = params['NO_TIMEPOINTS']
         all_probs = []
@@ -1707,7 +1712,7 @@ elif mode == 'predictSynth':
         synth /= 2
 
     # synth = synth[9*1250:-1250*12]
-    from keras.utils import timeseries_dataset_from_array
+    from tensorflow.keras.utils import timeseries_dataset_from_array
 
     # get predictions
     samp_freq = 30000
@@ -1975,7 +1980,7 @@ elif mode=='export':
             build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
         from model.model_fn import CSDLayer
         from tcn import TCN
-        from keras.models import load_model
+        from tensorflow.keras.models import load_model
         # Load weights
         params['mode'] = 'predict'
         # weight_file = f"{study_dir}/last.weights.h5"
@@ -2150,7 +2155,7 @@ elif mode == 'embedding':
             from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
         from model.model_fn import CSDLayer
         from tcn import TCN
-        from keras.models import load_model
+        from tensorflow.keras.models import load_model
         # Load weights
         params['mode'] = mode
         weight_file = f"{study_dir}/max.weights.h5"
@@ -2260,7 +2265,7 @@ elif mode == 'embedding':
     n_channels = params['NO_CHANNELS']
     timesteps = params['NO_TIMEPOINTS']
     sample_length = params['NO_TIMEPOINTS']*2
-    from keras.utils import timeseries_dataset_from_array
+    from tensorflow.keras.utils import timeseries_dataset_from_array
 
     test_ripples = tf.data.Dataset.from_tensor_slices(ripples[:,-sample_length:,:]).batch(params["BATCH_SIZE"])
     # test_ripples = timeseries_dataset_from_array(ripples, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])

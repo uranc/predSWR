@@ -988,7 +988,7 @@ def build_DBI_Patch(params):
         d_model=params['NO_FILTERS'],
         e_layer=params['NO_KERNELS'],
         dropout=params.get('dropout', 0.1),
-        activation=params.get('activation', 'gelu'),
+        activation=params.get('activation', 'elu'), # Ensure this matches MLPBlock's activ_name if needed
         norm=params.get('patch_ad_norm', 'ln')
     )
     
@@ -1000,64 +1000,74 @@ def build_DBI_Patch(params):
     d_model = params['NO_FILTERS']
     batch_size = tf.shape(input_layer)[0]
 
-    # def upsample_and_combine_repeat(tensor_list, target_length, name_prefix):
-    #     """Upsamples using tf.repeat (inter-patch style) and averages."""
-    #     upsampled_tensors = []
-    #     for i, tensor in enumerate(tensor_list):
-    #         current_length = tf.shape(tensor)[1]
-    #         # Calculate repeats needed (use ceil to ensure coverage)
-    #         repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
-    #         repeated_tensor = tf.repeat(tensor, repeats=repeats, axis=1, name=f'{name_prefix}_repeat_{i}')
-    #         # Trim to exact target length
-    #         upsampled_tensors.append(repeated_tensor[:, :target_length, :])
+    def upsample_and_combine_repeat(tensor_list, target_len_tensor, name_prefix):
+        """Upsamples using tf.repeat (inter-patch style) and concatenates."""
+        upsampled_tensors = []
+        if not tensor_list: # Handle empty list case
+            return None 
+        for i, tensor in enumerate(tensor_list):
+            B_ = tf.shape(tensor)[0]
+            current_len = tf.shape(tensor)[1]
+            D_ = tf.shape(tensor)[2]
 
-    #     # Stack along a new dimension (axis=0) and average
-    #     stacked_upsampled = tf.stack(upsampled_tensors, axis=0) # Shape [num_scales, B, target_length, D]
-    #     combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, name=f'{name_prefix}_combined') # Shape [B, target_length, D]
-    #     return combined_tensor
+            repeats = tf.cast(tf.math.ceil(tf.cast(target_len_tensor, tf.float32) / tf.cast(current_len, tf.float32)), tf.int32)
+            repeated = tf.repeat(tensor, repeats=repeats, axis=1)
+            
+            sliced_tensor = tf.slice(repeated, [0, 0, 0], tf.stack([B_, target_len_tensor, D_]))
+            upsampled_tensors.append(sliced_tensor)
+        
+        if not upsampled_tensors: # Should not happen if tensor_list was not empty initially
+             return None
+        # Concatenate along the feature dimension
+        return Concatenate(axis=2, name=f'{name_prefix}_concat')(upsampled_tensors)
 
-    # def upsample_and_combine_tile(tensor_list, target_length, name_prefix):
-    #     """Upsamples using tf.tile (intra-patch style) and averages."""
-    #     upsampled_tensors = []
-    #     for i, tensor in enumerate(tensor_list):
-    #         current_length = tf.shape(tensor)[1]
-    #         # Calculate repeats needed (use ceil to ensure coverage)
-    #         repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
-    #         B = tf.shape(tensor)[0]
-    #         D = tf.shape(tensor)[2]
+    def upsample_and_combine_tile(tensor_list, target_len_tensor, name_prefix):
+        """Upsamples using tf.tile (intra-patch style) and concatenates."""
+        upsampled_tensors = []
+        if not tensor_list: # Handle empty list case
+            return None
+        for i, tensor in enumerate(tensor_list):
+            B_ = tf.shape(tensor)[0]
+            current_len = tf.shape(tensor)[1]
+            D_ = tf.shape(tensor)[2]
 
-    #         # Reshape [B, L, D] -> [B, L, 1, D]
-    #         reshaped = tf.reshape(tensor, [B, current_length, 1, D])
-    #         # Tile along the new dimension: [B, L, repeats, D]
-    #         tiled = tf.tile(reshaped, [1, 1, repeats, 1], name=f'{name_prefix}_tile_{i}')
-    #         # Reshape back: [B, L * repeats, D]
-    #         final_shape = [B, current_length * repeats, D]
-    #         tiled_tensor = tf.reshape(tiled, final_shape)
-    #         # Trim to exact target length
-    #         upsampled_tensors.append(tiled_tensor[:, :target_length, :])
+            repeats_factor = tf.cast(tf.math.ceil(tf.cast(target_len_tensor, tf.float32) / tf.cast(current_len, tf.float32)), tf.int32)
+            
+            reshaped = tf.reshape(tensor, tf.stack([B_, current_len, 1, D_]))
+            multiples = tf.stack([1, 1, repeats_factor, 1]) # Multiples for tf.tile
+            tiled = tf.tile(reshaped, multiples)
+            
+            # Reshape back: current_len * repeats_factor can be a tensor
+            # Ensure the shape for reshape uses tensor multiplication
+            tiled_flat = tf.reshape(tiled, tf.stack([B_, current_len * repeats_factor, D_]))
 
-    #     # Stack along a new dimension (axis=0) and average
-    #     stacked_upsampled = tf.stack(upsampled_tensors, axis=0) # Shape [num_scales, B, target_length, D]
-    #     combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, name=f'{name_prefix}_combined') # Shape [B, target_length, D]
-    #     return combined_tensor
+            sliced_tensor = tf.slice(tiled_flat, [0, 0, 0], [B_, target_len_tensor, D_])
+            upsampled_tensors.append(sliced_tensor)
+
+        if not upsampled_tensors: # Should not happen if tensor_list was not empty initially
+            return None
+        # Concatenate along the feature dimension
+        return Concatenate(axis=2, name=f'{name_prefix}_concat')(upsampled_tensors)
+
 
     # pdb.set_trace()
-    # # Upsample and combine features from different scales using repeat/tile
-    # combined_num_dists = upsample_and_combine_repeat(num_dists, target_seq_length, 'num_dists')
-    # combined_size_dists = upsample_and_combine_tile(size_dists, target_seq_length, 'size_dists')
-    # combined_num_mx = upsample_and_combine_repeat(num_mx, target_seq_length, 'num_mx')
-    # combined_size_mx = upsample_and_combine_tile(size_mx, target_seq_length, 'size_mx')
+    # Upsample and combine features from different scales using repeat/tile
+    combined_num_dists = upsample_and_combine_repeat(num_dists, target_seq_length, 'num_dists')
+    combined_size_dists = upsample_and_combine_tile(size_dists, target_seq_length, 'size_dists')
+    combined_num_mx = upsample_and_combine_repeat(num_mx, target_seq_length, 'num_mx')
+    combined_size_mx = upsample_and_combine_tile(size_mx, target_seq_length, 'size_mx')
 
     # # Create upsampling layers
-    upsample_repeat = UpsampleAndCombineRepeat(name_prefix='num_dists')
-    upsample_tile = UpsampleAndCombineTile(name_prefix='size_dists')
+    # upsample_repeat = UpsampleAndCombineRepeat(name_prefix='num_dists')
+    # upsample_tile = UpsampleAndCombineTile(name_prefix='size_dists')
 
-    # Apply upsampling
-    combined_num_dists = upsample_repeat([num_dists, target_seq_length])
-    combined_size_dists = upsample_tile([size_dists, target_seq_length])
-    combined_num_mx = upsample_repeat([num_mx, target_seq_length])
-    combined_size_mx = upsample_tile([size_mx, target_seq_length])
+    # # Apply upsampling
+    # combined_num_dists = upsample_repeat([num_dists, target_seq_length])
+    # combined_size_dists = upsample_tile([size_dists, target_seq_length])
+    # combined_num_mx = upsample_repeat([num_mx, target_seq_length])
+    # combined_size_mx = upsample_tile([size_mx, target_seq_length])
 
+    # pdb.set_trace()
     # --- Classification Head ---
     # Combine features relevant for classification (e.g., distributions)
     cls_features = tf.concat([
@@ -1297,32 +1307,35 @@ def truncated_mse_loss(y_true, y_pred, tau=4.0):
     # Average over frames and classes
     t_mse = tf.reduce_mean(truncated_delta)
     return t_mse
-
+# Fix for MaxF1MetricHorizon
 class MaxF1MetricHorizon(tf.keras.metrics.Metric):
     def __init__(self, name='f1', thresholds=tf.linspace(0.0, 1.0, 11), model=None, **kwargs):
         super(MaxF1MetricHorizon, self).__init__(name=name, **kwargs)
         self.thresholds = thresholds
-        self.tp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='tp')
-        self.fp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='fp')
-        self.fn = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='fn')
+        self.tp = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer='zeros', name='tp')
+        self.fp = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer='zeros', name='fp')
+        self.fn = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer='zeros', name='fn')
         self.model = model
 
     def update_state(self, y_true, y_pred, **kwargs):
         # Get classification mode from model property
         is_classification_only = getattr(self.model, '_is_classification_only', True)
 
-        # Extract labels based on mode
-        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
-        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
-
-        # is_cad = getattr(self.model, "_is_cad", False)
-        # print('Using CAD:', is_cad)
-        # if is_cad:
-        #     print('Using CAD mode and downsampling labels')
-        #     pool = tf.keras.layers.MaxPooling1D(pool_size=12, strides=12, padding='valid')
-        #     y_true_exp_expanded = tf.expand_dims(y_true_labels, axis=-1)
-        #     y_true_labels = tf.squeeze(pool(y_true_exp_expanded), axis=-1)#_expanded)
-
+        # Extract labels based on mode - using tf.cond for graph compatibility
+        y_true_labels = tf.cond(
+            tf.constant(is_classification_only), 
+            lambda: tf.slice(y_true, [0, 0, 0], [-1, -1, 1]),
+            lambda: tf.slice(y_true, [0, 0, 8], [-1, -1, 1])
+        )
+        y_pred_labels = tf.cond(
+            tf.constant(is_classification_only),
+            lambda: tf.slice(y_pred, [0, 0, 0], [-1, -1, 1]),
+            lambda: tf.slice(y_pred, [0, 0, 8], [-1, -1, 1])
+        )
+        
+        # Reshape to ensure consistent dimensions
+        y_true_labels = tf.reshape(y_true_labels, [tf.shape(y_true)[0], tf.shape(y_true)[1]])
+        y_pred_labels = tf.reshape(y_pred_labels, [tf.shape(y_pred)[0], tf.shape(y_pred)[1]])
 
         def process_threshold(threshold):
             pred_events = tf.cast(y_pred_labels >= threshold, tf.float32)
@@ -1371,30 +1384,27 @@ class EventAwareF1(tf.keras.metrics.Metric):
         self.late_margin = late_margin
         self.model = model
 
-        self.tp = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="tp")
-        self.fp = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="fp")
-        self.fn = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="fn")
+        # Use tf.shape instead of len for graph compatibility
+        self.tp = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer="zeros", name="tp")
+        self.fp = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer="zeros", name="fp")
+        self.fn = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer="zeros", name="fn")
 
     def update_state(self, y_true, y_pred, **kwargs):
-        # Determine which branch of outputs to use
+        # Extract labels based on mode - using tf.cond for graph compatibility
         is_classification_only = getattr(self.model, "_is_classification_only", True)
-        # print('Using classification only:', is_classification_only)
+        
+        y_true_labels = tf.cond(
+            tf.constant(is_classification_only), 
+            lambda: tf.reshape(tf.slice(y_true, [0, 0, 0], [-1, -1, 1]), [tf.shape(y_true)[0], tf.shape(y_true)[1]]),
+            lambda: tf.reshape(tf.slice(y_true, [0, 0, 8], [-1, -1, 1]), [tf.shape(y_true)[0], tf.shape(y_true)[1]])
+        )
+        y_pred_labels = tf.cond(
+            tf.constant(is_classification_only),
+            lambda: tf.reshape(tf.slice(y_pred, [0, 0, 0], [-1, -1, 1]), [tf.shape(y_pred)[0], tf.shape(y_pred)[1]]),
+            lambda: tf.reshape(tf.slice(y_pred, [0, 0, 8], [-1, -1, 1]), [tf.shape(y_pred)[0], tf.shape(y_pred)[1]])
+        )
 
-        # Assume the true labels and predictions have shape [B, T, channels]
-        # and we take channel 0 for classification (or channel 8 if not)
-        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
-        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
-
-        # is_cad = getattr(self.model, "_is_cad", False)
-        # print('Using CAD:', is_cad)
-        # if is_cad:
-        #     print('Using CAD mode and downsampling labels')
-        #     pool = tf.keras.layers.MaxPooling1D(pool_size=12, strides=12, padding='valid')
-        #     y_true_exp_expanded = tf.expand_dims(y_true_labels, axis=-1)
-        #     y_true_labels = tf.squeeze(pool(y_true_exp_expanded), axis=-1)#_expanded)
-
-        # Now y_true_labels and y_pred_labels are [B, T]
-
+        # Get dimensions
         B = tf.shape(y_true_labels)[0]
         T = tf.shape(y_true_labels)[1]
 
@@ -1410,49 +1420,59 @@ class EventAwareF1(tf.keras.metrics.Metric):
             y_pred_bin = tf.cast(y_pred_labels >= thresh, tf.float32)
             y_true_bin = tf.cast(y_true_labels >= 0.5, tf.float32)
 
-            # For each sample, determine if there is an event and get the first index if so.
-            has_event = tf.reduce_max(y_true_bin, axis=1) > 0  # shape [B], bool
-            # Note: tf.argmax returns 0 if all are zeros; we rely on has_event to mask these out.
+            # For each sample, determine if there is an event and get the first index if so
+            has_event = tf.greater(tf.reduce_max(y_true_bin, axis=1), 0)  # shape [B], bool
             true_onset = tf.argmax(y_true_bin, axis=1, output_type=tf.int32)  # shape [B]
 
-            # For samples with an event, create lower and upper bounds.
+            # For samples with an event, create lower and upper bounds
             early_bound = tf.maximum(true_onset - self.early_margin, 0)  # [B]
             late_bound = tf.minimum(true_onset + self.late_margin, T - 1)  # [B]
-            # Expand bounds to shape [B, T] for comparison with time_indices_exp:
+            
+            # Expand bounds to shape [B, T] for comparison
             early_bound_exp = tf.tile(tf.expand_dims(early_bound, 1), [1, T])
             late_bound_exp = tf.tile(tf.expand_dims(late_bound, 1), [1, T])
 
-            # Create a mask: True where the time index is in [early_bound, late_bound]
-            within_bounds = tf.logical_and(time_indices_exp >= early_bound_exp,
-                                           time_indices_exp <= late_bound_exp)  # [B, T]
+            # Create a mask: True where time is in [early_bound, late_bound]
+            within_bounds = tf.logical_and(
+                tf.greater_equal(time_indices_exp, early_bound_exp),
+                tf.less_equal(time_indices_exp, late_bound_exp)
+            )  # [B, T]
 
-            # For each sample, check if there is any predicted event in the allowed interval.
-            # This gives a boolean vector of shape [B]: True if a match is found.
-            match = tf.reduce_any(tf.logical_and(tf.equal(y_pred_bin, 1.0), within_bounds), axis=1)
+            # Check if there is any predicted event in the allowed interval
+            match = tf.reduce_any(
+                tf.logical_and(tf.equal(y_pred_bin, 1.0), within_bounds), 
+                axis=1
+            )
             match = tf.cast(match, tf.float32)  # 1 if match, 0 if not
 
             # For samples with an event:
-            #   - True Positive (TP) = 1 if match, else 0.
-            #   - False Negative (FN) = 1 - match.
+            # TP = 1 if match, else 0; FN = 1 - match
             tp_event = tf.where(has_event, match, tf.zeros_like(match))
             fn_event = tf.where(has_event, 1 - match, tf.zeros_like(match))
-            # For samples without an event:
-            #   - False Positives (FP) = total number of predicted events in that sample.
-            # fp_no_event = tf.where(~has_event, tf.reduce_sum(y_pred_bin, axis=1), tf.zeros_like(tf.reduce_sum(y_pred_bin, axis=1)))
-            fp_no_event = tf.where(~has_event,
-                                tf.cast(tf.reduce_any(tf.equal(y_pred_bin, 1.0), axis=1), tf.float32),
-                                tf.zeros_like(tf.reduce_sum(y_pred_bin, axis=1)))
-            # Sum across the batch for this threshold.
+            
+            # For samples without an event: FP = 1 if any prediction
+            fp_no_event = tf.where(
+                tf.logical_not(has_event),
+                tf.cast(tf.reduce_any(tf.equal(y_pred_bin, 1.0), axis=1), tf.float32),
+                tf.zeros_like(tf.reduce_sum(y_pred_bin, axis=1))
+            )
+            
+            # Sum across the batch for this threshold
             tp_total = tf.reduce_sum(tp_event)
             fp_total = tf.reduce_sum(fp_no_event)
             fn_total = tf.reduce_sum(fn_event)
 
             return tp_total, fp_total, fn_total
 
-        # Use tf.map_fn over thresholds (this loop is over a small number of thresholds)
-        results = tf.map_fn(lambda t: process_threshold(t), self.thresholds,
-                              fn_output_signature=(tf.float32, tf.float32, tf.float32))
+        # Use tf.map_fn over thresholds
+        results = tf.map_fn(
+            lambda t: process_threshold(t), 
+            self.thresholds,
+            fn_output_signature=(tf.float32, tf.float32, tf.float32)
+        )
         tp_all, fp_all, fn_all = results
+        
+        # Update accumulators
         self.tp.assign_add(tp_all)
         self.fp.assign_add(fp_all)
         self.fn.assign_add(fn_all)
@@ -1467,53 +1487,60 @@ class EventAwareF1(tf.keras.metrics.Metric):
         self.tp.assign(tf.zeros_like(self.tp))
         self.fp.assign(tf.zeros_like(self.fp))
         self.fn.assign(tf.zeros_like(self.fn))
-import tensorflow as tf
 
 class EventFalsePositiveRateMetric(tf.keras.metrics.Metric):
     def __init__(self, name="event_fp_rate", thresholds=tf.linspace(0.0, 1.0, 11), model=None, **kwargs):
         super(EventFalsePositiveRateMetric, self).__init__(name=name, **kwargs)
         self.thresholds = thresholds
         self.model = model
-        # Accumulators for FP and TN per threshold.
-        self.fp = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="fp")
-        self.tn = self.add_weight(shape=(len(thresholds),), initializer="zeros", name="tn")
+        # Accumulators for FP and TN per threshold
+        self.fp = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer="zeros", name="fp")
+        self.tn = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer="zeros", name="tn")
 
     def update_state(self, y_true, y_pred, **kwargs):
-        # Choose the proper channel based on model flag.
+        # Extract labels based on mode - using tf.cond for graph compatibility  
         is_classification_only = getattr(self.model, "_is_classification_only", True)
-        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
-        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
+        
+        y_true_labels = tf.cond(
+            tf.constant(is_classification_only), 
+            lambda: tf.reshape(tf.slice(y_true, [0, 0, 0], [-1, -1, 1]), [tf.shape(y_true)[0], tf.shape(y_true)[1]]),
+            lambda: tf.reshape(tf.slice(y_true, [0, 0, 8], [-1, -1, 1]), [tf.shape(y_true)[0], tf.shape(y_true)[1]])
+        )
+        y_pred_labels = tf.cond(
+            tf.constant(is_classification_only),
+            lambda: tf.reshape(tf.slice(y_pred, [0, 0, 0], [-1, -1, 1]), [tf.shape(y_pred)[0], tf.shape(y_pred)[1]]),
+            lambda: tf.reshape(tf.slice(y_pred, [0, 0, 8], [-1, -1, 1]), [tf.shape(y_pred)[0], tf.shape(y_pred)[1]])
+        )
 
-        # is_cad = getattr(self.model, "_is_cad", False)
-        # print('Using CAD:', is_cad)
-        # if is_cad:
-        #     print('Using CAD mode and downsampling labels')
-        #     pool = tf.keras.layers.MaxPooling1D(pool_size=12, strides=12, padding='valid')
-        #     y_true_exp_expanded = tf.expand_dims(y_true_labels, axis=-1)
-        #     y_true_labels = tf.squeeze(pool(y_true_exp_expanded), axis=-1)#_expanded)
-
-        # Determine which windows are negative (no event in ground-truth).
+        # Determine which windows are negative (no event in ground-truth)
         neg_mask = tf.less(tf.reduce_max(y_true_labels, axis=1), 0.5)  # shape: [B], dtype bool
-
-        B = tf.shape(y_true_labels)[0]
-        T = tf.shape(y_true_labels)[1]
 
         # For each threshold (vectorized over the batch dimension)
         def process_threshold(thresh):
             thresh = tf.cast(thresh, tf.float32)
-            # For each sample, we check whether any timepoint is predicted above thresh.
+            # For each sample, check if any timepoint is predicted above thresh
             pred_event = tf.greater(tf.reduce_max(y_pred_labels, axis=1), thresh)  # shape: [B], bool
             pred_event_float = tf.cast(pred_event, tf.float32)
-            # For negative windows (where neg_mask==True), count FP as 1 if any prediction is above thresh,
-            # and TN as 1 if no prediction is above thresh.
-            fp_per_sample = tf.where(neg_mask, pred_event_float, tf.zeros_like(pred_event_float, dtype=tf.float32))
-            tn_per_sample = tf.where(neg_mask, 1.0 - pred_event_float, tf.zeros_like(pred_event_float, dtype=tf.float32))
-            # Sum across the batch for this threshold.
+            
+            # For negative windows, count FP as 1 if any prediction is above thresh,
+            # and TN as 1 if no prediction is above thresh
+            fp_per_sample = tf.where(
+                neg_mask, 
+                pred_event_float, 
+                tf.zeros_like(pred_event_float, dtype=tf.float32)
+            )
+            tn_per_sample = tf.where(
+                neg_mask, 
+                1.0 - pred_event_float, 
+                tf.zeros_like(pred_event_float, dtype=tf.float32)
+            )
+            
+            # Sum across the batch for this threshold
             fp_total = tf.reduce_sum(fp_per_sample)
             tn_total = tf.reduce_sum(tn_per_sample)
             return fp_total, tn_total
 
-        # Map over the thresholds.
+        # Map over the thresholds
         fp_all, tn_all = tf.map_fn(
             lambda t: process_threshold(t),
             self.thresholds,
@@ -1524,16 +1551,14 @@ class EventFalsePositiveRateMetric(tf.keras.metrics.Metric):
         self.tn.assign_add(tn_all)
 
     def result(self):
-        # Compute FP rate for each threshold.
+        # Compute FP rate for each threshold
         fp_rate = self.fp / (self.fp + self.tn + tf.keras.backend.epsilon())
-        # Return the mean FP rate across thresholds (a scalar).
+        # Return the mean FP rate across thresholds
         return tf.reduce_mean(fp_rate)
 
     def reset_state(self):
         self.fp.assign(tf.zeros_like(self.fp))
         self.tn.assign(tf.zeros_like(self.tn))
-
-
 
 class LatencyMetric(tf.keras.metrics.Metric):
     def __init__(self, name='latency_metric', threshold=0.5, max_early_detection=50, model=None, **kwargs):
@@ -1603,14 +1628,15 @@ class RobustF1Metric(tf.keras.metrics.Metric):
     def __init__(self, name='robust_f1', thresholds=tf.linspace(0.0, 1.0, 11), model=None, **kwargs):
         super(RobustF1Metric, self).__init__(name=name, **kwargs)
         self.thresholds = thresholds
-        self.tp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='tp')
-        self.fp = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='fp')
-        self.fn = self.add_weight(shape=(len(thresholds),), initializer='zeros', name='fn')
+        # Use tf.shape instead of len for graph compatibility
+        self.tp = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer='zeros', name='tp')
+        self.fp = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer='zeros', name='fp')
+        self.fn = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer='zeros', name='fn')
         self.pred_sum = self.add_weight(name='pred_sum', initializer='zeros')
         self.pred_count = self.add_weight(name='pred_count', initializer='zeros')
         self.temp_diff_sum = self.add_weight(name='temp_diff_sum', initializer='zeros')
         self.model = model
-
+        
     def update_state(self, y_true, y_pred, **kwargs):
         # Get classification mode from model property
         is_classification_only = getattr(self.model, '_is_classification_only', True)
@@ -2037,22 +2063,25 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
         # print('Using classification only:', is_classification_only)
         if is_patch:
             prediction_targets, prediction_out, y_true_exp, y_pred_exp, proj_inter, proj_intra, x_inter, x_intra = patch_mode_branch()
-            if (len(y_true.shape) == 3) and (y_true.shape[-1] > 9 ):
-                sample_weight = y_true[:, :, 9]
-            else:
-                sample_weight = tf.ones_like(y_true[:, :, 0])
+            sample_weight = tf.cond(
+            tf.greater(tf.shape(y_true)[-1], 9),
+            lambda: y_true[:, :, 9],
+            lambda: tf.ones_like(y_true[:, :, 0])
+            )
         elif not is_classification_only:
             prediction_targets, prediction_out, y_true_exp, y_pred_exp = prediction_mode_branch()
-            if (len(y_true.shape) == 3) and (y_true.shape[-1] > 9 ):
-                sample_weight = y_true[:, :, 9]
-            else:
-                sample_weight = tf.ones_like(y_true[:, :, 0])
+            sample_weight = tf.cond(
+                tf.greater(tf.shape(y_true)[-1], 9),
+                lambda: y_true[:, :, 9],
+                lambda: tf.ones_like(y_true[:, :, 0])
+            )
         else:
             prediction_targets, prediction_out, y_true_exp, y_pred_exp = classification_mode_branch()
-            if (len(y_true.shape) == 3) and (y_true.shape[-1] > 1 ):
-                sample_weight = y_true[:, :, 1]
-            else:
-                sample_weight = tf.ones_like(y_true[:, :, 0])
+            sample_weight = tf.cond(
+                tf.greater(tf.shape(y_true)[-1], 1),
+                lambda: y_true[:, :, 1],
+                lambda: tf.ones_like(y_true[:, :, 0])
+            )
 
             # if is_cad:
             #     print('Using CAD mode and downsampling labels')
@@ -2189,67 +2218,87 @@ def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None
         return total_loss
 
     return loss_fn
-
-class UpsampleAndCombineRepeat(tf.keras.layers.Layer):
-    """Layer that upsamples tensors using tf.repeat and combines them."""
+# class UpsampleAndCombineRepeat(tf.keras.layers.Layer):
+#     """Layer that upsamples tensors using tf.repeat and combines them."""
     
-    def __init__(self, name_prefix, **kwargs):
-        super().__init__(**kwargs)
-        self.name_prefix = name_prefix
+#     def __init__(self, name_prefix, **kwargs):
+#         super().__init__(**kwargs)
+#         self.name_prefix = name_prefix
 
-    def call(self, inputs):
-        tensor_list, target_length = inputs
-        upsampled_tensors = []
+#     @tf.function
+#     def call(self, inputs):
+#         tensor_list, target_length = inputs
         
-        for i, tensor in enumerate(tensor_list):
-            current_length = tf.shape(tensor)[1]
-            # Calculate repeats needed (use ceil to ensure coverage)
-            repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
-            repeated_tensor = tf.repeat(tensor, repeats=repeats, axis=1, 
-                                      name=f'{self.name_prefix}_repeat_{i}')
-            # Trim to exact target length
-            upsampled_tensors.append(repeated_tensor[:, :target_length, :])
+#         # Get dimensions
+#         N = len(tensor_list)  # Number of tensors
+#         B = tf.shape(tensor_list[0])[0]  # Batch size
+#         D = tf.shape(tensor_list[0])[2]  # Feature dimension
+        
+#         def repeat_tensor(tensor):
+#             current_length = tf.shape(tensor)[1]
+#             repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
+#             repeated = tf.repeat(tensor, repeats=repeats, axis=1)
+#             return repeated[:, :target_length, :]
+        
+#         # Process all tensors in parallel
+#         repeated_tensors = tf.map_fn(
+#             repeat_tensor,
+#             stacked_inputs,
+#             fn_output_signature=tf.TensorSpec(shape=(None, None, D), dtype=tensor_list[0].dtype)
+#         )
+        
+#         # # Transpose and reshape to get final shape [B, target_length, N*D]
+#         # transposed = tf.transpose(repeated_tensors, [1, 2, 0, 3])  # [B, target_length, N, D]
+#         # final_shape = [B, target_length, N*D]
+#         # reshaped = tf.reshape(transposed, final_shape)
+#         # Convert tensor list to a stacked tensor for batch processing
+#         # stacked_inputs = tf.stack(tensor_list, axis=0)  # [N, B, L, D]
+#         return repeated_tensors
 
-        # Stack along a new dimension (axis=0) and average
-        stacked_upsampled = tf.concat(upsampled_tensors, axis=2)  
-        # combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0, 
-                                    #    name=f'{self.name_prefix}_combined')
-        return stacked_upsampled
-
-class UpsampleAndCombineTile(tf.keras.layers.Layer):
-    """Layer that upsamples tensors using tf.tile and combines them."""
+# class UpsampleAndCombineTile(tf.keras.layers.Layer):
+#     """Layer that upsamples tensors using tf.tile and combines them."""
     
-    def __init__(self, name_prefix, **kwargs):
-        super().__init__(**kwargs)
-        self.name_prefix = name_prefix
+#     def __init__(self, name_prefix, **kwargs):
+#         super().__init__(**kwargs)
+#         self.name_prefix = name_prefix
 
-    def call(self, inputs):
-        tensor_list, target_length = inputs
-        upsampled_tensors = []
+#     @tf.function
+#     def call(self, inputs):
+#         tensor_list, target_length = inputs
         
-        for i, tensor in enumerate(tensor_list):
-            current_length = tf.shape(tensor)[1]
-            # Calculate repeats needed (use ceil to ensure coverage)
-            repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
-            B = tf.shape(tensor)[0]
-            D = tf.shape(tensor)[2]
-
-            # Reshape [B, L, D] -> [B, L, 1, D]
-            reshaped = tf.reshape(tensor, [B, current_length, 1, D])
-            # Tile along the new dimension: [B, L, repeats, D]
-            tiled = tf.tile(reshaped, [1, 1, repeats, 1], 
-                           name=f'{self.name_prefix}_tile_{i}')
-            # Reshape back: [B, L * repeats, D]
-            final_shape = [B, current_length * repeats, D]
-            tiled_tensor = tf.reshape(tiled, final_shape)
-            # Trim to exact target length
-            upsampled_tensors.append(tiled_tensor[:, :target_length, :])
-
-        # Stack along a new dimension (axis=0) and average
-        stacked_upsampled = tf.concat(upsampled_tensors, axis=2)
-        # combined_tensor = tf.reduce_mean(stacked_upsampled, axis=0,
-        #                                name=f'{self.name_prefix}_combined')
-        return stacked_upsampled
+#         # Get dimensions
+#         N = len(tensor_list)  # Number of tensors
+#         B = tf.shape(tensor_list[0])[0]  # Batch size
+#         D = tf.shape(tensor_list[0])[2]  # Feature dimension
+        
+#         # # Convert tensor list to a stacked tensor for batch processing
+#         # stacked_inputs = tf.stack(tensor_list, axis=0)  # [N, B, L, D]
+        
+#         def tile_tensor(tensor):
+#             current_length = tf.shape(tensor)[1]
+#             repeats = tf.cast(tf.math.ceil(target_length / current_length), tf.int32)
+            
+#             # Reshape and tile
+#             reshaped = tf.reshape(tensor, [B, current_length, 1, D])
+#             tiled = tf.tile(reshaped, [1, 1, repeats, 1])
+            
+#             # Reshape back and trim
+#             tiled_flat = tf.reshape(tiled, [B, current_length * repeats, D])
+#             return tiled_flat[:, :target_length, :]
+        
+#         # Process all tensors in parallel
+#         tiled_tensors = tf.map_fn(
+#             tile_tensor,
+#             stacked_inputs,
+#             fn_output_signature=tf.TensorSpec(shape=(None, None, D), dtype=tensor_list[0].dtype)
+#         )
+        
+#         # # Transpose and reshape to get final shape [B, target_length, N*D]
+#         # transposed = tf.transpose(tiled_tensors, [1, 2, 0, 3])  # [B, target_length, N, D]
+#         # final_shape = [B, target_length, N*D]
+#         # reshaped = tf.reshape(transposed, final_shape)
+        
+#         return tiled_tensors#reshaped
     
 def combined_mse_fbfce_loss(params):
     def loss(y_true, y_pred):
