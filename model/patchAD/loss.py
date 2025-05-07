@@ -72,53 +72,27 @@ def tf_normalize_tensor(tensor, epsilon=1e-7):
 
 def tf_anomaly_score(dist_list_1, dist_list_2, win_size, training=True, temp=1.0, w_de=True, epsilon=1e-7):
     """
-    TensorFlow equivalent of anomaly_score.
-    Processes lists of distributions/mixers.
+    Graph-compatible (eager-less) version.
     """
-    total_loss_1 = tf.constant(0.0, dtype=tf.float32)
-    # total_loss_2 = tf.constant(0.0, dtype=tf.float32)
-    num_items = len(dist_list_1)
+    # Stack lists to tensors if needed
+    dist_list_1 = tf.stack(dist_list_1)
+    dist_list_2 = tf.stack(dist_list_2)
+    num_items = tf.shape(dist_list_1)[0]
 
-    if num_items == 0 or num_items != len(dist_list_2):
-        tf.print("Warning: tf_anomaly_score received empty or mismatched lists.")
-        return tf.constant(0.0, dtype=tf.float32), tf.constant(0.0, dtype=tf.float32)
+    def compute_loss(inputs):
+        dist_1, dist_2 = inputs
+        # dist_1_norm = tf_normalize_tensor(dist_1, epsilon)
+        # dist_2_norm = tf_normalize_tensor(dist_2, epsilon)
+        # tf.print("dist_1_norm:", dist_1_norm)
+        # tf.print("dist_2_norm:", dist_2_norm)
+        tf.print("dist_1_norm:", dist_1)
+        tf.print("dist_2_norm:", dist_2)
+        
+        # softmax normalization
+        
+        loss_1, loss_2 = tf_inter_intra_dist(dist_1, dist_2, w_de, training, temp, epsilon)
+        return loss_1 - loss_2
 
-    for i in range(num_items):
-        dist_1 = dist_list_1[i] # Shape e.g., [B, N, D] or [B, P, D]
-        dist_2 = dist_list_2[i] # Shape e.g., [B, P, D] or [B, N, D]
-
-        # --- Upsampling / Repeat logic ---
-        # This needs to match the PyTorch 'repeat' logic based on expected shapes.
-        # Assuming dist_1/dist_2 have shape [B, current_len, D] and need to be tiled to win_size.
-        shape1 = tf.shape(dist_1)
-        shape2 = tf.shape(dist_2)
-        current_len1 = shape1[1]
-        current_len2 = shape2[1]
-
-        # --- Normalization (like PyTorch normalize_tensor) ---
-        # Applied *after* repeat, matching PyTorch logic.
-        # This assumes the inputs dist_1/dist_2 were already probability-like.
-        dist_1_norm = tf_normalize_tensor(dist_1, epsilon)
-        dist_2_norm = tf_normalize_tensor(dist_2, epsilon)
-
-        # --- Calculate Loss ---
-        loss_1, loss_2 = tf_inter_intra_dist(dist_1_norm, dist_2_norm, w_de, training, temp, epsilon)
-
-        # pdb.set_trace()  # Debugging point to check values
-        total_loss_1 += loss_1-loss_2
-        # total_loss_2 += loss_2
-
-    # Average loss over the number of items in the list? PyTorch divides patch_num_loss by len().
-    # Let's return the sums for now, averaging can happen in the main loss function.
-    # Or average here if PyTorch logic implies it for the combined score.
-    # PyTorch example divides patch_num_loss/patch_size_loss by len() *before* subtraction.
-    if num_items > 0:
-        avg_loss_1 = total_loss_1 / tf.cast(num_items, tf.float32)
-        # avg_loss_2 = total_loss_2 / tf.cast(num_items, tf.float32)
-    else:
-        avg_loss_1 = tf.constant(0.0, dtype=tf.float32)
-        # avg_loss_2 = tf.constant(0.0, dtype=tf.float32)
-
-
-    return avg_loss_1#, avg_loss_2 # Return averaged losses
-
+    losses = tf.map_fn(compute_loss, (dist_list_1, dist_list_2), dtype=tf.float32)
+    avg_loss_1 = tf.reduce_mean(losses)
+    return avg_loss_1

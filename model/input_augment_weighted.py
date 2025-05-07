@@ -826,12 +826,20 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
             
         # Concatenate train_x and train_y per batch
         test_c = tf.data.Dataset.zip((test_xy, test_y))
-        train_c = tf.data.Dataset.zip((train_xy, train_y, train_w))
+        if params['TYPE_ARCH'].find('Patch')>-1:
+            train_c = tf.data.Dataset.zip((train_xy, train_y))
 
-        @tf.autograph.experimental.do_not_convert
-        def concat_lfps_labels_weights(lfps, labels, weights):
-            return tf.concat([lfps, labels, weights], axis=-1)  # Concatenate along the last axis (channels)ZZ
-        train_d = train_c.map(lambda x, y, z: concat_lfps_labels_weights(x, y, z))
+            @tf.autograph.experimental.do_not_convert
+            def concat_lfps_labels_patch(lfps, labels):
+                return tf.concat([lfps, labels], axis=-1)  # Concatenate along the last axis (channels)ZZ
+            train_d = train_c.map(lambda x, y: concat_lfps_labels_patch(x, y))            
+        else:
+            train_c = tf.data.Dataset.zip((train_xy, train_y, train_w))
+
+            @tf.autograph.experimental.do_not_convert
+            def concat_lfps_labels_weights(lfps, labels, weights):
+                return tf.concat([lfps, labels, weights], axis=-1)  # Concatenate along the last axis (channels)ZZ
+            train_d = train_c.map(lambda x, y, z: concat_lfps_labels_weights(x, y, z))
 
         @tf.autograph.experimental.do_not_convert
         def concat_lfps_labels(lfps, labels):

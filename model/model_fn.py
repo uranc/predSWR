@@ -2009,9 +2009,12 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
             # Assumes d_model and proj_dim are correctly retrieved from params or scope
             # Example: d_model = params.get('D_MODEL', 32) # Make sure D_MODEL is in params
             # Example: proj_dim = params.get('PROJ_DIM', d_model) # Often same as d_model
-            d_model = params.get('NO_FILTERS', 32) # Assuming d_model is NO_FILTERS for now, adjust if needed
+            input_channels = params['input_channels']
+            d_model = params['NO_FILTERS']
+            n_patch = params['NO_DILATIONS']
+            n_layer = params['NO_KERNELS']
             proj_dim = d_model # Assuming proj_dim is d_model
-
+            
             # LFP Reconstruction part
             if horizon == 0:
                 prediction_targets = y_true[:, :, :8]  # LFP targets (8 channels)
@@ -2024,25 +2027,39 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
             y_true_exp = tf.expand_dims(y_true[:, :, 8], axis=-1)  # True probability at index 8
             y_pred_exp = tf.expand_dims(y_pred[:, :, 8], axis=-1)  # Predicted probability at index 8
 
-            # PatchAD features/projections part - Slicing based on concatenation order
-            start_idx = 9 # Index after recons (8) and class (1)
+            current_idx = 9  # Start index for additional features
+            # Split tensor into n_layer*n_patch tensors of d_model dimension
+            num_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+            num_dists = []
+            for i in range(n_layer*n_patch):
+                start_idx = i * d_model
+                end_idx = (i + 1) * d_model
+                num_dists.append(num_dists_full[:, :, start_idx:end_idx])
+            current_idx += d_model*n_layer*n_patch
+            
+            size_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch] 
+            size_dists = []
+            for i in range(n_layer*n_patch):
+                start_idx = i * d_model
+                end_idx = (i + 1) * d_model
+                size_dists.append(size_dists_full[:, :, start_idx:end_idx])
+            current_idx += d_model*n_layer*n_patch
+            
+            num_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+            num_mx = []
+            for i in range(n_layer*n_patch):
+                start_idx = i * d_model
+                end_idx = (i + 1) * d_model
+                num_mx.append(num_mx_full[:, :, start_idx:end_idx])
+            current_idx += d_model*n_layer*n_patch
 
-            # Extract proj_inter and proj_intra (from concat_proj)
-            proj_inter = y_pred[:, :, start_idx : start_idx + proj_dim]
-            start_idx += proj_dim
-            proj_intra = y_pred[:, :, start_idx : start_idx + proj_dim]
-            start_idx += proj_dim
-
-            # Extract final_features_inter (x_inter) and final_features_intra (x_intra) (from concat_feats)
-            x_inter = y_pred[:, :, start_idx : start_idx + d_model]
-            start_idx += d_model
-            x_intra = y_pred[:, :, start_idx : start_idx + d_model] # Or use start_idx:] if it's the last part
-
-            # Ensure shapes match expectations for patch_loss
-            # tf.print("Shapes - proj_inter:", tf.shape(proj_inter), "proj_intra:", tf.shape(proj_intra),
-            #          "x_inter:", tf.shape(x_inter), "x_intra:", tf.shape(x_intra))
-
-            return prediction_targets, prediction_out, y_true_exp, y_pred_exp, proj_inter, proj_intra, x_inter, x_intra
+            size_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+            size_mx = []
+            for i in range(n_layer*n_patch):
+                start_idx = i * d_model
+                end_idx = (i + 1) * d_model
+                size_mx.append(size_mx_full[:, :, start_idx:end_idx])
+            return prediction_targets, prediction_out, y_true_exp, y_pred_exp, num_dists, size_dists, num_mx, size_mx
 
         def classification_mode_branch():
             # For classification-only mode (1 or 2 channels)
@@ -2062,12 +2079,8 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
 
         # print('Using classification only:', is_classification_only)
         if is_patch:
-            prediction_targets, prediction_out, y_true_exp, y_pred_exp, proj_inter, proj_intra, x_inter, x_intra = patch_mode_branch()
-            sample_weight = tf.cond(
-            tf.greater(tf.shape(y_true)[-1], 9),
-            lambda: y_true[:, :, 9],
-            lambda: tf.ones_like(y_true[:, :, 0])
-            )
+            prediction_targets, prediction_out, y_true_exp, y_pred_exp, num_dists, size_dists, num_mx, size_mx = patch_mode_branch()
+            sample_weight =  tf.ones_like(y_true[:, :, 0])
         elif not is_classification_only:
             prediction_targets, prediction_out, y_true_exp, y_pred_exp = prediction_mode_branch()
             sample_weight = tf.cond(
@@ -2113,8 +2126,38 @@ def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None
         #                              params, model, prediction_targets, prediction_out, this_op)
 
         # if is_patch:
-        #     from model.patchAD.loss import patch_loss
-        #     total_loss += loss_weight*patch_loss(prediction_targets, prediction_out, proj_inter, proj_intra, x_inter, x_intra)
+        #     from model.patchAD.loss import tf_anomaly_score
+        #     # total_loss += loss_weight*patch_loss(prediction_targets, prediction_out, proj_inter, proj_intra, x_inter, x_intra)
+            
+  
+        #     loss_cont = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+        #         num_dists, size_dists,
+        #         params['seq_length'],
+        #         True,
+        #         params.get('patch_ad_temp', 1.0)
+        #     ))
+
+        #     # Calculate patch loss
+        #     Np_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+        #         num_mx, size_dists,
+        #         params['seq_length'],
+        #         True,
+        #         params.get('patch_ad_temp', 1.0)
+        #     ))
+
+        #     Pp_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+        #         num_dists, size_mx,
+        #         params['seq_length'],
+        #         True,
+        #         params.get('patch_ad_temp', 1.0)
+        #     ))
+
+        #     loss_proj = Np_proj + Pp_proj
+        #     # Ensure patch_loss is a scalar tensor
+        #     proj_weight = params.get('patch_ad_proj', 0.2)
+        #     patch_loss = (1-proj_weight)*tf.reduce_mean(loss_cont)+proj_weight*tf.reduce_mean(loss_proj)            
+        #     weight_patch = tf.cast(params.get('WEIGHT_Patch', 1.0), dtype=tf.float32)
+        #     total_loss += weight_patch * patch_loss
         # elif not is_classification_only:
         if not is_classification_only:
             mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out))
