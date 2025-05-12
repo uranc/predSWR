@@ -112,7 +112,7 @@ def objective_patch(trial):
     params['NO_KERNELS'] = trial.suggest_int('NO_KERNELS', 1, 3) # for kernels 2,3,4,5,6
     params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 1, 3)
     params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
-    
+
     ax = 25
     gx = 150
     # ax = trial.suggest_int('AX', 25, 75, step=25)
@@ -202,7 +202,7 @@ def objective_patch(trial):
     else:
         train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
     print(params)
-    
+
     # import matplotlib.pyplot as plt
     # for ib in range(200):
     #     aa = next(iter(train_dataset))
@@ -214,7 +214,7 @@ def objective_patch(trial):
     #         plt.ylim(-3,3)
     #     plt.show()
     # pdb.set_trace()
-    
+
     patch_lib = [64,32,16,4,2]
     patches = []
     for ii in range(params['NO_DILATIONS']):
@@ -223,13 +223,13 @@ def objective_patch(trial):
     params['seq_length'] = params["NO_TIMEPOINTS"]*2 # Or however seq_length is determined
     params['input_channels'] = params["NO_CHANNELS"] # Or however input_channels is determined
     params['patch_sizes'] = patches # Or however patch_size is determined
-    
+
     model = build_DBI_TCN(params=params) # Pass only the params dictionary
-    # model = build_DBI_TCN(params["NO_TIMEPOINTS"], 
-    #                     input_chans=8, 
-    #                     patch_sizes=patches, 
-    #                     d_model=params['NO_FILTERS'], 
-    #                     num_layers=params['NO_KERNELS'], 
+    # model = build_DBI_TCN(params["NO_TIMEPOINTS"],
+    #                     input_chans=8,
+    #                     patch_sizes=patches,
+    #                     d_model=params['NO_FILTERS'],
+    #                     num_layers=params['NO_KERNELS'],
     #                     params=params)
     model.summary()
     from model.training import TerminateOnNaN
@@ -309,6 +309,7 @@ def objective_triplet(trial):
     tf.compat.v1.reset_default_graph()
     if tf.config.list_physical_devices('GPU'):
         tf.keras.backend.clear_session()
+    tf.config.run_functions_eagerly(False)
 
     # Start with base parameters
     params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
@@ -320,12 +321,12 @@ def objective_triplet(trial):
 
     # Dynamic learning rate range
     # learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-1, log=True)
-    learning_rate = 1e-3
+    learning_rate = 3e-3
     params['LEARNING_RATE'] = learning_rate
 
     # Optional batch size tuning
     # batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
-    batch_size = 64
+    batch_size = 128
     params['BATCH_SIZE'] = batch_size
     # ...rest of existing objective function code...
 
@@ -367,29 +368,30 @@ def objective_triplet(trial):
         from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
 
         # Set a reasonable steps_per_epoch value - much smaller than 1500 for initial testing
-        params['steps_per_epoch'] = 1200  # Increase gradually if training works
+        # params['steps_per_epoch'] = 1200  # Increase gradually if training works
 
         # Add debug lines
-        print("Setting up triplet dataset with steps_per_epoch:", params['steps_per_epoch'])
-        print("Batch size:", params['BATCH_SIZE'])
+        # print("Setting up triplet dataset with steps_per_epoch:", params['steps_per_epoch'])
+        # print("Batch size:", params['BATCH_SIZE'])
 
     # pdb.set_trace()
     # Timing parameters remain the same
     # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
-    params['NO_TIMEPOINTS'] = 128
+    params['NO_TIMEPOINTS'] = 92
     params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
 
     # Timing parameters remain the same
     params['HORIZON_MS'] = 1#trial.suggest_int('HORIZON_MS', 1, 5)
     params['SHIFT_MS'] = 0
 
-    params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.000001, 10.0, log=True)
-
+    params['LOSS_TupMPN'] = trial.suggest_float('LOSS_TupMPN', 0.0001, 1000.0, log=True)
+    params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 0.0001, 1000.0, log=True)
+    params['LOSS_WEIGHT'] = 2.0#trial.suggest_float('LOSS_WEIGHT', 0.000001, 100.0, log=True)
     params['LOSS_NEGATIVES'] = trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
 
-    ax = trial.suggest_int('AX', 1, 99)
-    gx = trial.suggest_int('GX', 50, 999)
+    ax = 25#trial.suggest_int('AX', 1, 99)
+    gx = trial.suggest_int('GX', 150, 400, step=100)
 
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     # params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
@@ -414,6 +416,8 @@ def objective_triplet(trial):
         dil_lib = [4,3,2,2,2]           # for kernels 2,3,4,5,6
     elif params['NO_TIMEPOINTS'] == 64:
         dil_lib = [5,4,3,3,3]           # for kernels 2,3,4,5,6
+    elif params['NO_TIMEPOINTS'] == 92:
+        dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]        
     elif params['NO_TIMEPOINTS'] == 128:
         dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]
     elif params['NO_TIMEPOINTS'] == 196:
@@ -443,7 +447,11 @@ def objective_triplet(trial):
     par_opt = 'Adam'
     # par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
 
-    params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}")
+    reg_lib = ['LOne', 'LTwo', 'None']
+    par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
+
+
+    params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
     # Build architecture string with timing parameters (adjust format)
     arch_str = (f"{params['TYPE_ARCH']}"  # Take first 4 chars: Hori/Dori/Cori
                 f"{int(params['HORIZON_MS']):02d}")
@@ -451,9 +459,9 @@ def objective_triplet(trial):
     params['TYPE_ARCH'] = arch_str
 
     # Use multiple binary flags for a combinatorial categorical parameter
-    params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
-    if params['USE_ZNorm']:
-        params['TYPE_ARCH'] += 'ZNorm'
+    # params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
+    # if params['USE_ZNorm']:
+    #     params['TYPE_ARCH'] += 'ZNorm'
     # params['USE_L2N'] = trial.suggest_categorical('USE_L2N', [True, False])
     # if params['USE_L2N']:
     params['TYPE_ARCH'] += 'L2N'
@@ -481,7 +489,7 @@ def objective_triplet(trial):
     #     params['TYPE_LOSS'] += 'L2Reg'
 
     drop_lib = [0, 5, 10, 20, 50, 80]
-    drop_ind = 0#trial.suggest_categorical('Dropout', [0,1,2,3,4, 5])
+    drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3,4, 5])
     print('Dropout rate:', drop_lib[drop_ind])
     if drop_ind > 0:
         params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
@@ -527,7 +535,7 @@ def objective_triplet(trial):
         train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='muax', preprocess=preproc)
     else:
         if 'TripletOnly' in params['TYPE_ARCH']:
-            params['steps_per_epoch'] = 1200
+            params['steps_per_epoch'] = 1000
             train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True)
         else:
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
@@ -538,6 +546,7 @@ def objective_triplet(trial):
     # if params['TYPE_MODEL'] == 'SingleCh':
     #     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params, input_chans=1)
     # else:
+    # pdb.set_trace()
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     # Early stopping with tunable patience
 
@@ -545,7 +554,7 @@ def objective_triplet(trial):
     best_metric = float('-inf')
     best_metric2 = float('-inf')
     best_metric3 = float('inf')
-    patience = 50
+    patience = 30
     min_delta = 0.0001
     patience_counter = 0
 
@@ -558,7 +567,7 @@ def objective_triplet(trial):
                                       write_images=True,
                                       update_freq='epoch'),
         cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
-                            monitor='val_max_f1_metric_horizon',
+                            monitor='val_f1',
                             verbose=1,
                             save_best_only=True,
                             save_weights_only=True,
@@ -572,7 +581,7 @@ def objective_triplet(trial):
                             # mode='max'),
                             cb.ModelCheckpoint(
                             f"{study_dir}/event.weights.h5",
-                            monitor='val_event_f1_metric',  # Change monitor
+                            monitor='val_event_f1',  # Change monitor
                             verbose=1,
                             save_best_only=True,
                             save_weights_only=True,
@@ -591,7 +600,7 @@ def objective_triplet(trial):
                 regenerating_dataset.reinitialize()
             train_data = regenerating_dataset.dataset if hasattr(regenerating_dataset, 'dataset') else regenerating_dataset
 
-            steps = dataset_params.get('steps_per_epoch', 500)
+            steps = 1000 #dataset_params.get('steps_per_epoch', 500)
             # pdb.set_trace()
             epoch_history = model.fit(train_data,
                 steps_per_epoch=steps,
@@ -606,8 +615,8 @@ def objective_triplet(trial):
         history_list.append(epoch_history.history)
 
         # Early stopping check after each epoch
-        current_metric = epoch_history.history.get('val_max_f1_metric_horizon', [float('-inf')])[0]
-        current_metric2 = epoch_history.history.get('val_event_f1_metric', [float('-inf')])[0]
+        current_metric = epoch_history.history.get('val_f1', [float('-inf')])[0]
+        current_metric2 = epoch_history.history.get('val_event_f1', [float('-inf')])[0]
         current_metric3 = epoch_history.history.get('val_event_fp_rate', [float('inf')])[0]
 
         if (current_metric > (best_metric + min_delta)) or (current_metric2 > (best_metric2 + min_delta)) or (current_metric3 < (best_metric3 - min_delta)):
@@ -641,7 +650,7 @@ def objective_triplet(trial):
     #             max(combined_history['val_max_f1_metric_horizon'])) / 2
     # final_f1 = max(combined_history['val_event_f1_metric'])
     # final_latency = np.mean(combined_history['val_latency_metric'])
-    final_f1 = np.mean(combined_history['val_event_f1_metric'])
+    final_f1 = np.mean(combined_history['val_event_f1'])
     final_fp_penalty = np.mean(combined_history['val_event_fp_rate'])  # Or your new FP-aware metric
 
     trial_info = {
@@ -710,7 +719,7 @@ def objective_only_30k(trial):
         from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
     elif 'CADOnly' in params['TYPE_ARCH']:
             from model.input_augment_weighted import rippleAI_load_dataset
-            from model.model_fn import build_DBI_TCN_CADMixerOnly as build_DBI_TCN        
+            from model.model_fn import build_DBI_TCN_CADMixerOnly as build_DBI_TCN
             pretrain_tag = 'params_mixerOnlyEvents2500'
             pretrain_num = 1414#958# 1414
             study_dir = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{pretrain_tag}/study_{pretrain_num}_*')
@@ -1135,18 +1144,18 @@ if mode == 'train':
     else:
         from model.model_fn import build_DBI_TCN
         from model.input_aug import rippleAI_load_dataset
-    
+
     # input
     if 'Patch' in model_name:
         # tf.config.run_functions_eagerly(True)
-        # model = build_DBI_TCN(params["NO_TIMEPOINTS"], 
-        #                       input_chans=8, 
-        #                       patch_sizes=[64,32],#params['NO_DILATIONS'], 
-        #                       d_model=params['NO_FILTERS'], 
-        #                       num_layers=params['NO_KERNELS'], 
+        # model = build_DBI_TCN(params["NO_TIMEPOINTS"],
+        #                       input_chans=8,
+        #                       patch_sizes=[64,32],#params['NO_DILATIONS'],
+        #                       d_model=params['NO_FILTERS'],
+        #                       num_layers=params['NO_KERNELS'],
         #                       params=params)
         model = build_DBI_TCN(params)
-        
+
     elif 'CADOnly' in model_name:
         pretrain_tag = 'params_mixerOnlyEvents2500'
         pretrain_num = 1414#958
@@ -1193,7 +1202,7 @@ if mode == 'train':
         model_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(model_module)
         build_DBI_TCN_Pretrained = model_module.build_DBI_TCN_MixerOnly
-        
+
         pretrained_tcn = build_DBI_TCN_Pretrained(pretrained_params["NO_TIMEPOINTS"], params=pretrained_params)
         pretrained_tcn.load_weights(weight_file)
         pretrained_tcn.trainable = False
@@ -1329,12 +1338,17 @@ elif mode == 'predict':
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
         elif 'TripletOnly' in params['TYPE_ARCH']:
-            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
-            model_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(model_module)
-            build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+            from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            # import importlib.util
+            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            # model_module = importlib.util.module_from_spec(spec)
+            # spec.loader.exec_module(model_module)
+            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+        elif 'Patch' in params['TYPE_ARCH']:
+            tf.config.run_functions_eagerly(True)
+            from model.input_augment_weighted import rippleAI_load_dataset
+            from model.model_fn import build_DBI_Patch as build_DBI_TCN
+
         elif 'CADOnly' in params['TYPE_ARCH']:
             pretrain_tag = 'params_mixerOnlyEvents2500'
             pretrain_num = 1414#958
@@ -1376,19 +1390,19 @@ elif mode == 'predict':
 
             pretrained_params["WEIGHT_FILE"] = weight_file
 
+            # load pretrained model
             import importlib.util
             spec = importlib.util.spec_from_file_location("model_fn", f"{pretrained_dir}/model/model_fn.py")
             model_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(model_module)
             build_DBI_TCN_Pretrained = model_module.build_DBI_TCN_MixerOnly
-            
             pretrained_tcn = build_DBI_TCN_Pretrained(pretrained_params["NO_TIMEPOINTS"], params=pretrained_params)
             pretrained_tcn.load_weights(weight_file)
             pretrained_tcn.trainable = False
             pretrained_tcn.compile(optimizer='adam', loss='mse')
             from model.model_fn import build_DBI_TCN_CADMixerOnly as build_DBI_TCN
-            
-            
+
+
         from model.model_fn import CSDLayer
         from tcn import TCN
         from tensorflow.keras.models import load_model
@@ -1406,6 +1420,8 @@ elif mode == 'predict':
         print(f"Loading weights from: {weight_file}")
         if 'CADOnly' in params['TYPE_ARCH']:
             model = build_DBI_TCN(pretrained_params["NO_TIMEPOINTS"], params=params, pretrained_tcn=pretrained_tcn)
+        elif 'Patch' in params['TYPE_ARCH']:
+            model = build_DBI_TCN(params=params) # Pass only the params dictionary
         else:
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         model.load_weights(weight_file)
@@ -1506,9 +1522,11 @@ elif mode == 'predict':
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
 
-    # params['BATCH_SIZE'] = 512*2
-    params["BATCH_SIZE"] = 1024*16
-            
+    # inference parameters
+    squence_stride = 1
+    params['BATCH_SIZE'] = 512*2
+    # params["BATCH_SIZE"] = 1024*16
+
     # from model.input_augment_weighted import rippleAI_load_dataset
     import importlib.util
     spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/input_augment_weighted.py")
@@ -1567,7 +1585,11 @@ elif mode == 'predict':
         probs = np.hstack((np.zeros((15, 1)).flatten(), windowed_signal))
     else:
         sample_length = params['NO_TIMEPOINTS']
-        train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
+        if 'Patch' in params['TYPE_ARCH']:
+            sample_length = params['seq_length']
+            params['BATCH_SIZE'] = 512
+            squence_stride = 1
+        train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=squence_stride, batch_size=params["BATCH_SIZE"])
         windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
         # different outputs
         if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
@@ -1580,6 +1602,10 @@ elif mode == 'predict':
         elif  model_name.startswith('Tune') != -1:
             if 'Only' in params['TYPE_ARCH']:
                 probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
+            elif 'Patch' in params['TYPE_ARCH']:
+                # pdb.set_trace()
+                probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal[:,-1]))
+                horizon = np.vstack((np.zeros((sample_length-1, 8)), windowed_signal[:, :-1]))
             else:
                 probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal[:,-1]))
                 horizon = np.vstack((np.zeros((sample_length-1, 8)), windowed_signal[:, :-1]))
@@ -2378,7 +2404,8 @@ elif mode == 'tune_worker':
     # )
     # Optimize for 1000 trials
     if 'TripletOnly'.lower() in tag.lower():
-        from model.study_objectives import objective_triplet as objective
+        # from model.study_objectives import objective_triplet as objective
+        objective = objective_triplet
     elif 'MixerOnly'.lower() in tag.lower():
         from model.study_objectives import objective_only as objective
     elif 'CADOnly'.lower() in tag.lower():
@@ -2388,8 +2415,8 @@ elif mode == 'tune_worker':
         # from model.study_objectives import objective_patch as objective
         objective = objective_patch
     else:
-        from model.study_objectives import objective_only as objective        
-        
+        from model.study_objectives import objective_only as objective
+
     study.optimize(
         objective,
         n_trials=1000,
@@ -2440,7 +2467,7 @@ elif mode == 'tune_viz':
     print(json.dumps(stats, indent=2))
 
     # Top N trials analysis
-    N = 30
+    N = 80
     trials = study.trials
     sorted_trials = sorted(trials, key=lambda t: t.value if t.value is not None else float('-inf'), reverse=True)
     top_trials = sorted_trials[:N]

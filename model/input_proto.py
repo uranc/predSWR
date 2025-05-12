@@ -337,7 +337,7 @@ def sample_triplets_for_batch(data, labels, window_size=256, min_negative_distan
     anchors = []
     positives = []
     
-    n_samples_per_event = 100  # Increased samples per event
+    n_samples_per_event = 200  # Increased samples per event
     
     # Generate windows for each event
     for idx, (start, end) in enumerate(events):
@@ -392,7 +392,7 @@ def sample_triplets_for_batch(data, labels, window_size=256, min_negative_distan
         print("Warning: No potential negative samples found.")
         return None, None, None
         
-    n_desired_negatives = len(anchors) * 10
+    n_desired_negatives = len(anchors) * 50
     if len(potential_negative_starts) > n_desired_negatives:
         negative_starts = np.random.choice(potential_negative_starts, n_desired_negatives, replace=False)
     else:
@@ -421,7 +421,8 @@ def sample_triplets_for_batch(data, labels, window_size=256, min_negative_distan
     positive_samples = np.zeros_like(anchor_samples)
     negative_samples = np.zeros_like(anchor_samples)
     
-    anchor_labels = np.zeros((batch_size, window_size, 1), dtype=np.float32)
+    n_output = 1
+    anchor_labels = np.zeros((batch_size, n_output, 1), dtype=np.float32)
     positive_labels = np.zeros_like(anchor_labels)
     negative_labels = np.zeros_like(anchor_labels)
 
@@ -434,9 +435,9 @@ def sample_triplets_for_batch(data, labels, window_size=256, min_negative_distan
         positive_samples[i] = data[p_start:p_end]
         negative_samples[i] = data[n_start:n_end]
 
-        anchor_labels[i, :, 0] = labels[a_start:a_end]
-        positive_labels[i, :, 0] = labels[p_start:p_end]
-        negative_labels[i, :, 0] = labels[n_start:n_end]
+        anchor_labels[i, :, 0] = np.max(labels[a_start:a_end])
+        positive_labels[i, :, 0] = np.max(labels[p_start:p_end])
+        negative_labels[i, :, 0] = np.max(labels[n_start:n_end])
 
     return ((anchor_samples, positive_samples, negative_samples),
             (anchor_labels, positive_labels, negative_labels))

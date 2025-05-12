@@ -44,6 +44,31 @@ class TerminateOnNaN(cb.Callback):
                 print(f"\nEpoch {epoch+1}: Invalid loss detected (NaN or Inf). Terminating training.")
                 self.model.stop_training = True
                 
+# Custom callback for updating prototypes
+# based on the grid sampling
+class GridEMA(tf.keras.callbacks.Callback):
+    def __init__(self, model, sampler, alpha=0.98,
+                 warmup=3, min_count=20):
+        super().__init__()
+        self.m   = model
+        self.sampler = sampler     # returns (z_sub, bin_id) 5 k points
+        self.alpha   = alpha
+        self.warmup  = warmup
+        self.min_cnt = min_count
+
+    def on_epoch_end(self, epoch, logs=None):
+        if epoch < self.warmup: return
+        z_sub, bid = self.sampler(self.model.encoder)        # [5k,D], [5k]
+        K = self.m.prototypes.shape[0]
+        centroid = tf.math.unsorted_segment_mean(z_sub, bid, K)
+        counts   = tf.math.unsorted_segment_sum(
+                        tf.ones_like(bid, tf.float32), bid, K)
+        mask = (counts[:,None] >= self.min_cnt)
+        new  = (self.alpha * self.m.prototypes +
+                (1.-self.alpha) * tf.where(mask, centroid,
+                                            self.m.prototypes))
+        self.m.prototypes.assign(new)
+                        
 # Custom callback for weight decay
 class WeightDecayCallback(cb.Callback):
     def __init__(self, max_epochs=100):
