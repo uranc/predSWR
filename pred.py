@@ -123,7 +123,6 @@ def objective_patch(trial):
     params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}Entropy'.format(ax, gx)
 
     # Remove the hardcoded use_freq and derive it from tag instead
-
     params['TYPE_LOSS'] += tag
     print(params['TYPE_LOSS'])
     # init_lib = ['He', 'Glo']
@@ -154,7 +153,6 @@ def objective_patch(trial):
     params['USE_L2N'] = True#trial.suggest_categorical('USE_L2N', [True, False])
     if params['USE_L2N']:
         params['TYPE_ARCH'] += 'L2N'
-
 
     params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
     if params['USE_Aug']:
@@ -320,7 +318,7 @@ def objective_triplet(trial):
             }
 
     # Dynamic learning rate range
-    # learning_rate = trial.suggest_float('learning_rate', 1e-5, 1e-1, log=True)
+    # learning_rate = trial.suggest_float('learning_rate', 1e-3, 1e-2, log=True)
     learning_rate = 3e-3
     params['LEARNING_RATE'] = learning_rate
 
@@ -378,20 +376,20 @@ def objective_triplet(trial):
     # Timing parameters remain the same
     # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
     params['NO_TIMEPOINTS'] = 92
-    params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 2)
+    params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 4)
 
     # Timing parameters remain the same
     params['HORIZON_MS'] = 1#trial.suggest_int('HORIZON_MS', 1, 5)
     params['SHIFT_MS'] = 0
 
-    params['LOSS_TupMPN'] = trial.suggest_float('LOSS_TupMPN', 0.0001, 1000.0, log=True)
-    params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 0.0001, 1000.0, log=True)
+    params['LOSS_TupMPN'] = trial.suggest_float('LOSS_TupMPN', 0.0001, 0.1, log=True)
+    params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 0.1, 100.0, log=True)
     params['LOSS_WEIGHT'] = 2.0#trial.suggest_float('LOSS_WEIGHT', 0.000001, 100.0, log=True)
     params['LOSS_NEGATIVES'] = trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
 
-    ax = 25#trial.suggest_int('AX', 1, 99)
-    gx = trial.suggest_int('GX', 150, 400, step=100)
+    ax = trial.suggest_int('AX', 25, 85, step=20)
+    gx = 350#trial.suggest_int('GX', 150, 400, step=100)
 
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     # params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
@@ -417,7 +415,7 @@ def objective_triplet(trial):
     elif params['NO_TIMEPOINTS'] == 64:
         dil_lib = [5,4,3,3,3]           # for kernels 2,3,4,5,6
     elif params['NO_TIMEPOINTS'] == 92:
-        dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]        
+        dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]
     elif params['NO_TIMEPOINTS'] == 128:
         dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]
     elif params['NO_TIMEPOINTS'] == 196:
@@ -433,23 +431,26 @@ def objective_triplet(trial):
 
     params['TYPE_LOSS'] += tag
     print(params['TYPE_LOSS'])
-    # init_lib = ['He', 'Glo']
-    # par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
-    par_init = 'He'
+    
+    
+    init_lib = ['He', 'Glo']
+    par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
+    # par_init = 'He'
     # norm_lib = ['LN','BN','GN','WN']
     # par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
     par_norm = 'LN'
-    # act_lib = ['RELU', 'ELU', 'GELU']
-    # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    par_act = 'ELU'
+    
+    act_lib = ['RELU', 'ELU', 'GELU']
+    par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
+    # par_act = 'ELU'
 
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'Adam'
     # par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
 
-    reg_lib = ['LOne', 'LTwo', 'None']
-    par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
-
+    # reg_lib = ['LOne', 'LTwo', 'None']
+    # par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
+    par_reg = 'LOne'
 
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
     # Build architecture string with timing parameters (adjust format)
@@ -461,7 +462,7 @@ def objective_triplet(trial):
     # Use multiple binary flags for a combinatorial categorical parameter
     # params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
     # if params['USE_ZNorm']:
-    #     params['TYPE_ARCH'] += 'ZNorm'
+    params['TYPE_ARCH'] += 'ZNorm'
     # params['USE_L2N'] = trial.suggest_categorical('USE_L2N', [True, False])
     # if params['USE_L2N']:
     params['TYPE_ARCH'] += 'L2N'
@@ -489,7 +490,7 @@ def objective_triplet(trial):
     #     params['TYPE_LOSS'] += 'L2Reg'
 
     drop_lib = [0, 5, 10, 20, 50, 80]
-    drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3,4, 5])
+    drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3,4,5])
     print('Dropout rate:', drop_lib[drop_ind])
     if drop_ind > 0:
         params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
@@ -1409,7 +1410,7 @@ elif mode == 'predict':
         # Load weights
         params['mode'] = 'predict'
         # weight_file = f"{study_dir}/last.weights.h5"
-        if 'Events' in tag:
+        if 'Events' in tag or 'Latents' in tag:
             weight_file = f"{study_dir}/event.weights.h5"
             tag += 'EvF1'
         else:
@@ -1524,9 +1525,9 @@ elif mode == 'predict':
 
     # inference parameters
     squence_stride = 1
-    params['BATCH_SIZE'] = 512*2
+    params['BATCH_SIZE'] = 512*16
     # params["BATCH_SIZE"] = 1024*16
-
+    # pdb.set_trace()
     # from model.input_augment_weighted import rippleAI_load_dataset
     import importlib.util
     spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/input_augment_weighted.py")
@@ -1536,21 +1537,32 @@ elif mode == 'predict':
 
     # from model.input_aug import rippleAI_load_dataset
     # from model.input_fn import rippleAI_load_dataset
-    preproc = False if model_name=='RippleNet' else True
-    if 'FiltL' in params['NAME']:
-        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='low', preprocess=preproc)
-    elif 'FiltH' in params['NAME']:
-        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='high', preprocess=preproc)
-    elif 'FiltM' in params['NAME']:
-        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='muax', preprocess=preproc)
+    flag_numpy = True
+    if flag_numpy:
+        print('Using numpy')
+        # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/FlatLFP_2500.npy')
+        LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/SexyLFP_2500.npy')
+        LFP = np.transpose(LFP, (1, 0))
+        peak_chind = 12 # sexy peak
+        # peak_chind = 28 # sexy cortex
+        LFP = LFP[:,peak_chind-4:peak_chind+4]
+        labels = np.zeros(LFP.shape[0])
     else:
-        val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
-    print('val_id: ', val_id)
-    LFP = val_datasets[val_id]
-    labels = val_labels[val_id]
-    print(LFP.shape)
-    np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/labels_val{0}_sf{1}.npy'.format(val_id, params['SRATE']), labels)
-    np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/signals{2}_val{0}_sf{1}.npy'.format(val_id, params['SRATE'], tag), LFP)
+        preproc = False if model_name=='RippleNet' else True
+        if 'FiltL' in params['NAME']:
+            val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='low', preprocess=preproc)
+        elif 'FiltH' in params['NAME']:
+            val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='high', preprocess=preproc)
+        elif 'FiltM' in params['NAME']:
+            val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='muax', preprocess=preproc)
+        else:
+            val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
+        print('val_id: ', val_id)
+        LFP = val_datasets[val_id]
+        labels = val_labels[val_id]
+        print(LFP.shape)
+        np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/labels_val{0}_sf{1}.npy'.format(val_id, params['SRATE']), labels)
+        np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/signals{2}_val{0}_sf{1}.npy'.format(val_id, params['SRATE'], tag), LFP)
     # get predictions
     # import pdb
     # pdb.set_trace()
@@ -1591,6 +1603,13 @@ elif mode == 'predict':
             squence_stride = 1
         train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=squence_stride, batch_size=params["BATCH_SIZE"])
         windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
+        
+        if flag_numpy:
+            # pdb.set_trace()
+            probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
+            np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/probs_{0}_{1}.npy'.format(study_num, tag), probs)
+            pdb.set_trace()
+            
         # different outputs
         if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
             if len(windowed_signal.shape) == 3:
@@ -2004,23 +2023,117 @@ elif mode=='export':
             model_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
-        from model.model_fn import CSDLayer
-        from tcn import TCN
-        from tensorflow.keras.models import load_model
-        # Load weights
-        params['mode'] = 'predict'
-        # weight_file = f"{study_dir}/last.weights.h5"
-        # if 'MixerOnly' in params['TYPE_ARCH']:
-        weight_file = f"{study_dir}/max.weights.h5"
-        tag += 'MaxF1'
-        # else:
-        #     weight_file = f"{study_dir}/event.weights.h5"
-        #     tag += 'EvF1'
+        elif 'CADOnly' in params['TYPE_ARCH']:
+            pretrain_tag = 'params_mixerOnlyEvents2500'
+            pretrain_num = 1414#958
+            pretrained_dir = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{pretrain_tag}/study_{pretrain_num}_*')
+            if not pretrained_dir:
+                raise ValueError(f"No study directory found for study number {pretrain_num}")
+            pretrained_dir = pretrained_dir[0]  # Take the first matching directory
+
+            pretrained_params = copy.deepcopy(params)
+            # Load trial info to get parameters
+            with open(f"{pretrained_dir}/trial_info.json", 'r') as f:
+                trial_info = json.load(f)
+                pretrained_params.update(trial_info['parameters'])
+
+            # Check which weight file is most recent
+            event_weights = f"{pretrained_dir}/event.weights.h5"
+            max_weights = f"{pretrained_dir}/max.weights.h5"
+
+            if os.path.exists(event_weights) and os.path.exists(max_weights):
+                # Both files exist, select the most recently modified one
+                event_mtime = os.path.getmtime(event_weights)
+                max_mtime = os.path.getmtime(max_weights)
+
+                if event_mtime > max_mtime:
+                    weight_file = event_weights
+                    print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
+                else:
+                    weight_file = max_weights
+                    print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
+            elif os.path.exists(event_weights):
+                weight_file = event_weights
+                print("Using event.weights.h5 (max.weights.h5 not found)")
+            elif os.path.exists(max_weights):
+                weight_file = max_weights
+                print("Using max.weights.h5 (event.weights.h5 not found)")
+            else:
+                raise ValueError(f"Neither event.weights.h5 nor max.weights.h5 found in {pretrained_dir}")
+            print(f"Loading weights from: {weight_file}")
+
+            pretrained_params["WEIGHT_FILE"] = weight_file
+
+            # load pretrained model
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{pretrained_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN_Pretrained = model_module.build_DBI_TCN_MixerOnly
+            pretrained_tcn = build_DBI_TCN_Pretrained(pretrained_params["NO_TIMEPOINTS"], params=pretrained_params)
+            pretrained_tcn.load_weights(weight_file)
+            pretrained_tcn.trainable = False
+            pretrained_tcn.compile(optimizer='adam', loss='mse')
+            
+
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_CADMixerOnly            
 
         # weight_file = f"{study_dir}/robust.weights.h5"
-        print(f"Loading weights from: {weight_file}")
-        model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-        model.load_weights(weight_file)
+        
+        if 'CADOnly' in params['TYPE_ARCH']:
+            from model.model_fn import CSDLayer
+            from tcn import TCN
+            from tensorflow.keras.models import load_model
+            # Load weights
+            params['mode'] = 'predict'
+            
+            # weight_file = f"{study_dir}/last.weights.h5"
+            if 'Events' in tag:
+                weight_file = f"{study_dir}/event.weights.h5"
+                tag += 'EvF1'
+            else:
+                weight_file = f"{study_dir}/max.weights.h5"
+                tag += 'MaxF1'
+
+            # weight_file = f"{study_dir}/robust.weights.h5"
+            print(f"Loading weights from: {weight_file}")
+            if 'CADOnly' in params['TYPE_ARCH']:
+                model = build_DBI_TCN(pretrained_params["NO_TIMEPOINTS"], params=params, pretrained_tcn=pretrained_tcn)
+            elif 'Patch' in params['TYPE_ARCH']:
+                model = build_DBI_TCN(params=params) # Pass only the params dictionary
+            else:
+                model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+            model.load_weights(weight_file)
+        else:
+            from model.model_fn import CSDLayer
+            from tcn import TCN
+            from tensorflow.keras.models import load_model
+            # Load weights
+            params['mode'] = 'predict'
+            # weight_file = f"{study_dir}/last.weights.h5"
+            if 'Events' in tag:
+                weight_file = f"{study_dir}/event.weights.h5"
+                tag += 'EvF1'
+            else:
+                weight_file = f"{study_dir}/max.weights.h5"
+                tag += 'MaxF1'
+            params['mode'] = 'predict'
+            # weight_file = f"{study_dir}/last.weights.h5"
+            # # if 'MixerOnly' in params['TYPE_ARCH']:
+            # weight_file = f"{study_dir}/max.weights.h5"
+            # tag += 'MaxF1'
+            # # else:
+            #     weight_file = f"{study_dir}/event.weights.h5"
+            #     tag += 'EvF1'
+
+            # weight_file = f"{study_dir}/robust.weights.h5"
+            print(f"Loading weights from: {weight_file}")
+            model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+            model.load_weights(weight_file)
+
     elif model_name == 'RippleNet':
         import sys, pickle, keras, h5py
         # load info on best model (path, threhsold settings)
@@ -2118,30 +2231,48 @@ elif mode=='export':
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
 
-    # pdb.set_trace()
-    from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
-    full_model = tf.function(lambda x: model(x))
-    # pdb.set_trace()
-    full_model = full_model.get_concrete_function([tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype, name="x")])
-    frozen_func = convert_variables_to_constants_v2(full_model, lower_control_flow=False)
-    frozen_func.graph.as_graph_def(add_shapes=True)
-    layers = [op.name for op in frozen_func.graph.get_operations()]
-    print("-" * 50)
-    # print("Frozen model layers: ")
-    # for layer in layers:
-    #     print(layer)
-    print("-" * 50)
-    print("Frozen model inputs: ")
-    print(frozen_func.inputs)
-    print("Frozen model outputs: ")
-    print(frozen_func.outputs)
+    model_converter = 'TF' # 'TF' 'TFLite'
+    if model_converter == 'ONNX':
+        
+        import tf2onnx
+        # Convert the model to ONNX format
+        spec = [tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype, name="x")]
+        output_path = f"./frozen_models/{model_name}/model.onnx"
+        model_proto, _ = tf2onnx.convert.from_keras(model, input_signature=spec, output_path=output_path)
+        print(f"Model saved to {output_path}")
+        
+    elif model_converter == 'TFLite':
+        # Convert the model to a TensorFlow Lite model
+        converter = tf.lite.TFLiteConverter.from_keras_model(model)
+        # tflite_model = converter.convert()
+        # # Save the model to disk
+        # with open('model.tflite', 'wb') as f:
+        #     f.write(tflite_model)
+    elif model_converter == 'TF':
+        from tensorflow.python.framework.convert_to_constants import convert_variables_to_constants_v2
+        full_model = tf.function(lambda x: model(x))
+        # pdb.set_trace()
+        full_model = full_model.get_concrete_function([tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype, name="x")])
+        frozen_func = convert_variables_to_constants_v2(full_model, lower_control_flow=False)
+        frozen_func.graph.as_graph_def(add_shapes=True)
+        layers = [op.name for op in frozen_func.graph.get_operations()]
+        print("-" * 50)
+        # print("Frozen model layers: ")
+        # for layer in layers:
+        #     print(layer)
+        print("-" * 50)
+        print("Frozen model inputs: ")
+        print(frozen_func.inputs)
+        print("Frozen model outputs: ")
+        print(frozen_func.outputs)
 
-    os.mkdir('./frozen_models/{}'.format(model_name))
-    # Save frozen graph from frozen ConcreteFunction to hard drive
-    tf.io.write_graph(graph_or_graph_def=frozen_func.graph,
-                    logdir="./frozen_models/{}".format(model_name),
-                    name="simple_frozen_graph.pb",
-                    as_text=False)
+        
+        # os.mkdir('./frozen_models/{}'.format(model_name))
+        # Save frozen graph from frozen ConcreteFunction to hard drive
+        tf.io.write_graph(graph_or_graph_def=frozen_func.graph,
+                        logdir="./frozen_models/{}".format(model_name),
+                        name="simple_frozen_graph.pb",
+                        as_text=False)
 
 elif mode == 'embedding':
 
@@ -2639,7 +2770,7 @@ elif mode == 'tune_viz_multi':
     # --- Pareto Optimal Trials Analysis ---
     print("Analyzing Pareto optimal trials...")
     pareto_trials = study.best_trials # These are the trials on the Pareto front
-
+    
     if not pareto_trials:
         print("No Pareto optimal trials found (study.best_trials is empty).")
         pareto_df = pd.DataFrame() # Create empty dataframe

@@ -96,3 +96,27 @@ def tf_anomaly_score(dist_list_1, dist_list_2, win_size, training=True, temp=1.0
     losses = tf.map_fn(compute_loss, (dist_list_1, dist_list_2), dtype=tf.float32)
     avg_loss_1 = tf.reduce_mean(losses)
     return avg_loss_1
+
+class PatchADLoss(tf.keras.losses.Loss):
+    """
+    Custom loss function for PatchAD.
+    """
+    def __init__(self, win_size, temp=1.0, w_de=True, epsilon=1e-7, name="PatchADLoss"):
+        super(PatchADLoss, self).__init__(name=name)
+        self.win_size = win_size
+        self.temp = temp
+        self.w_de = w_de
+        self.epsilon = epsilon
+
+    def call(self, y_true, y_pred):
+        # y_true and y_pred are expected to be lists of tensors
+        return tf_anomaly_score(y_true, y_pred, self.win_size, temp=self.temp, w_de=self.w_de, epsilon=self.epsilon)
+    def get_config(self):
+        config = super(PatchADLoss, self).get_config()
+        config.update({
+            'win_size': self.win_size,
+            'temp': self.temp,
+            'w_de': self.w_de,
+            'epsilon': self.epsilon
+        })
+        return config

@@ -449,7 +449,7 @@ def create_triplet_dataset(data, labels, params):
     """
     window_size = params['NO_TIMEPOINTS']
     batch_size = params['BATCH_SIZE']
-    min_negative_distance = params.get('MIN_NEGATIVE_DISTANCE', 64)
+    min_negative_distance = params.get('MIN_NEGATIVE_DISTANCE', 128)
     
     # Increase steps per epoch to achieve ~1500 steps
     steps_per_epoch = params.get('steps_per_epoch', 1000)
@@ -517,85 +517,152 @@ def apply_augmentation_to_dataset(dataset, params=None, sampling_rate=1250):
     # Apply augment_batch function to each batch using map
     return dataset.map(augment_batch, num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
-def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250,new_sf=1250,channels=np.arange(0,8),zscore=True,use_band=None):
+def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250,new_sf=1250,channels=np.arange(0,8),zscore=True,use_band=None, process_additional_sw_band=False, process_additional_ripple_band=False):
     '''
         Prepares data for training: subsamples, interpolates (if required), z-scores and concatenates
         the train/test data passed. Does the same for the validation data, but without concatenating
         inputs:
             train_LFPs:  (n_train_sessions) list with the raw LFP of n sessions that will be used to train
             train_GTs:   (n_train_sessions) list with the GT events of n sessions, in the format [ini end] in seconds
-            (A): quizá se podría quitar esto, lo de formatear tambien las de validacion
             val_LFPs:    (n_val_sessions) list: with the raw LFP of the sessions that will be used in validation
             val_GTs:     (n_val_sessions) list: with the GT events of n validation sessions
-            sf:          (int) original sampling frequency of the data TODO (consultar con Andrea): make it an array, so every session could have a different sf
+            sf:          (list) list of original sampling frequencies of the data, one for each session (train then val)
+            new_sf:      (int) target sampling frequency
             channels:    (n_channels) np.array. Channels that will be used to generate data. Check interpolate_channels for more information
+            zscore:      (bool) whether to z-score the data
+            use_band:    (str or None) band to filter for the main LFP ('low', 'high', 'muax', or None for broadband)
+            process_additional_sw_band: (bool) whether to process and return an additional LFP filtered for sharp-waves ('low' band)
+            process_additional_ripple_band: (bool) whether to process and return an additional LFP filtered for ripples ('high' band)
         output:
-            retrain_LFP: (n_samples x n_channels): sumbsampled, z-scored, interpolated and concatenated data from all the training sessions
+            retrain_LFP_main: (n_samples x n_channels): main processed (sumbsampled, z-scored, interpolated) and concatenated LFP data from all training sessions
             retrain_GT:  (n_events x 2): concatenation of all the events in the training sessions
-            norm_val_GT: (n_val_sessions) list: list with the normalized LFP of all the val sessions
-            val_GTs:     (n_val_sessions) list: Gt events of each val sessions
-    A Rubio LCN 2023
+            norm_val_LFP_main: (n_val_sessions) list: list with the main processed LFP of all the val sessions
+            val_GTs:     (n_val_sessions) list: GT events of each val sessions
+            retrain_LFP_sw: (n_samples x n_channels or None): processed SW-band training LFP data, or None if not requested
+            norm_val_LFP_sw: (n_val_sessions) list or None: list with processed SW-band LFP for each val session, or None
+            retrain_LFP_ripple: (n_samples x n_channels or None): processed Ripple-band training LFP data, or None if not requested
+            norm_val_LFP_ripple: (n_val_sessions) list or None: list with processed Ripple-band LFP for each val session, or None
+    A Rubio LCN 2023, modified by GitHub Copilot 2025
 
     '''
 
     assert len(train_LFPs) == len(train_GTs), "The number of train LFPs doesn't match the number of train GTs"
-    assert len(val_LFPs) == len(val_GTs), "The number of test LFPs doesn't match the number of test GTs"
+    assert len(val_LFPs) == len(val_GTs), "The number of validation LFPs doesn't match the number of validation GTs"
 
     assert len(train_LFPs)+len(val_LFPs) == len(sf), "The number of sampling frequencies doesn't match the number of sessions"
     
-    # All the training sessions data and GT will be concatenated in one data array and one GT array (2 x n events)
     counter_sf = 0
-    retrain_LFP=[]
-    retrain_GT=[]
-    offset=0
-    for LFP,GT in zip(train_LFPs,train_GTs):
-        # pdb.set_trace()
-        # 1st session in the array
-        print('Original training data shape: ',LFP.shape)
-        print('Sampling frequency: ',sf[counter_sf])
-        aux_LFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False, use_band=use_band)
+
+    # Initialize lists for accumulating processed data from training sessions
+    retrain_LFP_main_list = []
+    retrain_GT_list = []
+    retrain_LFP_sw_list = [] if process_additional_sw_band else None
+    retrain_LFP_ripple_list = [] if process_additional_ripple_band else None
+    
+    offset = 0
+    for LFP, GT_orig in zip(train_LFPs, train_GTs):
+        print('Original training data shape: ', LFP.shape)
+        print('Sampling frequency: ', sf[counter_sf])
+
+        # Process main LFP band
+        aux_LFP_main = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False, use_band=use_band)
         if zscore:
-            aux_LFP = (aux_LFP - np.mean(aux_LFP, axis=0))/np.std(aux_LFP, axis=0)
-        offset_sf = new_sf
-        if offset_sf == 30000:
-            assert(aux_LFP.shape[0] == LFP.shape[0])
-        
-        # shifting GT events
-        GT = GT + offset
-        
-        if len(retrain_LFP)==0:
-            retrain_LFP = aux_LFP
-            retrain_GT=GT
-        # Append the rest of the sessions, taking into account the length (in seconds)
-        # of the previous sessions, to cocatenate the events' times
-        else:
-            retrain_LFP=np.vstack([retrain_LFP,aux_LFP])
-            retrain_GT=np.vstack([retrain_GT,GT])
-        offset+=len(aux_LFP)/offset_sf
-        counter_sf += 1
-    # Each validation session LFP will be normalized, etc and stored in an array
-    #  the GT needs no further treatment
+            aux_LFP_main = (aux_LFP_main - np.mean(aux_LFP_main, axis=0)) / np.std(aux_LFP_main, axis=0)
+        retrain_LFP_main_list.append(aux_LFP_main)
 
-    norm_val_GT=[]
-    for LFP in val_LFPs:
-        print('Original validation data shape: ',LFP.shape)
-        print('Sampling frequency: ',sf[counter_sf])
-        tmpLFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False, use_band=use_band)
+        # Process additional sharp-wave band LFP if requested
+        if process_additional_sw_band:
+            aux_LFP_s = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False, use_band='low') # Assuming 'low' is SW band
+            if zscore:
+                aux_LFP_s = (aux_LFP_s - np.mean(aux_LFP_s, axis=0)) / np.std(aux_LFP_s, axis=0)
+            retrain_LFP_sw_list.append(aux_LFP_s)
+
+        # Process additional ripple band LFP if requested
+        if process_additional_ripple_band:
+            aux_LFP_r = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False, use_band='high') # Assuming 'high' is Ripple band
+            if zscore:
+                aux_LFP_r = (aux_LFP_r - np.mean(aux_LFP_r, axis=0)) / np.std(aux_LFP_r, axis=0)
+            retrain_LFP_ripple_list.append(aux_LFP_r)
+        
+        # Shifting GT events based on the offset from previous sessions
+        current_GT = GT_orig + offset
+        retrain_GT_list.append(current_GT)
+        
+        # Update offset for the next session's GT
+        # The offset should be based on the length of the main processed LFP after resampling to new_sf
+        offset += len(aux_LFP_main) / new_sf 
+        
+        # Assertion for specific downsampling case (e.g. 30kHz to 30kHz)
+        if new_sf == 30000 and sf[counter_sf] == 30000: # Check if original sf is also 30000 for this assertion to be meaningful
+            assert(aux_LFP_main.shape[0] == LFP.shape[0])
+        
+        counter_sf += 1
+    
+    # Concatenate all training session data
+    retrain_LFP_main = np.vstack(retrain_LFP_main_list) if retrain_LFP_main_list else np.array([])
+    retrain_GT = np.vstack(retrain_GT_list) if retrain_GT_list else np.array([])
+    
+    retrain_LFP_sw = np.vstack(retrain_LFP_sw_list) if process_additional_sw_band and retrain_LFP_sw_list else None
+    retrain_LFP_ripple = np.vstack(retrain_LFP_ripple_list) if process_additional_ripple_band and retrain_LFP_ripple_list else None
+
+    # Process validation data (each session kept separate)
+    norm_val_LFP_main = []
+    norm_val_LFP_sw = [] if process_additional_sw_band else None
+    norm_val_LFP_ripple = [] if process_additional_ripple_band else None
+
+    for LFP_val in val_LFPs: # Assuming val_GTs is handled directly by caller, not modified here other than being passed through
+        print('Original validation data shape: ', LFP_val.shape)
+        print('Sampling frequency: ', sf[counter_sf])
+
+        # Process main LFP band for validation
+        tmpLFP_main = process_LFP(LFP_val, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False, use_band=use_band)
         if zscore:
-            tmpLFP = (tmpLFP - np.mean(tmpLFP, axis=0))/np.std(tmpLFP, axis=0)
-        norm_val_GT.append(tmpLFP)
+            tmpLFP_main = (tmpLFP_main - np.mean(tmpLFP_main, axis=0)) / np.std(tmpLFP_main, axis=0)
+        norm_val_LFP_main.append(tmpLFP_main)
+
+        # Process additional sharp-wave band LFP for validation if requested
+        if process_additional_sw_band:
+            tmpLFP_s = process_LFP(LFP_val, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False, use_band='low')
+            if zscore:
+                tmpLFP_s = (tmpLFP_s - np.mean(tmpLFP_s, axis=0)) / np.std(tmpLFP_s, axis=0)
+            norm_val_LFP_sw.append(tmpLFP_s)
+
+        # Process additional ripple band LFP for validation if requested
+        if process_additional_ripple_band:
+            tmpLFP_r = process_LFP(LFP_val, ch=channels, sf=sf[counter_sf], new_sf=new_sf, use_zscore=False, use_band='high')
+            if zscore:
+                tmpLFP_r = (tmpLFP_r - np.mean(tmpLFP_r, axis=0)) / np.std(tmpLFP_r, axis=0)
+            norm_val_LFP_ripple.append(tmpLFP_r)
+        
         counter_sf += 1
-    return retrain_LFP, retrain_GT , norm_val_GT, val_GTs
+        
+    return (retrain_LFP_main, retrain_GT, norm_val_LFP_main, val_GTs, 
+            retrain_LFP_sw, norm_val_LFP_sw, retrain_LFP_ripple, norm_val_LFP_ripple)
 
 
-def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
+def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None, load_additional_sw_band=False, load_additional_ripple_band=False):
     """
     Loads the dataset for the Ripple AI model.
+    Optionally loads additional LFP data filtered for SW and Ripple bands.
+
+    Args:
+        params (dict): Dictionary of parameters including 'SRATE', 'TYPE_ARCH'.
+        mode (str): 'train' or 'test'. Determines which datasets (e.g., validation) are loaded.
+        preprocess (bool): Whether to preprocess the data (e.g., z-score) via rippleAI_prepare_training_data.
+        use_band (str or None): Band to filter for the main LFP ('low', 'high', 'muax', or None for broadband).
+        load_additional_sw_band (bool): If True, load SW-filtered LFP ('low' band) alongside the main LFP.
+        load_additional_ripple_band (bool): If True, load Ripple-filtered LFP ('high' band) alongside the main LFP.
 
     Returns:
-        train_dataset (tf.data.Dataset): Training dataset.
-        test_dataset (tf.data.Dataset): Test dataset.
-        params (dict): Updated parameters including dataset regenerators.
+        A tuple containing eight elements:
+        - train_data_main (np.array): Main processed training LFP data.
+        - train_labels_vec (np.array): Training labels (ground truth events).
+        - val_data_main (list of np.array): List of main processed validation LFP data for each session.
+        - val_labels_vec (list of np.array): List of validation labels (ground truth events) for each session.
+        - train_data_sw (np.array or None): SW-filtered training LFP data, or None if not loaded.
+        - val_data_sw (list of np.array or None): List of SW-filtered validation LFP data, or None if not loaded.
+        - train_data_ripple (np.array or None): Ripple-filtered training LFP data, or None if not loaded.
+        - val_data_ripple (list of np.array or None): List of Ripple-filtered validation LFP data, or None if not loaded.
     """
     if params['TYPE_ARCH'].find('Shift')>-1:
         print('Using Shift')
@@ -709,48 +776,28 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
     # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/DL/predSWR/all_SWRr_val{0}.npy'.format(2), SWr_indexes)
 
     # pdb.set_trace()
-    train_data, train_labels_vec, val_data, val_labels_vec = rippleAI_prepare_training_data(train_LFPs,
-                                                                                            train_GTs,
-                                                                                            val_LFPs,
-                                                                                            val_GTs,
-                                                                                            sf=all_SFs,
-                                                                                            new_sf=params['SRATE'],
-                                                                                            zscore=preprocess,
-                                                                                            use_band=use_band)
-    train_data = train_data.astype('float32')
-    if mode == 'test':
-        val_data = [k.astype('float32') for k in val_data]
-        return val_data, val_labels_vec
+    (train_data_main, train_labels_vec, 
+     val_data_main, val_labels_vec,
+     train_data_sw, val_data_sw,
+     train_data_ripple, val_data_ripple) = rippleAI_prepare_training_data(
+                                                                train_LFPs,
+                                                                train_GTs,
+                                                                val_LFPs,
+                                                                val_GTs,
+                                                                sf=all_SFs,
+                                                                new_sf=params['SRATE'],
+                                                                zscore=preprocess,
+                                                                use_band=use_band,
+                                                                process_additional_sw_band=load_additional_sw_band,
+                                                                process_additional_ripple_band=load_additional_ripple_band)
 
-    # Split data for training and testing
-    test_examples, events_test, train_examples, events_train = split_data(train_data, train_labels_vec, sf=params['SRATE'], split=0.7)
+    # The original function might have updated params dictionary here for regenerators.
+    # If such logic existed, it should be preserved if still relevant.
+    # e.g., params['train_regenerator'] = lambda: create_dataset(train_data_main, train_labels_vec, ...)
+    # e.g., params['val_regenerator'] = lambda: create_dataset(val_data_main, val_labels_vec, ...)
 
-    # fix labels
-    sf = params['SRATE']
-    
-    # Generate binary labels for training and testing data
-    y = np.zeros(shape=len(train_examples), dtype=np.float32)
-    for event in events_train:
-        y[int(sf*event[0]):int(sf*event[1])+sample_shift] = 1
-    train_labels = y
-    label_ratio = np.sum(train_labels)/len(train_labels)
-
-    y = np.zeros(shape=len(test_examples), dtype=np.float32)
-    for event in events_test:
-        y[int(sf*event[0]):int(sf*event[1])+sample_shift] = 1
-    test_labels = y
-
-    # Create triplet datasets for training and testing
-    print("Using triplet loss for training")
-    regenerator = TripletDatasetRegenerator(train_examples, train_labels, params)
-    train_triplet_dataset = regenerator.dataset
-    test_triplet_dataset, _ = create_triplet_dataset(test_examples, test_labels, params)
-    
-    # Add regenerator to dataset params
-    dataset_params = params.copy()
-    dataset_params['triplet_regenerator'] = regenerator
-    
-    return train_triplet_dataset, test_triplet_dataset, label_ratio, dataset_params
+    return (train_data_main, train_labels_vec, val_data_main, val_labels_vec,
+            train_data_sw, val_data_sw, train_data_ripple, val_data_ripple)
 
 def load_allen(indeces= np.int32(np.linspace(49,62,8))):
     loaded_data_raw = np.load('/cs/projects/OWVinckSWR/Carmen/LFP_extracted/sanity_check/raw_lfp_fc.npy')

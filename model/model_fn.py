@@ -862,8 +862,8 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
                                            name='tmp_class')(tcn_output)
 
         # linear projection for the triplet loss
-        tmp_pred = Dense(32, activation=this_activation, use_bias=True, name='tmp_pred')(tcn_output)  # Output future values
-        triplet_output = Dense(32, activation=None, use_bias=True, name='triplet_output')(tmp_pred)
+        tmp_pred = Dense(n_filters*2, activation=this_activation, use_bias=True, name='tmp_pred')(tcn_output)  # Output future values
+        triplet_output = Dense(n_filters, activation=None, use_bias=True, name='triplet_output')(tmp_pred)
 
         concatenate_output = Concatenate(axis=-1)([classification_output, triplet_output])
         return Model(inputs=signal_input, outputs=concatenate_output)
