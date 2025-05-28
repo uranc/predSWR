@@ -535,138 +535,109 @@ def objective_triplet(trial):
     elif 'FiltM' in params['TYPE_LOSS']:
         train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='muax', preprocess=preproc)
     else:
-        if 'TripletOnly' in params['TYPE_ARCH']:
-            params['steps_per_epoch'] = 1000
-            train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True)
-        else:
-            train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
+        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
+    print(params)
 
-    # if 'TripletOnly' in params['TYPE_ARCH']:
-    #         train_dataset = transform_dataset_for_training(train_dataset)
-    #         val_dataset = transform_dataset_for_training(val_dataset)
-    # if params['TYPE_MODEL'] == 'SingleCh':
-    #     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params, input_chans=1)
-    # else:
+    # import matplotlib.pyplot as plt
+    # for ib in range(200):
+    #     aa = next(iter(train_dataset))
+    #     for ii in range(64):
+    #         plt.subplot(8,8,ii+1)
+    #         plt.plot(aa[0][ii,:,4])
+    #         plt.plot(aa[1][ii,:,4]*1.2)
+    #         plt.plot(aa[1][ii,:,8]*np.max(aa[1][ii,:,4]*1.2))
+    #         plt.ylim(-3,3)
+    #     plt.show()
     # pdb.set_trace()
-    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-    # Early stopping with tunable patience
 
-    # Early stopping parameters
-    best_metric = float('-inf')
-    best_metric2 = float('-inf')
-    best_metric3 = float('inf')
-    patience = 30
-    min_delta = 0.0001
-    patience_counter = 0
+    patch_lib = [64,32,16,4,2]
+    patches = []
+    for ii in range(params['NO_DILATIONS']):
+        patches.append(patch_lib[ii])
+    print(patches)
+    params['seq_length'] = params["NO_TIMEPOINTS"]*2 # Or however seq_length is determined
+    params['input_channels'] = params["NO_CHANNELS"] # Or however input_channels is determined
+    params['patch_sizes'] = patches # Or however patch_size is determined
 
-    # Create a list to collect history from each epoch
-    history_list = []
+    model = build_DBI_TCN(params=params) # Pass only the params dictionary
+    # model = build_DBI_TCN(params["NO_TIMEPOINTS"],
+    #                     input_chans=8,
+    #                     patch_sizes=patches,
+    #                     d_model=params['NO_FILTERS'],
+    #                     num_layers=params['NO_KERNELS'],
+    #                     params=params)
+    model.summary()
+    from model.training import TerminateOnNaN
+    terminate_on_nan_callback = TerminateOnNaN()
+    # tf.profiler.experimental.start('logdir')
 
     # Setup callbacks including the verifier
     callbacks = [cb.TensorBoard(log_dir=f"{study_dir}/",
                                       write_graph=True,
                                       write_images=True,
+                                    #   profile_batch='10,15',
                                       update_freq='epoch'),
-        cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
-                            monitor='val_f1',
-                            verbose=1,
-                            save_best_only=True,
-                            save_weights_only=True,
-                            mode='max'),
-                            # cb.ModelCheckpoint(
-                            # f"{study_dir}/robust.weights.h5",
-                            # monitor='val_robust_f1',  # Change monitor
-                            # verbose=1,
-                            # save_best_only=True,
-                            # save_weights_only=True,
-                            # mode='max'),
-                            cb.ModelCheckpoint(
-                            f"{study_dir}/event.weights.h5",
-                            monitor='val_event_f1',  # Change monitor
-                            verbose=1,
-                            save_best_only=True,
-                            save_weights_only=True,
-                            mode='max')
+                cb.EarlyStopping(monitor='val_event_f1',  # Change monitor
+                                patience=50,
+                                mode='max',
+                                verbose=1,
+                                restore_best_weights=True),
+                cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
+                                    monitor='val_f1',
+                                    verbose=1,
+                                    save_best_only=True,
+                                    save_weights_only=True,
+                                    mode='max'),
+                terminate_on_nan_callback,
+                                    # cb.ModelCheckpoint(
+                                    # f"{study_dir}/robust.weights.h5",
+                                    # monitor='val_robust_f1',  # Change monitor
+                                    # verbose=1,
+                                    # save_best_only=True,
+                                    # save_weights_only=True,
+                                    # mode='max'),
+                cb.ModelCheckpoint(f"{study_dir}/event.weights.h5",
+                                    monitor='val_event_f1',  # Change monitor
+                                    verbose=1,
+                                    save_best_only=True,
+                                    save_weights_only=True,
+                                    mode='max')
     ]
 
-    # Loop through epochs manually
-    n_epoch = params['NO_EPOCHS']
-    for epoch in range(n_epoch):
-        print(f"\nEpoch {epoch+1}/{n_epoch}")
-        if dataset_params is not None and 'triplet_regenerator' in dataset_params:
-            regenerating_dataset = dataset_params['triplet_regenerator']
-            print(f"Regenerating triplet samples for epoch {epoch+1}")
+    # Train and evaluate
+    history = model.fit(
+        train_dataset,
+        # steps_per_epoch=30,
+        validation_data=val_dataset,
+        epochs=params['NO_EPOCHS'],
+        callbacks=callbacks,
+        verbose=1
+    )
+    # tf.profiler.experimental.stop()
+    val_accuracy = (max(history.history['val_event_f1'])+max(history.history['val_f1']))/2
+    val_accuracy_mean = (np.mean(history.history['val_event_f1'])+np.mean(history.history['val_f1']))/2
+    val_accuracy = (val_accuracy + val_accuracy_mean)/2
+    val_latency = np.mean(history.history['val_event_fp_rate'])
+    # Log results
+    logger.info(f"Trial {trial.number} finished with val_accuracy: {val_accuracy:.4f}, val_fprate: {val_latency:.4f}")
 
-            if epoch > 0:
-                regenerating_dataset.reinitialize()
-            train_data = regenerating_dataset.dataset if hasattr(regenerating_dataset, 'dataset') else regenerating_dataset
-
-            steps = 1000 #dataset_params.get('steps_per_epoch', 500)
-            # pdb.set_trace()
-            epoch_history = model.fit(train_data,
-                steps_per_epoch=steps,
-                initial_epoch=epoch,
-                epochs=epoch+1,
-                validation_data=test_dataset,
-                callbacks=callbacks,
-                verbose=1
-            )
-
-        # Collect history
-        history_list.append(epoch_history.history)
-
-        # Early stopping check after each epoch
-        current_metric = epoch_history.history.get('val_f1', [float('-inf')])[0]
-        current_metric2 = epoch_history.history.get('val_event_f1', [float('-inf')])[0]
-        current_metric3 = epoch_history.history.get('val_event_fp_rate', [float('inf')])[0]
-
-        if (current_metric > (best_metric + min_delta)) or (current_metric2 > (best_metric2 + min_delta)) or (current_metric3 < (best_metric3 - min_delta)):
-            if current_metric > best_metric:
-                print(f"New best metric: {current_metric}")
-                best_metric = current_metric
-            elif current_metric2 > best_metric2:
-                best_metric2 = current_metric2
-                print(f"New best metric2: {current_metric2}")
-            elif current_metric3 < best_metric3:
-                best_metric3 = current_metric3
-                print(f"New best metric3: {current_metric3}")
-            patience_counter = 0
-        else:
-            patience_counter += 1
-
-        if patience_counter >= patience:
-            print(f"\nEarly stopping triggered! No improvement for {patience} epochs.")
-            break
-
-    # Combine histories from all epochs
-    combined_history = {}
-    for key in history_list[0].keys():
-        combined_history[key] = []
-        for h in history_list:
-            combined_history[key].extend(h[key])
-
-    # If the trial completes, compute the final metrics.
-    # pdb.set_trace()
-    # final_f1 = (np.mean(combined_history['val_robust_f1']) +
-    #             max(combined_history['val_max_f1_metric_horizon'])) / 2
-    # final_f1 = max(combined_history['val_event_f1_metric'])
-    # final_latency = np.mean(combined_history['val_latency_metric'])
-    final_f1 = np.mean(combined_history['val_event_f1'])
-    final_fp_penalty = np.mean(combined_history['val_event_fp_rate'])  # Or your new FP-aware metric
-
+    # Save trial information
     trial_info = {
         'parameters': params,
         'metrics': {
-            'val_f1_accuracy': final_f1,
-            'val_fp_penalty': final_fp_penalty
-            # 'val_latency': final_latency
+        'val_accuracy': val_accuracy,
+        'val_latency': val_latency
         }
     }
     with open(f"{study_dir}/trial_info.json", 'w') as f:
         json.dump(trial_info, f, indent=4)
 
-    return final_f1, final_fp_penalty #, final_latency
+    # Proper cleanup after training
+    del model
+    gc.collect()
+    tf.keras.backend.clear_session()
 
+    return val_accuracy, val_latency
 def objective_only_30k(trial):
     """Objective function for Optuna optimization"""
     tf.compat.v1.reset_default_graph()
@@ -804,9 +775,6 @@ def objective_only_30k(trial):
 
     # Model parameters matching training format
     # params['NO_KERNELS'] = trial.suggest_int('NO_KERNELS', 2, 6) # for kernels 2,3,4,5,6
-    # params['NO_KERNELS'] = 10
-    ####### FIX
-    ####### FIX
     params['NO_KERNELS'] = 4
 
     if params['NO_TIMEPOINTS'] == 32:
@@ -829,7 +797,6 @@ def objective_only_30k(trial):
 
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # # params['NO_DILATIONS'] = 4 ####### FIX
-    ####### FIX
     ####### FIX
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
     params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
@@ -927,7 +894,6 @@ def objective_only_30k(trial):
         shutil.rmtree(f"{study_dir}/model")
     shutil.copytree('./model', f"{study_dir}/model")
     preproc = True
-    # pdb.set_trace()
     # Load data and build model
     print(params['TYPE_LOSS'])
     if 'FiltL' in params['TYPE_LOSS']:
@@ -967,7 +933,8 @@ def objective_only_30k(trial):
                                     # save_best_only=True,
                                     # save_weights_only=True,
                                     # mode='max'),
-                cb.ModelCheckpoint(f"{study_dir}/event.weights.h5",
+                cb.ModelCheckpoint(
+                                    f"{study_dir}/event.weights.h5",
                                     monitor='val_event_f1_metric',  # Change monitor
                                     verbose=1,
                                     save_best_only=True,
@@ -2657,7 +2624,7 @@ elif mode == 'tune_viz':
     print(f"- top_{N}_trials.csv")
     print(f"- top_{N}_trials.html")
     print(f"- top_{N}_parameter_distributions.png")
-# ...existing code...
+    
 elif mode == 'tune_viz_multi':
     import pandas as pd
     import plotly.graph_objects as go
@@ -2986,4 +2953,426 @@ elif mode == 'tune_viz_multi':
     print(json.dumps(stats, indent=2))
 
     print(f"\nVisualization generation complete. Results are in: {viz_dir}")
+                
+elif mode == 'tune_viz_multi_v2':
+    import pandas as pd
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import json
+    import os
+    import optuna
+    import numpy as np
+    import sys
 
+    tag = args.tag[0]
+    param_dir = f'params_{tag}'
+    viz_dir = f"studies/{param_dir}/visualizations"
+    param_impact_dir = os.path.join(viz_dir, "param_impact")
+
+    # Create visualization directories
+    os.makedirs(viz_dir, exist_ok=True)
+    os.makedirs(param_impact_dir, exist_ok=True)
+
+    # Load study for visualization
+    try:
+        storage_url = f"sqlite:///studies/{param_dir}/{param_dir}.db"
+        study = optuna.load_study(
+            study_name=param_dir,
+            storage=storage_url,
+        )
+        print(f"Loaded study '{param_dir}' from {storage_url}")
+    except Exception as e:
+        print(f"Error loading study '{param_dir}': {e}")
+        sys.exit(1) # Exit if study cannot be loaded
+
+    # --- Standard Optuna Plots ---
+    print("Generating standard Optuna plots...")
+    try:
+        # Plot optimization history for F1 Score (Objective 0)
+        fig_hist_f1 = optuna.visualization.plot_optimization_history(study, target=lambda t: t.values[0] if t.values and len(t.values) > 0 else float('nan'), target_name="F1 Score")
+        fig_hist_f1.write_html(os.path.join(viz_dir, "optimization_history_f1.html"))
+
+        # Plot optimization history for Latency (Objective 1)
+        fig_hist_latency = optuna.visualization.plot_optimization_history(study, target=lambda t: t.values[1] if t.values and len(t.values) > 1 else float('nan'), target_name="Latency")
+        fig_hist_latency.write_html(os.path.join(viz_dir, "optimization_history_latency.html"))
+
+        # Plot Pareto Front
+        fig_pareto = optuna.visualization.plot_pareto_front(study, target_names=["F1 Score", "Latency"])
+        fig_pareto.write_html(os.path.join(viz_dir, "pareto_front.html"))
+
+        # Plot parameter importance for F1 Score
+        fig_imp_f1 = optuna.visualization.plot_param_importances(study, target=lambda t: t.values[0] if t.values and len(t.values) > 0 else float('nan'), target_name="F1 Score")
+        fig_imp_f1.write_html(os.path.join(viz_dir, "param_importances_f1.html"))
+
+        # Plot parameter importance for Latency
+        fig_imp_latency = optuna.visualization.plot_param_importances(study, target=lambda t: t.values[1] if t.values and len(t.values) > 1 else float('nan'), target_name="Latency")
+        fig_imp_latency.write_html(os.path.join(viz_dir, "param_importances_latency.html"))
+        print("Standard plots generated.")
+    except Exception as e:
+        print(f"Warning: Error generating standard Optuna plots: {e}")
+
+    # --- Data Preparation ---
+    print("Preparing data for analysis...")
+    all_trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
+
+    if not all_trials:
+        print("No completed trials found in the study. Exiting visualization.")
+        sys.exit(0)
+
+    all_trial_data = []
+    for trial in all_trials:
+        if trial.values is not None and len(trial.values) == 2:
+            try:
+                f1_score = float(trial.values[0]) if trial.values[0] is not None else np.nan
+                latency = float(trial.values[1]) if trial.values[1] is not None else np.nan
+            except (ValueError, TypeError):
+                f1_score = np.nan
+                latency = np.nan
+
+            if not (np.isnan(f1_score) or np.isnan(latency)):
+                 all_trial_data.append({
+                    "trial_number": trial.number,
+                    "f1_score": f1_score,
+                    "latency": latency,
+                    **trial.params
+                })
+
+    if not all_trial_data:
+        print("No completed trials with valid F1 score and Latency found. Exiting visualization.")
+        sys.exit(0)
+
+    all_df = pd.DataFrame(all_trial_data)
+    all_df.to_csv(os.path.join(viz_dir, "all_completed_trials_data.csv"), index=False)
+    print(f"Saved data for {len(all_df)} completed trials.")
+
+    # --- Calculate Quantile Ranges for Plotting ---
+    f1_q05, f1_q95 = np.nanquantile(all_df['f1_score'], [0.05, 0.95]) if not all_df['f1_score'].isnull().all() else (0, 1)
+    lat_q05, lat_q95 = np.nanquantile(all_df['latency'], [0.05, 0.95]) if not all_df['latency'].isnull().all() else (0, 1)
+    f1_margin = (f1_q95 - f1_q05) * 0.05 if (f1_q95 - f1_q05) > 0 else 0.05
+    lat_margin = (lat_q95 - lat_q05) * 0.05 if (lat_q95 - lat_q05) > 0 else 0.05
+    f1_ylim = (max(0, f1_q05 - f1_margin), min(1, f1_q95 + f1_margin))
+    lat_ylim = (max(0, lat_q05 - lat_margin), lat_q95 + lat_margin)
+    if f1_ylim[0] >= f1_ylim[1]: f1_ylim = (max(0, f1_ylim[0] - 0.1), min(1, f1_ylim[1] + 0.1))
+    if lat_ylim[0] >= lat_ylim[1]: lat_ylim = (max(0, lat_ylim[0] - 0.1), min(1, lat_ylim[1] + 0.1))
+    print(f"Using F1 Score Y-axis range: {f1_ylim}")
+    print(f"Using Latency Y-axis range: {lat_ylim}")
+
+
+    # --- Pareto Optimal Trials Analysis ---
+    print("Analyzing Pareto optimal trials...")
+    pareto_trials_optuna_objects = study.best_trials 
+    
+    if not pareto_trials_optuna_objects:
+        print("No Pareto optimal trials found (study.best_trials is empty).")
+        pareto_df = pd.DataFrame() 
+    else:
+        pareto_trial_numbers = [t.number for t in pareto_trials_optuna_objects]
+        pareto_df = all_df[all_df['trial_number'].isin(pareto_trial_numbers)].copy()
+
+        if not pareto_df.empty:
+            pareto_df['combined_score'] = (pareto_df['f1_score'] + (1 - pareto_df['latency'])) / 2 # Ensure latency is inverted for maximization
+            pareto_df = pareto_df.sort_values('combined_score', ascending=False)
+            pareto_df.to_csv(os.path.join(viz_dir, "pareto_optimal_trials.csv"), index=False)
+
+            html_content_pareto = f"""
+            <html><head><title>Pareto Optimal Trials: {study.study_name}</title>
+            <style> table {{ border-collapse: collapse; width: 100%; }} th, td {{ border: 1px solid black; padding: 8px; text-align: left; }} tr:nth-child(even) {{ background-color: #f2f2f2; }} th {{ background-color: #007bff; color: white; }} </style>
+            </head><body>
+            <h2>Pareto Optimal Trials ({len(pareto_df)} trials)</h2>
+            <p>These trials represent the best trade-offs found between maximizing F1 Score and minimizing Latency.</p>
+            <p>Sorted by combined score = (F1 Score + (1 - Latency)) / 2</p>
+            {pareto_df.to_html(index=False)}
+            </body></html>
+            """
+            with open(os.path.join(viz_dir, "pareto_optimal_trials.html"), "w") as f:
+                f.write(html_content_pareto)
+            print(f"Found {len(pareto_df)} Pareto optimal trials.")
+            print(f"Pareto optimal trials saved to {os.path.join(viz_dir, 'pareto_optimal_trials.csv')} and .html")
+            if not pareto_df.empty:
+                 print("\nTop 10 Pareto Optimal Trials (ranked by combined_score):")
+                 print(pareto_df[['trial_number', 'f1_score', 'latency', 'combined_score']].head(10))
+        else:
+            print("Pareto DataFrame is empty after filtering.")
+            # Create an empty pareto_optimal_trials.html if no pareto trials
+            with open(os.path.join(viz_dir, "pareto_optimal_trials.html"), "w") as f:
+                f.write("<html><body><h2>No Pareto Optimal Trials Found</h2></body></html>")
+
+
+    N_TOP_PARETO = min(10, len(pareto_df)) if not pareto_df.empty else 0
+    top_pareto_df = pareto_df.head(N_TOP_PARETO) if not pareto_df.empty else pd.DataFrame()
+
+
+    # --- Hyperparameter Impact Analysis ---
+    print("Generating hyperparameter impact plots...")
+    hyperparams = [p for p in all_df.columns if p not in ['trial_number', 'f1_score', 'latency', 'combined_score']]
+    impact_plot_files = []
+
+    def should_use_log_scale(series):
+        if not pd.api.types.is_numeric_dtype(series): return False
+        if series.isnull().all() or series.nunique() <=1: return False
+        min_val, max_val = series.min(), series.max()
+        if min_val <= 0: return False
+        if min_val < 1e-9 : return False # Avoid log for extremely small values if range is also small
+        return (max_val / min_val) > 100 
+
+    for param in hyperparams:
+        if param not in all_df.columns or all_df[param].isnull().all() or all_df[param].nunique() <= 1:
+            print(f"Skipping parameter '{param}' due to missing data or single value.")
+            continue
+
+        is_numeric = pd.api.types.is_numeric_dtype(all_df[param])
+        plot_filename = os.path.join(param_impact_dir, f"{param}_impact.png")
+        impact_plot_files.append({"name": param, "path": f"param_impact/{param}_impact.png"})
+
+        try:
+            fig, ax1 = plt.subplots(figsize=(12, 7))
+            use_log = is_numeric and should_use_log_scale(all_df[param])
+
+            # Plot all completed trials as background
+            if is_numeric:
+                sns.scatterplot(data=all_df, x=param, y='f1_score', ax=ax1, color='lightgray', alpha=0.3, label='_nolegend_', s=30)
+            else: 
+                 sns.stripplot(data=all_df, x=param, y='f1_score', ax=ax1, color='lightgray', alpha=0.3, order=sorted(all_df[param].astype(str).unique()), label='_nolegend_', s=4)
+
+            # Highlight Pareto optimal trials for F1 Score
+            if not pareto_df.empty and param in pareto_df.columns:
+                if is_numeric:
+                    sns.scatterplot(data=pareto_df, x=param, y='f1_score', ax=ax1, color='skyblue', s=70, marker='o', label='Pareto F1 Score', alpha=0.7, edgecolor='blue')
+                else: 
+                    sns.stripplot(data=pareto_df, x=param, y='f1_score', ax=ax1, color='skyblue', s=7, marker='o', order=sorted(all_df[param].astype(str).unique()), label='Pareto F1 Score', alpha=0.7, jitter=False, edgecolor='blue')
+            
+            # Highlight Top N Pareto optimal trials even more for F1 Score
+            if not top_pareto_df.empty and param in top_pareto_df.columns:
+                if is_numeric:
+                    sns.scatterplot(data=top_pareto_df, x=param, y='f1_score', ax=ax1, color='gold', s=150, marker='*', edgecolor='black', label=f'Top {N_TOP_PARETO} Pareto F1', alpha=1.0, zorder=5)
+                else:
+                    sns.stripplot(data=top_pareto_df, x=param, y='f1_score', ax=ax1, color='gold', s=12, marker='*', order=sorted(all_df[param].astype(str).unique()), label=f'Top {N_TOP_PARETO} Pareto F1', alpha=1.0, jitter=False, zorder=5, edgecolor='black')
+
+            ax1.set_ylabel('F1 Score', color='blue')
+            ax1.tick_params(axis='y', labelcolor='blue')
+            ax1.set_ylim(f1_ylim) 
+            if use_log:
+                ax1.set_xscale('log')
+                ax1.set_xlabel(f"{param} (log scale)")
+            else:
+                ax1.set_xlabel(param)
+            if not is_numeric: 
+                 plt.setp(ax1.get_xticklabels(), rotation=45, ha="right")
+
+            ax2 = ax1.twinx()
+            if is_numeric:
+                sns.scatterplot(data=all_df, x=param, y='latency', ax=ax2, color='lightpink', alpha=0.3, label='_nolegend_', s=30)
+            else: 
+                 sns.stripplot(data=all_df, x=param, y='latency', ax=ax2, color='lightpink', alpha=0.3, order=sorted(all_df[param].astype(str).unique()), label='_nolegend_', s=4)
+
+            if not pareto_df.empty and param in pareto_df.columns:
+                if is_numeric:
+                    sns.scatterplot(data=pareto_df, x=param, y='latency', ax=ax2, color='salmon', s=70, marker='X', label='Pareto Latency', alpha=0.7, edgecolor='red')
+                else: 
+                    sns.stripplot(data=pareto_df, x=param, y='latency', ax=ax2, color='salmon', s=7, marker='X', order=sorted(all_df[param].astype(str).unique()), label='Pareto Latency', alpha=0.7, jitter=False, edgecolor='red')
+
+            if not top_pareto_df.empty and param in top_pareto_df.columns:
+                if is_numeric:
+                    sns.scatterplot(data=top_pareto_df, x=param, y='latency', ax=ax2, color='orangered', s=150, marker='P', edgecolor='black', label=f'Top {N_TOP_PARETO} Pareto Latency', alpha=1.0, zorder=5)
+                else:
+                    sns.stripplot(data=top_pareto_df, x=param, y='latency', ax=ax2, color='orangered', s=12, marker='P', order=sorted(all_df[param].astype(str).unique()), label=f'Top {N_TOP_PARETO} Pareto Latency', alpha=1.0, jitter=False, zorder=5, edgecolor='black')
+
+            ax2.set_ylabel('Latency', color='red')
+            ax2.tick_params(axis='y', labelcolor='red')
+            ax2.set_ylim(lat_ylim) 
+
+            # Combine legends
+            legend_items = {} 
+            for ax_ in [ax1, ax2]:
+                h, l = ax_.get_legend_handles_labels()
+                for handle, label_text in zip(h, l):
+                    if label_text != '_nolegend_' and label_text not in legend_items:
+                        legend_items[label_text] = handle
+            
+            priority_order = [
+                f'Top {N_TOP_PARETO} Pareto F1', f'Top {N_TOP_PARETO} Pareto Latency', 
+                'Pareto F1 Score', 'Pareto Latency'
+            ]
+            sorted_legend_items_tuples = []
+            for label_text in priority_order:
+                if label_text in legend_items:
+                    sorted_legend_items_tuples.append((legend_items[label_text], label_text))
+                    del legend_items[label_text] 
+            for label_text, handle in legend_items.items():
+                sorted_legend_items_tuples.append((handle, label_text))
+
+            if sorted_legend_items_tuples:
+                final_handles, final_labels = zip(*sorted_legend_items_tuples)
+                ax1.legend(final_handles, final_labels, loc='best', fontsize='small', frameon=True, facecolor='white', framealpha=0.7)
+            
+            if ax2.get_legend() is not None: ax2.get_legend().remove()
+
+
+            plt.title(f'Impact of {param} on F1 Score & Latency (Pareto & Top {N_TOP_PARETO} Highlighted)')
+            ax1.grid(True, axis='x', linestyle='--', alpha=0.6)
+            fig.tight_layout()
+            plt.savefig(plot_filename)
+            plt.close(fig)
+
+        except Exception as e:
+            print(f"Error plotting impact for parameter '{param}': {e}")
+            if 'fig' in locals() and fig: plt.close(fig) 
+            impact_plot_files = [f for f in impact_plot_files if f["name"] != param]
+
+
+    # --- Correlation Heatmap ---
+    print("Generating correlation heatmap...")
+    numeric_hyperparams = all_df[hyperparams].select_dtypes(include=np.number).columns.tolist()
+    if numeric_hyperparams: # Check if there are any numeric hyperparameters
+        numeric_df_for_corr = all_df[numeric_hyperparams]
+        if not numeric_df_for_corr.empty and numeric_df_for_corr.shape[1] > 1:
+            try:
+                correlation_matrix = numeric_df_for_corr.corr()
+                plt.figure(figsize=(max(10, len(numeric_hyperparams)*0.8), max(8, len(numeric_hyperparams)*0.6)))
+                sns.heatmap(correlation_matrix, annot=True, cmap='coolwarm', fmt=".2f", linewidths=.5, annot_kws={"size": 8})
+                plt.title('Hyperparameter Correlation Heatmap (Numeric Only)')
+                plt.xticks(rotation=45, ha='right', fontsize=9)
+                plt.yticks(rotation=0, fontsize=9)
+                plt.tight_layout()
+                heatmap_filename = os.path.join(param_impact_dir, "correlation_heatmap.png")
+                plt.savefig(heatmap_filename)
+                plt.close()
+                print(f"Correlation heatmap saved to {heatmap_filename}")
+                heatmap_rel_path = "param_impact/correlation_heatmap.png"
+            except Exception as e:
+                print(f"Error generating correlation heatmap: {e}")
+                if 'plt' in locals() and plt.gcf().get_axes(): plt.close()
+                heatmap_rel_path = None
+        else:
+            print("Not enough numeric hyperparameters for correlation heatmap.")
+            heatmap_rel_path = None
+    else:
+        print("No numeric hyperparameters found for correlation heatmap.")
+        heatmap_rel_path = None
+    
+    # --- Parallel Coordinate Plot for Pareto Front ---
+    parallel_pareto_path_rel = None
+    if not pareto_df.empty and pareto_trials_optuna_objects:
+        print("Generating Parallel Coordinate plot for Pareto front...")
+        try:
+            # Filter hyperparams to those present in pareto_df to avoid errors if some params were conditional
+            pareto_hyperparams = [p for p in hyperparams if p in pareto_df.columns]
+            if pareto_hyperparams: # Ensure there are params to plot
+                fig_parallel_pareto = optuna.visualization.plot_parallel_coordinate(
+                    study,
+                    params=pareto_hyperparams, 
+                    target=lambda t: (t.values[0], t.values[1]) if t.values and len(t.values)==2 else (float('nan'), float('nan')),
+                    target_name=["F1 Score", "Latency"],
+                    trials=pareto_trials_optuna_objects 
+                )
+                fig_parallel_pareto.update_layout(title=f"Parallel Coordinate Plot (Pareto Optimal Trials - {len(pareto_trials_optuna_objects)} trials)")
+                parallel_pareto_filename = "parallel_coordinate_pareto.html"
+                parallel_pareto_path_abs = os.path.join(viz_dir, parallel_pareto_filename)
+                fig_parallel_pareto.write_html(parallel_pareto_path_abs)
+                parallel_pareto_path_rel = parallel_pareto_filename # Relative path for HTML linking
+                print(f"Parallel Coordinate plot for Pareto front saved to {parallel_pareto_path_abs}")
+            else:
+                print("No common hyperparameters found in Pareto trials for parallel coordinate plot.")
+        except Exception as e:
+            print(f"Warning: Error generating Parallel Coordinate plot for Pareto front: {e}")
+
+
+    # --- Generate Summary HTML for Impact Plots ---
+    print("Generating summary HTML for impact plots...")
+    
+    html_parts = [f"""
+    <!DOCTYPE html><html><head><title>Hyperparameter Impact Analysis: {study.study_name}</title>
+    <style> 
+        body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }} 
+        .container {{ max-width: 1200px; margin: auto; background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }}
+        .gallery {{ display: flex; flex-wrap: wrap; gap: 20px; justify-content: space-around; }}
+        .param-card {{ border: 1px solid #ddd; padding: 15px; border-radius: 5px; background-color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; }}
+        .param-card img {{ max-width: 100%; height: auto; border-radius: 4px; }} 
+        .param-card.individual-plot {{ width: calc(50% - 20px); /* Two columns */ min-width: 400px; }}
+        .param-card.full-width-plot {{ width: 100%; }}
+        .param-card iframe {{ width: 100%; height: 500px; border: 1px solid #ccc; border-radius: 4px; }}
+        h1, h2 {{ color: #333; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 10px; }} 
+        h1 {{ font-size: 2em; }} h2 {{ font-size: 1.5em; margin-top: 30px; }}
+        nav {{ text-align: center; margin-bottom: 30px; background-color: #007bff; padding: 10px; border-radius: 5px; }}
+        nav a {{ margin: 0 15px; text-decoration: none; color: white; font-weight: bold; font-size: 1.1em; }}
+        nav a:hover {{ text-decoration: underline; }}
+        p {{ line-height: 1.6; }}
+    </style>
+    </head><body><div class="container">
+    <h1>Hyperparameter Impact Analysis: {study.study_name}</h1>
+    <nav>
+        <a href="#pareto_details">Pareto Trial Details</a> |
+        { '<a href="#correlation">Correlation Analysis</a> |' if heatmap_rel_path else ""}
+        { '<a href="#parallel_coord_pareto">Parallel Coordinate (Pareto)</a> |' if parallel_pareto_path_rel else ""}
+        <a href="#individual_params">Individual Parameter Analysis</a>
+    </nav>
+    <p style="text-align:center; font-style:italic;">Plots show all completed trials (light gray), Pareto optimal trials (skyblue/salmon), and Top {N_TOP_PARETO} Pareto trials (gold star/orangered P).</p>
+    <p style="text-align:center; font-style:italic;">Y-axis ranges for individual plots are focused on the 5th-95th percentile of all completed trials for better visibility.</p>
+    """]
+
+    html_parts.append(f"""
+    <h2 id="pareto_details">Pareto Optimal Trial Details</h2>
+    <div class="param-card full-width-plot">
+        <p>The following table details the <strong>{len(pareto_df)}</strong> trials found on the Pareto front, representing the best trade-offs between F1 Score (higher is better) and Latency (lower is better). They are sorted by a combined score for ranking purposes.</p>
+        <p><a href="pareto_optimal_trials.html" target="_blank" style="font-weight:bold; color: #007bff;">Open Pareto Optimal Trials Table in new tab</a> (Recommended for full view)</p>
+        <iframe src="pareto_optimal_trials.html" title="Pareto Optimal Trials Details" style="height: 400px;"></iframe>
+    </div>""")
+
+    if heatmap_rel_path:
+        html_parts.append(f"""
+        <h2 id="correlation">Parameter Correlation Analysis (Numeric)</h2>
+        <div class="param-card full-width-plot" style="text-align:center;">
+            <p>This heatmap shows linear correlations between numeric hyperparameters. Values close to 1 or -1 indicate strong positive or negative correlation, respectively. Values close to 0 indicate weak linear correlation.</p>
+            <a href="{heatmap_rel_path}" target="_blank"><img src="{heatmap_rel_path}" alt="Correlation Heatmap" style="max-width: 800px; display: inline-block;"></a>
+        </div>""")
+    
+    if parallel_pareto_path_rel:
+        html_parts.append(f"""
+        <h2 id="parallel_coord_pareto">Parallel Coordinate Plot (Pareto Optimal Trials)</h2>
+        <div class="param-card full-width-plot">
+            <p>This plot shows the parameter values for trials on the Pareto front. Each line represents a trial. It helps visualize combinations of parameters that lead to optimal trade-offs for F1 Score and Latency.</p>
+            <iframe src="{parallel_pareto_path_rel}" title="Parallel Coordinate Plot for Pareto Optimal Trials"></iframe>
+        </div>""")
+
+    html_parts.append("<h2 id='individual_params'>Individual Parameter Analysis</h2><div class='gallery'>")
+    for plot_info in impact_plot_files:
+        html_parts.append(f"""
+        <div class="param-card individual-plot">
+            <h3 style="text-align:center;">{plot_info['name']}</h3>
+            <a href="{plot_info['path']}" target="_blank">
+                <img src="{plot_info['path']}" alt="Impact of {plot_info['name']}">
+            </a>
+        </div>""")
+    html_parts.append("</div>") 
+
+    html_parts.append("</div></body></html>") # Close container and body
+    final_html_content = "\n".join(html_parts)
+
+    with open(os.path.join(viz_dir, "hyperparameter_impact_analysis.html"), "w") as f:
+        f.write(final_html_content)
+    print(f"Hyperparameter impact analysis summary saved to {os.path.join(viz_dir, 'hyperparameter_impact_analysis.html')}")
+
+
+    # --- Study Statistics ---
+    print("Saving study statistics...")
+    stats = {
+        "study_name": study.study_name,
+        "n_total_trials_in_db": len(study.trials), 
+        "n_completed_trials_retrieved": len(all_trials),
+        "n_completed_trials_with_valid_objectives": len(all_df), 
+        "n_pareto_trials": len(pareto_trials_optuna_objects),
+        "n_top_pareto_highlighted": N_TOP_PARETO,
+        "n_pruned_trials": len(study.get_trials(deepcopy=False, states=[optuna.trial.TrialState.PRUNED])),
+        "n_failed_trials": len(study.get_trials(deepcopy=False, states=[optuna.trial.TrialState.FAIL]))
+    }
+    with open(os.path.join(viz_dir, "study_stats.json"), "w") as f:
+        json.dump(stats, f, indent=4)
+    print("Study statistics saved.")
+    print("\nStudy Statistics Summary:")
+    print(json.dumps(stats, indent=2))
+
+    print(f"\nVisualization generation complete. Results are in: {viz_dir}")
+    print(f"Main report: {os.path.join(viz_dir, 'hyperparameter_impact_analysis.html')}")
+                
