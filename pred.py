@@ -535,109 +535,138 @@ def objective_triplet(trial):
     elif 'FiltM' in params['TYPE_LOSS']:
         train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='muax', preprocess=preproc)
     else:
-        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
-    print(params)
+        if 'TripletOnly' in params['TYPE_ARCH']:
+            params['steps_per_epoch'] = 1000
+            train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True)
+        else:
+            train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
 
-    # import matplotlib.pyplot as plt
-    # for ib in range(200):
-    #     aa = next(iter(train_dataset))
-    #     for ii in range(64):
-    #         plt.subplot(8,8,ii+1)
-    #         plt.plot(aa[0][ii,:,4])
-    #         plt.plot(aa[1][ii,:,4]*1.2)
-    #         plt.plot(aa[1][ii,:,8]*np.max(aa[1][ii,:,4]*1.2))
-    #         plt.ylim(-3,3)
-    #     plt.show()
+    # if 'TripletOnly' in params['TYPE_ARCH']:
+    #         train_dataset = transform_dataset_for_training(train_dataset)
+    #         val_dataset = transform_dataset_for_training(val_dataset)
+    # if params['TYPE_MODEL'] == 'SingleCh':
+    #     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params, input_chans=1)
+    # else:
     # pdb.set_trace()
+    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    # Early stopping with tunable patience
 
-    patch_lib = [64,32,16,4,2]
-    patches = []
-    for ii in range(params['NO_DILATIONS']):
-        patches.append(patch_lib[ii])
-    print(patches)
-    params['seq_length'] = params["NO_TIMEPOINTS"]*2 # Or however seq_length is determined
-    params['input_channels'] = params["NO_CHANNELS"] # Or however input_channels is determined
-    params['patch_sizes'] = patches # Or however patch_size is determined
+    # Early stopping parameters
+    best_metric = float('-inf')
+    best_metric2 = float('-inf')
+    best_metric3 = float('inf')
+    patience = 30
+    min_delta = 0.0001
+    patience_counter = 0
 
-    model = build_DBI_TCN(params=params) # Pass only the params dictionary
-    # model = build_DBI_TCN(params["NO_TIMEPOINTS"],
-    #                     input_chans=8,
-    #                     patch_sizes=patches,
-    #                     d_model=params['NO_FILTERS'],
-    #                     num_layers=params['NO_KERNELS'],
-    #                     params=params)
-    model.summary()
-    from model.training import TerminateOnNaN
-    terminate_on_nan_callback = TerminateOnNaN()
-    # tf.profiler.experimental.start('logdir')
+    # Create a list to collect history from each epoch
+    history_list = []
 
     # Setup callbacks including the verifier
     callbacks = [cb.TensorBoard(log_dir=f"{study_dir}/",
                                       write_graph=True,
                                       write_images=True,
-                                    #   profile_batch='10,15',
                                       update_freq='epoch'),
-                cb.EarlyStopping(monitor='val_event_f1',  # Change monitor
-                                patience=50,
-                                mode='max',
-                                verbose=1,
-                                restore_best_weights=True),
-                cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
-                                    monitor='val_f1',
-                                    verbose=1,
-                                    save_best_only=True,
-                                    save_weights_only=True,
-                                    mode='max'),
-                terminate_on_nan_callback,
-                                    # cb.ModelCheckpoint(
-                                    # f"{study_dir}/robust.weights.h5",
-                                    # monitor='val_robust_f1',  # Change monitor
-                                    # verbose=1,
-                                    # save_best_only=True,
-                                    # save_weights_only=True,
-                                    # mode='max'),
-                cb.ModelCheckpoint(f"{study_dir}/event.weights.h5",
-                                    monitor='val_event_f1',  # Change monitor
-                                    verbose=1,
-                                    save_best_only=True,
-                                    save_weights_only=True,
-                                    mode='max')
+        cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
+                            monitor='val_f1',
+                            verbose=1,
+                            save_best_only=True,
+                            save_weights_only=True,
+                            mode='max'),
+                            # cb.ModelCheckpoint(
+                            # f"{study_dir}/robust.weights.h5",
+                            # monitor='val_robust_f1',  # Change monitor
+                            # verbose=1,
+                            # save_best_only=True,
+                            # save_weights_only=True,
+                            # mode='max'),
+                            cb.ModelCheckpoint(
+                            f"{study_dir}/event.weights.h5",
+                            monitor='val_event_f1',  # Change monitor
+                            verbose=1,
+                            save_best_only=True,
+                            save_weights_only=True,
+                            mode='max')
     ]
 
-    # Train and evaluate
-    history = model.fit(
-        train_dataset,
-        # steps_per_epoch=30,
-        validation_data=val_dataset,
-        epochs=params['NO_EPOCHS'],
-        callbacks=callbacks,
-        verbose=1
-    )
-    # tf.profiler.experimental.stop()
-    val_accuracy = (max(history.history['val_event_f1'])+max(history.history['val_f1']))/2
-    val_accuracy_mean = (np.mean(history.history['val_event_f1'])+np.mean(history.history['val_f1']))/2
-    val_accuracy = (val_accuracy + val_accuracy_mean)/2
-    val_latency = np.mean(history.history['val_event_fp_rate'])
-    # Log results
-    logger.info(f"Trial {trial.number} finished with val_accuracy: {val_accuracy:.4f}, val_fprate: {val_latency:.4f}")
+    # Loop through epochs manually
+    n_epoch = params['NO_EPOCHS']
+    for epoch in range(n_epoch):
+        print(f"\nEpoch {epoch+1}/{n_epoch}")
+        if dataset_params is not None and 'triplet_regenerator' in dataset_params:
+            regenerating_dataset = dataset_params['triplet_regenerator']
+            print(f"Regenerating triplet samples for epoch {epoch+1}")
 
-    # Save trial information
+            if epoch > 0:
+                regenerating_dataset.reinitialize()
+            train_data = regenerating_dataset.dataset if hasattr(regenerating_dataset, 'dataset') else regenerating_dataset
+
+            steps = 1000 #dataset_params.get('steps_per_epoch', 500)
+            # pdb.set_trace()
+            epoch_history = model.fit(train_data,
+                steps_per_epoch=steps,
+                initial_epoch=epoch,
+                epochs=epoch+1,
+                validation_data=test_dataset,
+                callbacks=callbacks,
+                verbose=1
+            )
+
+        # Collect history
+        history_list.append(epoch_history.history)
+
+        # Early stopping check after each epoch
+        current_metric = epoch_history.history.get('val_f1', [float('-inf')])[0]
+        current_metric2 = epoch_history.history.get('val_event_f1', [float('-inf')])[0]
+        current_metric3 = epoch_history.history.get('val_event_fp_rate', [float('inf')])[0]
+
+        if (current_metric > (best_metric + min_delta)) or (current_metric2 > (best_metric2 + min_delta)) or (current_metric3 < (best_metric3 - min_delta)):
+            if current_metric > best_metric:
+                print(f"New best metric: {current_metric}")
+                best_metric = current_metric
+            elif current_metric2 > best_metric2:
+                best_metric2 = current_metric2
+                print(f"New best metric2: {current_metric2}")
+            elif current_metric3 < best_metric3:
+                best_metric3 = current_metric3
+                print(f"New best metric3: {current_metric3}")
+            patience_counter = 0
+        else:
+            patience_counter += 1
+
+        if patience_counter >= patience:
+            print(f"\nEarly stopping triggered! No improvement for {patience} epochs.")
+            break
+
+    # Combine histories from all epochs
+    combined_history = {}
+    for key in history_list[0].keys():
+        combined_history[key] = []
+        for h in history_list:
+            combined_history[key].extend(h[key])
+
+    # If the trial completes, compute the final metrics.
+    # pdb.set_trace()
+    # final_f1 = (np.mean(combined_history['val_robust_f1']) +
+    #             max(combined_history['val_max_f1_metric_horizon'])) / 2
+    # final_f1 = max(combined_history['val_event_f1_metric'])
+    # final_latency = np.mean(combined_history['val_latency_metric'])
+    final_f1 = np.mean(combined_history['val_event_f1'])
+    final_fp_penalty = np.mean(combined_history['val_event_fp_rate'])  # Or your new FP-aware metric
+
     trial_info = {
         'parameters': params,
         'metrics': {
-        'val_accuracy': val_accuracy,
-        'val_latency': val_latency
+            'val_f1_accuracy': final_f1,
+            'val_fp_penalty': final_fp_penalty
+            # 'val_latency': final_latency
         }
     }
     with open(f"{study_dir}/trial_info.json", 'w') as f:
         json.dump(trial_info, f, indent=4)
 
-    # Proper cleanup after training
-    del model
-    gc.collect()
-    tf.keras.backend.clear_session()
+    return final_f1, final_fp_penalty #, final_latency
 
-    return val_accuracy, val_latency
 def objective_only_30k(trial):
     """Objective function for Optuna optimization"""
     tf.compat.v1.reset_default_graph()
@@ -775,6 +804,9 @@ def objective_only_30k(trial):
 
     # Model parameters matching training format
     # params['NO_KERNELS'] = trial.suggest_int('NO_KERNELS', 2, 6) # for kernels 2,3,4,5,6
+    # params['NO_KERNELS'] = 10
+    ####### FIX
+    ####### FIX
     params['NO_KERNELS'] = 4
 
     if params['NO_TIMEPOINTS'] == 32:
@@ -797,6 +829,7 @@ def objective_only_30k(trial):
 
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # # params['NO_DILATIONS'] = 4 ####### FIX
+    ####### FIX
     ####### FIX
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
     params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
@@ -894,6 +927,7 @@ def objective_only_30k(trial):
         shutil.rmtree(f"{study_dir}/model")
     shutil.copytree('./model', f"{study_dir}/model")
     preproc = True
+    # pdb.set_trace()
     # Load data and build model
     print(params['TYPE_LOSS'])
     if 'FiltL' in params['TYPE_LOSS']:
@@ -933,8 +967,7 @@ def objective_only_30k(trial):
                                     # save_best_only=True,
                                     # save_weights_only=True,
                                     # mode='max'),
-                cb.ModelCheckpoint(
-                                    f"{study_dir}/event.weights.h5",
+                cb.ModelCheckpoint(f"{study_dir}/event.weights.h5",
                                     monitor='val_event_f1_metric',  # Change monitor
                                     verbose=1,
                                     save_best_only=True,
@@ -2624,7 +2657,7 @@ elif mode == 'tune_viz':
     print(f"- top_{N}_trials.csv")
     print(f"- top_{N}_trials.html")
     print(f"- top_{N}_parameter_distributions.png")
-    
+# ...existing code...
 elif mode == 'tune_viz_multi':
     import pandas as pd
     import plotly.graph_objects as go
@@ -2953,7 +2986,7 @@ elif mode == 'tune_viz_multi':
     print(json.dumps(stats, indent=2))
 
     print(f"\nVisualization generation complete. Results are in: {viz_dir}")
-                
+     
 elif mode == 'tune_viz_multi_v2':
     import pandas as pd
     import plotly.graph_objects as go
