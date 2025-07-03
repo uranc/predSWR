@@ -848,7 +848,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
 
     # Combine the dataset with weights
     train_dataset = tf.data.Dataset.zip((train_x, train_d))
-    test_dataset = tf.data.Dataset.zip((test_x, test_d)).batch(params['BATCH_SIZE']).prefetch(tf.data.experimental.AUTOTUNE)
+    test_dataset = tf.data.Dataset.zip((test_x, test_d)).batch(params['BATCH_SIZE'], drop_remainder=True).prefetch(tf.data.experimental.AUTOTUNE)
 
     train_dataset = train_dataset.shuffle(params["SHUFFLE_BUFFER_SIZE"], reshuffle_each_iteration=True).batch(params['BATCH_SIZE']).prefetch(tf.data.experimental.AUTOTUNE)
     if params['TYPE_ARCH'].find('Aug')>-1:

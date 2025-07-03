@@ -324,13 +324,13 @@ def objective_triplet(trial):
 
     # Optional batch size tuning
     # batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
-    batch_size = 128
+    batch_size = 32
     params['BATCH_SIZE'] = batch_size
     # ...rest of existing objective function code...
 
     # Base parameters
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 800
+    params['NO_EPOCHS'] = 500
     params['TYPE_MODEL'] = 'Base'
 
     arch_lib = ['MixerOnly', 'MixerHori',
@@ -362,7 +362,8 @@ def objective_triplet(trial):
         from model.input_augment_weighted import rippleAI_load_dataset
         from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
     elif 'TripletOnly' in params['TYPE_ARCH']:
-        from model.input_proto import rippleAI_load_dataset
+        # from model.input_proto import rippleAI_load_dataset
+        from model.input_proto_new import rippleAI_load_dataset
         from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
 
         # Set a reasonable steps_per_epoch value - much smaller than 1500 for initial testing
@@ -374,29 +375,29 @@ def objective_triplet(trial):
 
     # pdb.set_trace()
     # Timing parameters remain the same
-    # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
-    params['NO_TIMEPOINTS'] = 92
-    params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 4)
+    params['NO_TIMEPOINTS'] = 64#trial.suggest_categorical('NO_TIMEPOINTS', [32, 64, 128])
+    # params['NO_TIMEPOINTS'] = 92
+    params['NO_STRIDES'] = 32#int(params['NO_TIMEPOINTS'] // 4)
 
     # Timing parameters remain the same
     params['HORIZON_MS'] = 1#trial.suggest_int('HORIZON_MS', 1, 5)
     params['SHIFT_MS'] = 0
 
-    params['LOSS_TupMPN'] = trial.suggest_float('LOSS_TupMPN', 0.0001, 0.1, log=True)
-    params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 0.1, 100.0, log=True)
-    params['LOSS_WEIGHT'] = 2.0#trial.suggest_float('LOSS_WEIGHT', 0.000001, 100.0, log=True)
+    params['LOSS_TupMPN'] = 1.0#trial.suggest_float('LOSS_TupMPN', 0.0001, 100.0, log=True)
+    params['LOSS_SupCon'] = 50.0#trial.suggest_float('LOSS_SupCon', 0.1, 100.0, log=True)
+    params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.001, 100.0, log=True)
     params['LOSS_NEGATIVES'] = trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
 
-    ax = trial.suggest_int('AX', 25, 85, step=20)
-    gx = 350#trial.suggest_int('GX', 150, 400, step=100)
+    ax = 25#trial.suggest_int('AX', 25, 85, step=20)
+    gx = 200#350#trial.suggest_int('GX', 150, 400, step=100)
 
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     # params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
     params['TYPE_LOSS'] = 'FocalAx{:03d}Gx{:03d}'.format(ax, gx)
 
-    entropyLib = [0, 0.5, 1, 3]
-    entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
+    entropyLib = [0, 0.5, 1, 3, 10]
+    entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3,4])
     if entropy_ind > 0:
         params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
         params['TYPE_LOSS'] += 'Entropy'
@@ -424,33 +425,36 @@ def objective_triplet(trial):
         dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
-    params['NO_FILTERS'] = 128#trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
-    # params['NO_FILTERS'] = 64
+    # params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
+    params['NO_FILTERS'] = 64
 
     # Remove the hardcoded use_freq and derive it from tag instead
 
     params['TYPE_LOSS'] += tag
     print(params['TYPE_LOSS'])
-    
-    
-    init_lib = ['He', 'Glo']
-    par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
-    # par_init = 'He'
+
+
+    # init_lib = ['He', 'Glo']
+    # par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
+    par_init = 'He'
     # norm_lib = ['LN','BN','GN','WN']
+    # norm_lib = ['LN', 'WN']
+    # par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
     # par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
     par_norm = 'LN'
-    
-    act_lib = ['RELU', 'ELU', 'GELU']
-    par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    # par_act = 'ELU'
+
+    # act_lib = ['ELU', 'GELU'] # 'RELU',
+    # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
+    par_act = 'ELU'
 
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'Adam'
     # par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
 
-    # reg_lib = ['LOne', 'LTwo', 'None']
-    # par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
-    par_reg = 'LOne'
+    reg_lib = ['LOne',  'None'] #'LTwo',
+    par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
+    # par_reg = 'LOne'
+    # par_reg = 'None'  # No regularization for now
 
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
     # Build architecture string with timing parameters (adjust format)
@@ -459,25 +463,36 @@ def objective_triplet(trial):
     print(arch_str)
     params['TYPE_ARCH'] = arch_str
 
+
     # Use multiple binary flags for a combinatorial categorical parameter
     # params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
     # if params['USE_ZNorm']:
-    params['TYPE_ARCH'] += 'ZNorm'
-    # params['USE_L2N'] = trial.suggest_categorical('USE_L2N', [True, False])
-    # if params['USE_L2N']:
-    params['TYPE_ARCH'] += 'L2N'
+    # params['TYPE_ARCH'] += 'ZNorm'
+    params['USE_L2N'] = trial.suggest_categorical('USE_L2N', [True, False])
+    if params['USE_L2N']:
+        params['TYPE_ARCH'] += 'L2N'
 
 
     # params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
     # if params['USE_Aug']:
-    params['TYPE_ARCH'] += 'Aug'
+    # params['TYPE_ARCH'] += 'Aug'
 
 
     params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
     if params['USE_StopGrad']:
         print('Using Stop Gradient for Class. Branch')
         params['TYPE_ARCH'] += 'StopGrad'
+    # params['TYPE_ARCH'] += 'StopGrad'
 
+    params['USE_Attention'] = trial.suggest_categorical('USE_Attention', [True, False])
+    if params['USE_Attention']:
+        print('Using Attention')
+        params['TYPE_ARCH'] += 'Att'
+        
+    # params['USE_Attention'] = trial.suggest_categorical('USE_Online', [True, False])
+    # if params['USE_Attention']:
+    #     print('Using Attention')
+    params['TYPE_ARCH'] += 'Online'        
     # if (not 'Cori' in params['TYPE_ARCH']) and  (not 'SingleCh' in params['TYPE_MODEL']):
     #     params['TYPE_LOSS'] += 'BarAug'
     # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
@@ -489,11 +504,11 @@ def objective_triplet(trial):
     # if params['USE_L2Reg']:
     #     params['TYPE_LOSS'] += 'L2Reg'
 
-    drop_lib = [0, 5, 10, 20, 50, 80]
-    drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3,4,5])
-    print('Dropout rate:', drop_lib[drop_ind])
-    if drop_ind > 0:
-        params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
+    # drop_lib = [0, 5, 10, 20, 50]
+    # drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3,4])
+    # print('Dropout rate:', drop_lib[drop_ind])
+    # if drop_ind > 0:
+    #     params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
 
     params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
 
@@ -537,9 +552,49 @@ def objective_triplet(trial):
     else:
         if 'TripletOnly' in params['TYPE_ARCH']:
             params['steps_per_epoch'] = 1000
-            train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True)
+            flag_online = 'Online' in params['TYPE_ARCH']
+            train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
         else:
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
+
+
+    # # Ensure we're not in eager execution mode during training
+    # tf.config.run_functions_eagerly(False)
+
+    # # Set thread settings for optimal performance
+    # if 'TF_NUM_INTEROP_THREADS' not in os.environ:
+    #     os.environ['TF_NUM_INTEROP_THREADS'] = '4'
+    # if 'TF_NUM_INTRAOP_THREADS' not in os.environ:
+    #     os.environ['TF_NUM_INTRAOP_THREADS'] = '0'  # Let TF decide based on CPU count
+
+    # # Set memory optimizations
+    # if 'TF_GPU_ALLOCATOR' not in os.environ:
+    #     os.environ['TF_GPU_ALLOCATOR'] = 'cuda_malloc_async'
+
+    # # # Disable JIT compilation logs to reduce noise
+    # # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+    # # Enable XLA compilation for faster training
+    # if params.get('ENABLE_XLA', True):
+    #     tf.config.optimizer.set_jit(True)
+
+    # # Enable tensor fusion for increased performance
+    # tf.config.optimizer.set_experimental_options({
+    #     'layout_optimizer': True,
+    #     'constant_folding': True,
+    #     'shape_optimization': True,
+    #     'remapping': True,
+    #     'arithmetic_optimization': True,
+    #     'dependency_optimization': True,
+    #     'loop_optimization': True,
+    #     'function_optimization': True,
+    #     'debug_stripper': True,
+    #     'scoped_allocator_optimization': True,
+    #     'pin_to_host_optimization': True,
+    #     'implementation_selector': True,
+    #     # 'auto_mixed_precision': True,
+    #     'disable_meta_optimizer': False
+    # })
 
     # if 'TripletOnly' in params['TYPE_ARCH']:
     #         train_dataset = transform_dataset_for_training(train_dataset)
@@ -550,7 +605,7 @@ def objective_triplet(trial):
     # pdb.set_trace()
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     # Early stopping with tunable patience
-
+    model.summary()
     # Early stopping parameters
     best_metric = float('-inf')
     best_metric2 = float('-inf')
@@ -562,13 +617,20 @@ def objective_triplet(trial):
     # Create a list to collect history from each epoch
     history_list = []
 
-    # Setup callbacks including the verifier
+    # val_event_pr_auc: 0.83 ‖ val_latency_weighted_f1: 0.71 ‖ val_tpr_at_fpmin: 0.88
+
+   # Setup callbacks including the verifier
     callbacks = [cb.TensorBoard(log_dir=f"{study_dir}/",
                                       write_graph=True,
                                       write_images=True,
                                       update_freq='epoch'),
+        cb.EarlyStopping(monitor='val_event_pr_auc',  # Change monitor
+                        patience=patience,
+                        mode='max',
+                        verbose=1,
+                        restore_best_weights=True),
         cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
-                            monitor='val_f1',
+                            monitor='val_latency_weighted_f1',
                             verbose=1,
                             save_best_only=True,
                             save_weights_only=True,
@@ -582,68 +644,136 @@ def objective_triplet(trial):
                             # mode='max'),
                             cb.ModelCheckpoint(
                             f"{study_dir}/event.weights.h5",
-                            monitor='val_event_f1',  # Change monitor
+                            monitor='val_event_pr_auc',  # Change monitor
                             verbose=1,
                             save_best_only=True,
                             save_weights_only=True,
                             mode='max')
     ]
 
-    # Loop through epochs manually
-    n_epoch = params['NO_EPOCHS']
-    for epoch in range(n_epoch):
-        print(f"\nEpoch {epoch+1}/{n_epoch}")
-        if dataset_params is not None and 'triplet_regenerator' in dataset_params:
-            regenerating_dataset = dataset_params['triplet_regenerator']
-            print(f"Regenerating triplet samples for epoch {epoch+1}")
+    # # Setup callbacks including the verifier
+    # callbacks = [cb.TensorBoard(log_dir=f"{study_dir}/",
+    #                                   write_graph=True,
+    #                                   write_images=True,
+    #                                   update_freq='epoch'),
+    #     cb.EarlyStopping(monitor='val_event_f1',  # Change monitor
+    #                     patience=patience,
+    #                     mode='max',
+    #                     verbose=1,
+    #                     restore_best_weights=True),
+    #     cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
+    #                         monitor='val_f1',
+    #                         verbose=1,
+    #                         save_best_only=True,
+    #                         save_weights_only=True,
+    #                         mode='max'),
+    #                         # cb.ModelCheckpoint(
+    #                         # f"{study_dir}/robust.weights.h5",
+    #                         # monitor='val_robust_f1',  # Change monitor
+    #                         # verbose=1,
+    #                         # save_best_only=True,
+    #                         # save_weights_only=True,
+    #                         # mode='max'),
+    #                         cb.ModelCheckpoint(
+    #                         f"{study_dir}/event.weights.h5",
+    #                         monitor='val_event_f1',  # Change monitor
+    #                         verbose=1,
+    #                         save_best_only=True,
+    #                         save_weights_only=True,
+    #                         mode='max')
+    # ]
 
-            if epoch > 0:
-                regenerating_dataset.reinitialize()
-            train_data = regenerating_dataset.dataset if hasattr(regenerating_dataset, 'dataset') else regenerating_dataset
+    # # Loop through epochs manually
+    # n_epoch = params['NO_EPOCHS']
+    # for epoch in range(n_epoch):
+    #     print(f"\nEpoch {epoch+1}/{n_epoch}")
+    #     if dataset_params is not None and 'triplet_regenerator' in dataset_params:
+    #         regenerating_dataset = dataset_params['triplet_regenerator']
+    #         print(f"Regenerating triplet samples for epoch {epoch+1}")
 
-            steps = 1000 #dataset_params.get('steps_per_epoch', 500)
-            # pdb.set_trace()
-            epoch_history = model.fit(train_data,
-                steps_per_epoch=steps,
-                initial_epoch=epoch,
-                epochs=epoch+1,
-                validation_data=test_dataset,
-                callbacks=callbacks,
-                verbose=1
-            )
+    #         if epoch > 0:
+    #             regenerating_dataset.reinitialize()
+    #         train_data = regenerating_dataset.dataset if hasattr(regenerating_dataset, 'dataset') else regenerating_dataset
 
-        # Collect history
-        history_list.append(epoch_history.history)
+    #         steps = 1000 #dataset_params.get('steps_per_epoch', 500)
+    #         # pdb.set_trace()
+    #         epoch_history = model.fit(train_data,
+    #             steps_per_epoch=steps,
+    #             initial_epoch=epoch,
+    #             epochs=epoch+1,
+    #             validation_data=test_dataset,
+    #             callbacks=callbacks,
+    #             verbose=1
+    #         )
 
-        # Early stopping check after each epoch
-        current_metric = epoch_history.history.get('val_f1', [float('-inf')])[0]
-        current_metric2 = epoch_history.history.get('val_event_f1', [float('-inf')])[0]
-        current_metric3 = epoch_history.history.get('val_event_fp_rate', [float('inf')])[0]
+    #     # Collect history
+    #     history_list.append(epoch_history.history)
 
-        if (current_metric > (best_metric + min_delta)) or (current_metric2 > (best_metric2 + min_delta)) or (current_metric3 < (best_metric3 - min_delta)):
-            if current_metric > best_metric:
-                print(f"New best metric: {current_metric}")
-                best_metric = current_metric
-            elif current_metric2 > best_metric2:
-                best_metric2 = current_metric2
-                print(f"New best metric2: {current_metric2}")
-            elif current_metric3 < best_metric3:
-                best_metric3 = current_metric3
-                print(f"New best metric3: {current_metric3}")
-            patience_counter = 0
-        else:
-            patience_counter += 1
+    #     # Early stopping check after each epoch
+    #     current_metric = epoch_history.history.get('val_f1', [float('-inf')])[0]
+    #     current_metric2 = epoch_history.history.get('val_event_f1', [float('-inf')])[0]
+    #     current_metric3 = epoch_history.history.get('val_event_fp_rate', [float('inf')])[0]
 
-        if patience_counter >= patience:
-            print(f"\nEarly stopping triggered! No improvement for {patience} epochs.")
-            break
+    #     if (current_metric > (best_metric + min_delta)) or (current_metric2 > (best_metric2 + min_delta)) or (current_metric3 < (best_metric3 - min_delta)):
+    #         if current_metric > best_metric:
+    #             print(f"New best metric: {current_metric}")
+    #             best_metric = current_metric
+    #         elif current_metric2 > best_metric2:
+    #             best_metric2 = current_metric2
+    #             print(f"New best metric2: {current_metric2}")
+    #         elif current_metric3 < best_metric3:
+    #             best_metric3 = current_metric3
+    #             print(f"New best metric3: {current_metric3}")
+    #         patience_counter = 0
+    #     else:
+    #         patience_counter += 1
 
-    # Combine histories from all epochs
-    combined_history = {}
-    for key in history_list[0].keys():
-        combined_history[key] = []
-        for h in history_list:
-            combined_history[key].extend(h[key])
+    #     if patience_counter >= patience:
+    #         print(f"\nEarly stopping triggered! No improvement for {patience} epochs.")
+    #         break
+    val_steps = dataset_params['VAL_STEPS']
+    # pdb.set_trace()
+    # Train and evaluate
+    history = model.fit(
+        train_dataset,
+        steps_per_epoch=dataset_params['ESTIMATED_STEPS_PER_EPOCH'],
+        validation_data=test_dataset,
+        validation_steps=val_steps,  # Explicitly set to avoid the partial batch
+        epochs=params['NO_EPOCHS'],
+        callbacks=callbacks,
+        verbose=1
+    )
+
+    # tf.profiler.experimental.stop()
+    # val_event_pr_auc: 0.83 ‖ val_latency_weighted_f1: 0.71 ‖ val_tpr_at_fpmin: 0.88
+
+    val_accuracy = (max(history.history['val_event_pr_auc'])+max(history.history['val_latency_weighted_f1']))/2
+    val_accuracy_mean = (np.mean(history.history['val_event_pr_auc'])+np.mean(history.history['val_latency_weighted_f1']))/2
+    val_accuracy = (val_accuracy + val_accuracy_mean)/2
+    val_latency = np.mean(history.history['val_tpr_at_fpmin'])
+
+    # val_accuracy = (max(history.history['val_event_f1'])+max(history.history['val_f1']))/2
+    # val_accuracy_mean = (np.mean(history.history['val_event_f1'])+np.mean(history.history['val_f1']))/2
+    # val_accuracy = (val_accuracy + val_accuracy_mean)/2
+    # val_latency = np.mean(history.history['val_event_fp_rate'])
+    # Log results
+    logger.info(f"Trial {trial.number} finished with val_accuracy: {val_accuracy:.4f}, val_fprate: {val_latency:.4f}")
+
+    # Save trial information
+    trial_info = {
+        'parameters': params,
+        'metrics': {
+        'val_f1_accuracy': val_accuracy,
+        'val_fp_penalty': val_latency
+        }
+    }
+
+    # # Combine histories from all epochs
+    # combined_history = {}
+    # for key in history_list[0].keys():
+    #     combined_history[key] = []
+    #     for h in history_list:
+    #         combined_history[key].extend(h[key])
 
     # If the trial completes, compute the final metrics.
     # pdb.set_trace()
@@ -651,21 +781,26 @@ def objective_triplet(trial):
     #             max(combined_history['val_max_f1_metric_horizon'])) / 2
     # final_f1 = max(combined_history['val_event_f1_metric'])
     # final_latency = np.mean(combined_history['val_latency_metric'])
-    final_f1 = np.mean(combined_history['val_event_f1'])
-    final_fp_penalty = np.mean(combined_history['val_event_fp_rate'])  # Or your new FP-aware metric
 
-    trial_info = {
-        'parameters': params,
-        'metrics': {
-            'val_f1_accuracy': final_f1,
-            'val_fp_penalty': final_fp_penalty
-            # 'val_latency': final_latency
-        }
-    }
+    # final_f1 = (np.mean(combined_history['val_f1']) +
+    #             max(combined_history['val_f1']) +
+    #             np.mean(combined_history['val_event_f1']) +
+    #             max(combined_history['val_event_f1'])) / 4
+    # # final_f1 = np.mean(combined_history['val_event_f1'])
+    # final_fp_penalty = np.mean(combined_history['val_event_fp_rate'])  # Or your new FP-aware metric
+
+    # trial_info = {
+    #     'parameters': params,
+    #     'metrics': {
+    #         'val_f1_accuracy': final_f1,
+    #         'val_fp_penalty': final_fp_penalty
+    #         # 'val_latency': final_latency
+    #     }
+    # }
     with open(f"{study_dir}/trial_info.json", 'w') as f:
         json.dump(trial_info, f, indent=4)
 
-    return final_f1, final_fp_penalty #, final_latency
+    return val_accuracy, val_latency #, final_latency
 
 def objective_only_30k(trial):
     """Objective function for Optuna optimization"""
@@ -839,7 +974,7 @@ def objective_only_30k(trial):
     # ax = trial.suggest_int('AX', 25, 25, step=0)
     # gx = 100
     # gx = trial.suggest_int('GX', 50, 200, step=50)
-    gx = 150
+    gx = 200
 
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     params['TYPE_LOSS'] = 'Samp{}FocalGapAx{:03d}Gx{:03d}Entropy'.format(params['SRATE'], ax, gx)
@@ -976,7 +1111,7 @@ def objective_only_30k(trial):
     ]
 
     # Train and evaluate
-    # pdb.set_trace()
+    pdb.set_trace()
     history = model.fit(
         train_dataset,
         validation_data=val_dataset,
@@ -1008,7 +1143,275 @@ def objective_only_30k(trial):
     tf.keras.backend.clear_session()
 
     return val_accuracy, val_latency
-# pdb.set_trace()
+
+
+def objective_only(trial):
+    """Objective function for Optuna optimization"""
+    tf.compat.v1.reset_default_graph()
+    if tf.config.list_physical_devices('GPU'):
+        tf.keras.backend.clear_session()
+
+    # Start with base parameters
+    params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*8,
+            'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
+            'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
+            'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
+            'mode': 'train'
+            }
+
+    # Dynamic learning rate range
+    batch_size = 64
+    params['LEARNING_RATE'] = 1e-3
+    params['BATCH_SIZE'] = batch_size
+
+    # Base parameters
+    params['SRATE'] = 2500
+    params['NO_EPOCHS'] = 400
+    params['TYPE_MODEL'] = 'Base'
+
+    arch_lib = ['MixerOnly', 'MixerHori',
+                'MixerDori', 'DualMixerDori', 'MixerCori',
+                'SingleCh', 'TripletOnly']
+    # Model architecture parameters - Fix the categorical suggestion
+    # arch_ind = trial.suggest_int('IND_ARCH', 0, len(arch_lib)-1)
+    # pdb.set_trace()
+    # tag = args.tag[0]
+    # arch_ind = np.where([(arch.lower() in tag.lower()) for arch in arch_lib])[0][0]
+    arch_ind = 0
+    # print(arch_ind)
+    # pdb.set_trace()
+    params['TYPE_ARCH'] = arch_lib[arch_ind]
+    print(params['TYPE_ARCH'])
+    # pdb.set_trace()
+    # params['TYPE_ARCH'] = 'MixerHori'
+    # Update model import based on architecture choice
+    if 'MixerHori' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
+        from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
+    elif 'MixerDori' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
+        from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
+    elif 'MixerCori' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
+        from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
+    elif 'MixerOnly' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
+        from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
+
+    # pdb.set_trace()
+    # Timing parameters remain the same
+    # params['NO_TIMEPOINTS'] = trial.suggest_categorical('NO_TIMEPOINTS', [128, 196, 384])
+    params['NO_TIMEPOINTS'] = 32#*3
+    params['NO_STRIDES'] = int(params['NO_TIMEPOINTS'] // 4)
+    # params['NO_STRIDES'] = trial.suggest_int('NO_STRIDES', 32, 160, step=32)
+
+    # Timing parameters remain the same
+    params['HORIZON_MS'] = 0#trial.suggest_int('HORIZON_MS', 1, 5, step=2)
+    params['SHIFT_MS'] = 0
+
+    params['LOSS_WEIGHT'] = 1#trial.suggest_float('LOSS_WEIGHT', 0.000001, 10.0, log=True)
+    # params['LOSS_WEIGHT'] = 7.5e-4
+
+    entropyLib = [0, 0.5, 1, 3]
+    entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
+    params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
+
+    # params['HYPER_TMSE'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
+    # params['HYPER_BARLOW'] = 2e-5
+    # params['HYPER_BARLOW'] = trial.suggest_float('HYPER_BARLOW', 0.000001, 10.0, log=True)
+    # params['HYPER_MONO'] = trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
+    params['HYPER_MONO'] = 0 #trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
+
+    # Model parameters matching training format
+    # params['NO_KERNELS'] = trial.suggest_int('NO_KERNELS', 2, 6) # for kernels 2,3,4,5,6
+    params['NO_KERNELS'] = 4
+    if params['NO_TIMEPOINTS'] == 32:
+        dil_lib = [4,3,2,2,2]           # for kernels 2,3,4,5,6
+    elif params['NO_TIMEPOINTS'] == 64:
+        dil_lib = [5,4,3,3,3]           # for kernels 2,3,4,5,6
+    elif params['NO_TIMEPOINTS'] == 128:
+        dil_lib = [6,5,4,4,4]           # for kernels 2,3,4,5,6]
+    elif params['NO_TIMEPOINTS'] == 196:
+        dil_lib = [7,6,5,5,5]           # for kernels 2,3,4,5,6
+    elif params['NO_TIMEPOINTS'] == 384:
+        dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
+    elif params['NO_TIMEPOINTS'] == 128*12:
+        dil_lib = [12,12,8,12,12,12]          # for kernels 2,3,4,5,6]
+    elif params['NO_TIMEPOINTS'] == 128*3:
+        dil_lib = [12,12,6,12,12,12]          # for kernels 2,3,4,5,6]
+
+    params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
+    # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
+    params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
+    # params['NO_FILTERS'] = 64
+    # ax = trial.suggest_int('AX', 25, 75, step=10)
+    # gx = trial.suggest_int('GX', 50, 999, step=150)
+    ax = 25
+    gx = 200
+    # Removed duplicate TYPE_ARCH suggestion that was causing the error
+    params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}Entropy'.format(ax, gx)
+
+    # Remove the hardcoded use_freq and derive it from tag instead
+
+    # params['TYPE_LOSS'] += tag
+    print(params['TYPE_LOSS'])
+    # init_lib = ['He', 'Glo']
+    # par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
+    par_init = 'He'
+    # norm_lib = ['LN','BN','GN','WN']
+    # par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
+    par_norm = 'LN'
+    # act_lib = ['RELU', 'ELU', 'GELU']
+    # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
+    par_act = 'ELU'
+
+    # opt_lib = ['Adam', 'AdamW', 'SGD']
+    par_opt = 'Adam'
+    # par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
+
+    params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}")
+    # Build architecture string with timing parameters (adjust format)
+    arch_str = (f"{params['TYPE_ARCH']}"  # Take first 4 chars: Hori/Dori/Cori
+                f"{int(params['HORIZON_MS']):02d}")
+    print(arch_str)
+    params['TYPE_ARCH'] = arch_str
+
+    # Use multiple binary flags for a combinatorial categorical parameter
+    # params['USE_ZNorm'] = False#trial.suggest_categorical('USE_ZNorm', [True, False])
+    # if params['USE_ZNorm']:
+    #     params['TYPE_ARCH'] += 'ZNorm'
+    # params['USE_L2N'] = True#trial.suggest_categorical('USE_L2N', [True, False])
+    # if params['USE_L2N']:
+    #     params['TYPE_ARCH'] += 'L2N'
+
+
+    # params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
+    # if params['USE_Aug']:
+    #     params['TYPE_ARCH'] += 'Aug'
+
+    # if (not 'Cori' in params['TYPE_ARCH']) and  (not 'SingleCh' in params['TYPE_MODEL']):
+    #     params['TYPE_LOSS'] += 'BarAug'
+    # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
+    # params['USE_CSD'] = trial.suggest_categorical('USE_CSD', [True, False])
+    # if params['USE_CSD']:
+    #     params['TYPE_ARCH'] += 'CSD'
+    # params['Dropout'] = trial.suggest_int('Dropout', 0, 10)
+    # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
+    # if params['USE_L2Reg']:
+    #     params['TYPE_LOSS'] += 'L2Reg'
+
+    drop_lib = [0, 0.05, 0.1, 0.2, 0.5]
+    drop_ind = 0#trial.suggest_categorical('Dropout', [0,1,2,3,4])
+    if drop_ind > 0:
+        params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
+
+    params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
+
+    # Build name in correct format
+    run_name = (f"{params['TYPE_MODEL']}_"
+                f"K{params['NO_KERNELS']}_"
+                f"T{params['NO_TIMEPOINTS']}_"
+                f"D{params['NO_DILATIONS']}_"
+                f"N{params['NO_FILTERS']}_"
+                f"L{int(-np.log10(params['LEARNING_RATE']))}_"
+                f"E{params['NO_EPOCHS']}_"
+                f"B{params['BATCH_SIZE']}_"
+                f"S{params['NO_STRIDES']}_"
+                f"{params['TYPE_LOSS']}_"
+                f"{params['TYPE_REG']}_"
+                f"{params['TYPE_ARCH']}")
+    # pdb.set_trace()
+    params['NAME'] = run_name
+    print(params['NAME'])
+
+    # pdb.set_trace()
+    tag = args.tag[0]
+    param_dir = f"params_{tag}"
+    study_dir = f"studies/{param_dir}/study_{trial.number}_{trial.datetime_start.strftime('%Y%m%d_%H%M%S')}"
+    os.makedirs(study_dir, exist_ok=True)
+
+    # Copy pred.py and model/ directory
+    shutil.copy2('./pred.py', f"{study_dir}/pred.py")
+    if os.path.exists(f"{study_dir}/model"):
+        shutil.rmtree(f"{study_dir}/model")
+    shutil.copytree('./model', f"{study_dir}/model")
+    preproc = True
+    # Load data and build model
+    print(params['TYPE_LOSS'])
+    if 'FiltL' in params['TYPE_LOSS']:
+        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='low', preprocess=preproc)
+    elif 'FiltH' in params['TYPE_LOSS']:
+        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='high', preprocess=preproc)
+    elif 'FiltM' in params['TYPE_LOSS']:
+        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, use_band='muax', preprocess=preproc)
+    else:
+        train_dataset, val_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
+    print(params)
+    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    # Setup callbacks including the verifier
+    callbacks = [cb.TensorBoard(log_dir=f"{study_dir}/",
+                                      write_graph=True,
+                                      write_images=True,
+                                      update_freq='epoch'),
+                cb.EarlyStopping(monitor='val_event_f1_metric',  # Change monitor
+                                patience=50,
+                                mode='max',
+                                verbose=1,
+                                restore_best_weights=True),
+                cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
+                                    monitor='val_max_f1_metric_horizon',
+                                    verbose=1,
+                                    save_best_only=True,
+                                    save_weights_only=True,
+                                    mode='max'),
+                                    # cb.ModelCheckpoint(
+                                    # f"{study_dir}/robust.weights.h5",
+                                    # monitor='val_robust_f1',  # Change monitor
+                                    # verbose=1,
+                                    # save_best_only=True,
+                                    # save_weights_only=True,
+                                    # mode='max'),
+                cb.ModelCheckpoint(f"{study_dir}/event.weights.h5",
+                                    monitor='val_event_f1_metric',  # Change monitor
+                                    verbose=1,
+                                    save_best_only=True,
+                                    save_weights_only=True,
+                                    mode='max')
+    ]
+
+    # Train and evaluate
+    history = model.fit(
+        train_dataset,
+        validation_data=val_dataset,
+        epochs=params['NO_EPOCHS'],
+        callbacks=callbacks,
+        verbose=1
+    )
+    val_accuracy = (max(history.history['val_event_f1_metric'])+max(history.history['val_max_f1_metric_horizon']))/2
+    val_accuracy_mean = (np.mean(history.history['val_event_f1_metric'])+np.mean(history.history['val_max_f1_metric_horizon']))/2
+    val_accuracy = (val_accuracy + val_accuracy_mean)/2
+    val_latency = np.mean(history.history['val_event_fp_rate'])
+    # Log results
+    logger.info(f"Trial {trial.number} finished with val_accuracy: {val_accuracy:.4f}, val_fprate: {val_latency:.4f}")
+
+    # Save trial information
+    trial_info = {
+        'parameters': params,
+        'metrics': {
+        'val_accuracy': val_accuracy,
+        'val_latency': val_latency
+        }
+    }
+    with open(f"{study_dir}/trial_info.json", 'w') as f:
+        json.dump(trial_info, f, indent=4)
+
+    # Proper cleanup after training
+    del model
+    gc.collect()
+    tf.keras.backend.clear_session()
+
+    return val_accuracy, val_latency
+
 # tf.config.run_functions_eagerly(True)
 parser = argparse.ArgumentParser(
     description='Example 3 - Local and Parallel Execution.')
@@ -1114,7 +1517,8 @@ if mode == 'train':
         from model.input_augment_weighted import rippleAI_load_dataset
     elif 'TripletOnly' in params['TYPE_ARCH']:
         print('Using TripletOnly')
-        from model.input_proto import rippleAI_load_dataset
+        # from model.input_proto import rippleAI_load_dataset
+        from model.input_proto_new import rippleAI_load_dataset
         from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
     elif 'CADOnly' in params['TYPE_ARCH']:
         from model.model_fn import build_DBI_TCN_CADMixerOnly as build_DBI_TCN
@@ -1230,13 +1634,33 @@ if mode == 'train':
     else:
         if 'TripletOnly' in params['TYPE_ARCH']:
             params['steps_per_epoch'] = 1000
-            train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True)
+            flag_online = 'Online' in params['TYPE_ARCH']
+            train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
         else:
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
-    train_size = len(list(train_dataset))
+    # train_size = len(list(train_dataset))
     params['RIPPLE_RATIO'] = label_ratio
 
+    # n = 0
     # pdb.set_trace()
+    # for ii in range(2000):
+    #     [x, y] = next(iter(train_dataset))
+    #     n += 1
+    #     plt.subplot(10, 6, n)
+    #     plt.plot(x[ii, 128:, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
+    #     plt.plot(y[ii, :]*50, 'r')
+    #     n += 1
+    #     plt.subplot(10, 6, n)
+    #     plt.plot(x[ii+32, 128:, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
+    #     plt.plot(y[ii+32, :]*50, 'r')
+    #     n += 1
+    #     plt.subplot(10, 6, n)
+    #     plt.plot(x[ii+64, 128:, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
+    #     plt.plot(y[ii+64, :]*50, 'r')
+    #     if ii % 20 == 19:
+    #         plt.show()
+    #         n = 0
+
     # Calculate model FLOPs using TensorFlow Profiler
     @tf.function
     def get_flops(model, batch_size=1, params=params):
@@ -1309,6 +1733,7 @@ elif mode == 'predict':
             trial_info = json.load(f)
             params.update(trial_info['parameters'])
 
+        params['mode'] = 'predict'
         # Import required modules
         if 'MixerOnly' in params['TYPE_ARCH']:
             from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
@@ -1339,12 +1764,12 @@ elif mode == 'predict':
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
         elif 'TripletOnly' in params['TYPE_ARCH']:
-            from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
-            # import importlib.util
-            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
-            # model_module = importlib.util.module_from_spec(spec)
-            # spec.loader.exec_module(model_module)
-            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
         elif 'Patch' in params['TYPE_ARCH']:
             tf.config.run_functions_eagerly(True)
             from model.input_augment_weighted import rippleAI_load_dataset
@@ -1407,18 +1832,38 @@ elif mode == 'predict':
         from model.model_fn import CSDLayer
         from tcn import TCN
         from tensorflow.keras.models import load_model
-        # Load weights
-        params['mode'] = 'predict'
-        # weight_file = f"{study_dir}/last.weights.h5"
-        if 'Events' in tag or 'Latents' in tag:
-            weight_file = f"{study_dir}/event.weights.h5"
-            tag += 'EvF1'
-        else:
-            weight_file = f"{study_dir}/max.weights.h5"
-            tag += 'MaxF1'
 
-        # weight_file = f"{study_dir}/robust.weights.h5"
+        # Check which weight file is most recent
+        event_weights = f"{study_dir}/event.weights.h5"
+        max_weights = f"{study_dir}/max.weights.h5"
+        # event_weights = f"{study_dir}/event.tuned.weights.h5"
+        # max_weights = f"{study_dir}/max.tuned.weights.h5"
+        # event_weights = f"{study_dir}/event.mpntuned.weights.h5"
+        # max_weights = f"{study_dir}/max.mpntuned.weights.h5"
+        if os.path.exists(event_weights) and os.path.exists(max_weights):
+            # Both files exist, select the most recently modified one
+            event_mtime = os.path.getmtime(event_weights)
+            max_mtime = os.path.getmtime(max_weights)
+
+            if event_mtime > max_mtime:
+                weight_file = event_weights
+                print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
+            else:
+                weight_file = max_weights
+                print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
+        elif os.path.exists(event_weights):
+            weight_file = event_weights
+            tag += 'EvF1'
+            print("Using event.weights.h5 (max.weights.h5 not found)")
+        elif os.path.exists(max_weights):
+            weight_file = max_weights
+            tag += 'MaxF1'
+            print("Using max.weights.h5 (event.weights.h5 not found)")
+        else:
+            raise ValueError(f"Neither event.weights.h5 nor max.weights.h5 found in {study_dir}")
         print(f"Loading weights from: {weight_file}")
+
+        # load models
         if 'CADOnly' in params['TYPE_ARCH']:
             model = build_DBI_TCN(pretrained_params["NO_TIMEPOINTS"], params=params, pretrained_tcn=pretrained_tcn)
         elif 'Patch' in params['TYPE_ARCH']:
@@ -1525,15 +1970,17 @@ elif mode == 'predict':
 
     # inference parameters
     squence_stride = 1
-    params['BATCH_SIZE'] = 512*16
-    # params["BATCH_SIZE"] = 1024*16
+    # params['BATCH_SIZE'] =1# 512*4*3
+    params['NO_TIMEPOINTS'] = 44
+    params["BATCH_SIZE"] = 1024*4
     # pdb.set_trace()
-    # from model.input_augment_weighted import rippleAI_load_dataset
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/input_augment_weighted.py")
-    model_module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(model_module)
-    rippleAI_load_dataset = model_module.rippleAI_load_dataset
+    from model.input_augment_weighted import rippleAI_load_dataset
+    # from model.input_proto_new import rippleAI_load_dataset
+    # import importlib.util
+    # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/input_augment_weighted.py")
+    # model_module = importlib.util.module_from_spec(spec)
+    # spec.loader.exec_module(model_module)
+    # rippleAI_load_dataset = model_module.rippleAI_load_dataset
 
     # from model.input_aug import rippleAI_load_dataset
     # from model.input_fn import rippleAI_load_dataset
@@ -1541,14 +1988,24 @@ elif mode == 'predict':
     if flag_numpy:
         print('Using numpy')
         # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/FlatLFP_2500.npy')
-        LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/SexyLFP_2500.npy')
+        # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/SexyLFP_2500.npy')
+        # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/Mouse3_LFPSub_2500.npy')
+        # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/Mouse3_LFP_2500.npy')
+        # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/Mouse3_ModelInputs_2500.npy')
+        LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/Mouse3_LFP_ZSig_2500.npy')
+
         LFP = np.transpose(LFP, (1, 0))
+        # pdb.set_trace()
         peak_chind = 12 # sexy peak
+        # peak_chind = 15 # sexy peak
         # peak_chind = 28 # sexy cortex
         LFP = LFP[:,peak_chind-4:peak_chind+4]
+        # LFP = (LFP - np.mean(LFP, axis=0)) / np.std(LFP, axis=0)
         labels = np.zeros(LFP.shape[0])
     else:
         preproc = False if model_name=='RippleNet' else True
+        if 'NAME' not in params or not params['NAME']:
+            params['NAME'] = model_name
         if 'FiltL' in params['NAME']:
             val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='low', preprocess=preproc)
         elif 'FiltH' in params['NAME']:
@@ -1595,21 +2052,40 @@ elif mode == 'predict':
         train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
         windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
         probs = np.hstack((np.zeros((15, 1)).flatten(), windowed_signal))
+
+        if flag_numpy:
+                # pdb.set_trace()
+                probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
+                # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/probs_{0}_{1}.npy'.format(study_num, tag), probs)
+                pdb.set_trace()
+                np.save('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_decimate_{1}.npy'.format(study_num, tag), probs)
+                # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_{1}.npy'.format(study_num, tag), probs)
+                sys.exit(0)
     else:
         sample_length = params['NO_TIMEPOINTS']
         if 'Patch' in params['TYPE_ARCH']:
             sample_length = params['seq_length']
             params['BATCH_SIZE'] = 512
             squence_stride = 1
+        elif flag_numpy:
+            print('Using numpy')
+            sample_length = params['NO_TIMEPOINTS']
+            squence_stride = 10
+            # pdb.set_trace()
         train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=squence_stride, batch_size=params["BATCH_SIZE"])
         windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
-        
         if flag_numpy:
             # pdb.set_trace()
             probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
-            np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/probs_{0}_{1}.npy'.format(study_num, tag), probs)
-            pdb.set_trace()
-            
+            # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/probs_{0}_{1}.npy'.format(study_num, tag), probs)
+            # pdb.set_trace()
+            # np.save('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_decimate_{1}.npy'.format(study_num, tag), probs)
+            # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_{1}.npy'.format(study_num, tag), probs)
+            # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_subZ_{1}.npy'.format(study_num, tag), probs)
+            np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_LFPzSig_{1}.npy'.format(study_num, tag), probs)
+            # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_{1}.npy'.format(study_num, tag), probs)
+            sys.exit(0)
+
         # different outputs
         if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1:
             if len(windowed_signal.shape) == 3:
@@ -1637,11 +2113,15 @@ elif mode == 'predict':
     # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}_sf{2}.npy'.format(val_id, model_name, params['SRATE']), probs)
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/preds_val{0}_{1}_{3}_sf{2}.npy'.format(val_id, model_name, params['SRATE'], tag), probs)
 
-    if model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1 or model_name.startswith('Tune') != -1:
+    if  model_name == 'CNN1D':
+        print('no horizon')
+
+    elif model_name.find('Hori') != -1 or model_name.find('Dori') != -1 or model_name.find('Cori') != -1 or model_name.startswith('Tune') != -1:
         if not ('Only' in params['TYPE_ARCH']):
             # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}_sf{2}.npy'.format(val_id, model_name, params['SRATE']), horizon)
             np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}_{3}_sf{2}.npy'.format(val_id, model_name, params['SRATE'], tag), horizon)
 
+    # pdb.set_trace()
     for i,th in enumerate(th_arr):
         pred_val_events = get_predictions_index(probs,th)/samp_freq
         [precision[0,i], recall[0,i], F1_val[0,i], tmpTP, tmpFN, tmpIOU] = get_performance(pred_val_events,labels,verbose=False)
@@ -1651,6 +2131,243 @@ elif mode == 'predict':
     stats = np.stack((precision, recall, F1_val, TP, FN, IOU), axis=-1)
     # np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/stats_val{0}_{1}_sf{2}.npy'.format(val_id, model_name, params['SRATE']), stats)
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/stats_val{0}_{1}_{3}_sf{2}.npy'.format(val_id, model_name, params['SRATE'], tag), stats)
+
+elif mode == 'fine_tune':
+    # modelname
+    model = args.model[0]
+    model_name = model
+    import importlib
+
+    if model_name.startswith('Tune'):
+        # Extract study number from model name (e.g., 'Tune_45_' -> '45')
+        study_num = model_name.split('_')[1]
+        print(f"Loading tuned model from study {study_num}")
+
+        # params['SRATE'] = 2500
+        # Find the study directory
+        import glob
+        # study_dirs = glob.glob(f'studies_1/study_{study_num}_*')
+        tag = args.tag[0]
+        param_dir = f"params_{tag}"
+        study_dirs = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/study_{study_num}_*')
+        # study_dirs = glob.glob(f'studies_CHECK_SIGNALS/{param_dir}/study_{study_num}_*')
+        if not study_dirs:
+            raise ValueError(f"No study directory found for study number {study_num}")
+        study_dir = study_dirs[0]  # Take the first matching directory
+
+        # Load trial info to get parameters
+        with open(f"{study_dir}/trial_info.json", 'r') as f:
+            trial_info = json.load(f)
+            params.update(trial_info['parameters'])
+
+        # Import required modules
+        if 'MixerOnly' in params['TYPE_ARCH']:
+            from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
+            # import importlib.util
+            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            # model_module = importlib.util.module_from_spec(spec)
+            # spec.loader.exec_module(model_module)
+            # build_DBI_TCN = model_module.build_DBI_TCN_MixerOnly
+        elif 'MixerHori' in params['TYPE_ARCH']:
+            # from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_HorizonMixer
+        elif 'MixerDori' in params['TYPE_ARCH']:
+            # from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_DorizonMixer
+        elif 'MixerCori' in params['TYPE_ARCH']:
+            # from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
+        elif 'TripletOnly' in params['TYPE_ARCH']:
+            from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            # import importlib.util
+            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            # model_module = importlib.util.module_from_spec(spec)
+            # spec.loader.exec_module(model_module)
+            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+
+            # spec_inp = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/input_proto_new.py")
+            # inp_module = importlib.util.module_from_spec(spec_inp)
+            # spec_inp.loader.exec_module(inp_module)
+            # rippleAI_load_dataset = inp_module.rippleAI_load_dataset
+            from model.input_proto_new import rippleAI_load_dataset
+        elif 'Patch' in params['TYPE_ARCH']:
+            tf.config.run_functions_eagerly(True)
+            from model.input_augment_weighted import rippleAI_load_dataset
+            from model.model_fn import build_DBI_Patch as build_DBI_TCN
+
+        elif 'CADOnly' in params['TYPE_ARCH']:
+            pretrain_tag = 'params_mixerOnlyEvents2500'
+            pretrain_num = 1414#958
+            pretrained_dir = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{pretrain_tag}/study_{pretrain_num}_*')
+            if not pretrained_dir:
+                raise ValueError(f"No study directory found for study number {pretrain_num}")
+            pretrained_dir = pretrained_dir[0]  # Take the first matching directory
+
+            pretrained_params = copy.deepcopy(params)
+            # Load trial info to get parameters
+            with open(f"{pretrained_dir}/trial_info.json", 'r') as f:
+                trial_info = json.load(f)
+                pretrained_params.update(trial_info['parameters'])
+
+            # Check which weight file is most recent
+            event_weights = f"{pretrained_dir}/event.weights.h5"
+            max_weights = f"{pretrained_dir}/max.weights.h5"
+
+            if os.path.exists(event_weights) and os.path.exists(max_weights):
+                # Both files exist, select the most recently modified one
+                event_mtime = os.path.getmtime(event_weights)
+                max_mtime = os.path.getmtime(max_weights)
+
+                if event_mtime > max_mtime:
+                    weight_file = event_weights
+                    print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
+                else:
+                    weight_file = max_weights
+                    print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
+            elif os.path.exists(event_weights):
+                weight_file = event_weights
+                print("Using event.weights.h5 (max.weights.h5 not found)")
+            elif os.path.exists(max_weights):
+                weight_file = max_weights
+                print("Using max.weights.h5 (event.weights.h5 not found)")
+            else:
+                raise ValueError(f"Neither event.weights.h5 nor max.weights.h5 found in {pretrained_dir}")
+            print(f"Loading weights from: {weight_file}")
+
+            pretrained_params["WEIGHT_FILE"] = weight_file
+
+            # load pretrained model
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{pretrained_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN_Pretrained = model_module.build_DBI_TCN_MixerOnly
+            pretrained_tcn = build_DBI_TCN_Pretrained(pretrained_params["NO_TIMEPOINTS"], params=pretrained_params)
+            pretrained_tcn.load_weights(weight_file)
+            pretrained_tcn.trainable = False
+            pretrained_tcn.compile(optimizer='adam', loss='mse')
+            from model.model_fn import build_DBI_TCN_CADMixerOnly as build_DBI_TCN
+
+
+        from model.model_fn import CSDLayer
+        from tcn import TCN
+        from tensorflow.keras.models import load_model
+        # Load weights
+        params['mode'] = 'predict'
+
+        # Check which weight file is most recent
+        event_weights = f"{study_dir}/event.weights.h5"
+        max_weights = f"{study_dir}/max.weights.h5"
+
+        if os.path.exists(event_weights) and os.path.exists(max_weights):
+            # Both files exist, select the most recently modified one
+            event_mtime = os.path.getmtime(event_weights)
+            max_mtime = os.path.getmtime(max_weights)
+
+            if event_mtime > max_mtime:
+                weight_file = event_weights
+                print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
+            else:
+                weight_file = max_weights
+                print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
+        elif os.path.exists(event_weights):
+            weight_file = event_weights
+            tag += 'EvF1'
+            print("Using event.weights.h5 (max.weights.h5 not found)")
+        elif os.path.exists(max_weights):
+            weight_file = max_weights
+            tag += 'MaxF1'
+            print("Using max.weights.h5 (event.weights.h5 not found)")
+        else:
+            raise ValueError(f"Neither event.weights.h5 nor max.weights.h5 found in {study_dir}")
+        print(f"Loading weights from: {weight_file}")
+
+        if 'CADOnly' in params['TYPE_ARCH']:
+            model = build_DBI_TCN(pretrained_params["NO_TIMEPOINTS"], params=params, pretrained_tcn=pretrained_tcn)
+        elif 'Patch' in params['TYPE_ARCH']:
+            model = build_DBI_TCN(params=params) # Pass only the params dictionary
+        else:
+            params['LOSS_NEGATIVES'] = 100
+            params['LEARNING_RATE'] = 0.00001
+            params['BATCH_SIZE'] = 32
+            params['mode'] = 'fine_tune'
+            model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+        model.load_weights(weight_file)
+
+        # get sampling rate # little dangerous assumes 4 digits
+        if 'Samp' in params['TYPE_LOSS']:
+            sind = params['TYPE_LOSS'].find('Samp')
+            params['SRATE'] = int(params['TYPE_LOSS'][sind+4:sind+8])
+        else:
+            params['SRATE'] = 1250
+
+    model.summary()
+    params['BATCH_SIZE'] = 32
+    # input
+    if 'NOZ' in params['TYPE_LOSS']:
+        print('Not pre-processing')
+        preproc = False
+    else:
+        print('Preprocessing')
+        preproc = True
+    if 'FiltL' in params['TYPE_LOSS']:
+        train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, use_band='low', preprocess=preproc)
+    elif 'FiltH' in params['TYPE_LOSS']:
+        train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, use_band='high', preprocess=preproc)
+    elif 'FiltM' in params['TYPE_LOSS']:
+        train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, use_band='muax', preprocess=preproc)
+    else:
+        if 'TripletOnly' in params['TYPE_ARCH']:
+            params['steps_per_epoch'] = 1000
+            train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True)
+        else:
+            train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
+    # train_size = len(list(train_dataset))
+    params['RIPPLE_RATIO'] = label_ratio
+
+
+    # Setup callbacks including the verifier
+    callbacks = [cb.EarlyStopping(monitor='val_f1',  # Change monitor
+                        patience=50,
+                        mode='max',
+                        verbose=1,
+                        restore_best_weights=True),
+                cb.ModelCheckpoint(f"{study_dir}/max.mpntuned.weights.h5",
+                            monitor='val_f1',
+                            verbose=1,
+                            save_best_only=True,
+                            save_weights_only=True,
+                            mode='max'),
+                            cb.ModelCheckpoint(
+                            f"{study_dir}/event.mpntuned.weights.h5",
+                            monitor='val_event_f1',  # Change monitor
+                            verbose=1,
+                            save_best_only=True,
+                            save_weights_only=True,
+                            mode='max')]
+    val_steps = dataset_params['VAL_STEPS']
+
+    # Train and evaluate
+    history = model.fit(train_dataset,
+        steps_per_epoch=dataset_params['ESTIMATED_STEPS_PER_EPOCH'],
+        validation_data=test_dataset,
+        validation_steps=val_steps,  # Explicitly set to avoid the partial batch
+        epochs=params['NO_EPOCHS'],
+        callbacks=callbacks,
+        verbose=1)
+
 
 elif mode == 'predictSynth':
 
@@ -2038,7 +2755,7 @@ elif mode=='export':
                 pretrained_params.update(trial_info['parameters'])
 
             # Check which weight file is most recent
-            event_weights = f"{pretrained_dir}/event.weights.h5"
+            event_weights = f"{pretrained_dir}/event.tuned.weights.h5"
             max_weights = f"{pretrained_dir}/max.weights.h5"
 
             if os.path.exists(event_weights) and os.path.exists(max_weights):
@@ -2074,22 +2791,22 @@ elif mode=='export':
             pretrained_tcn.load_weights(weight_file)
             pretrained_tcn.trainable = False
             pretrained_tcn.compile(optimizer='adam', loss='mse')
-            
+
 
             spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
             model_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(model_module)
-            build_DBI_TCN = model_module.build_DBI_TCN_CADMixerOnly            
+            build_DBI_TCN = model_module.build_DBI_TCN_CADMixerOnly
 
         # weight_file = f"{study_dir}/robust.weights.h5"
-        
+
         if 'CADOnly' in params['TYPE_ARCH']:
             from model.model_fn import CSDLayer
             from tcn import TCN
             from tensorflow.keras.models import load_model
             # Load weights
             params['mode'] = 'predict'
-            
+
             # weight_file = f"{study_dir}/last.weights.h5"
             if 'Events' in tag:
                 weight_file = f"{study_dir}/event.weights.h5"
@@ -2121,7 +2838,10 @@ elif mode=='export':
                 weight_file = f"{study_dir}/max.weights.h5"
                 tag += 'MaxF1'
             params['mode'] = 'predict'
-            # weight_file = f"{study_dir}/last.weights.h5"
+            weight_file = f"{study_dir}/event.tuned.weights.h5"
+
+            # weight_file = f"{study_dir}/max.mpntuned.weights.h5"
+            # max_weights = f"{study_dir}/max.mpntuned.weights.h5"
             # # if 'MixerOnly' in params['TYPE_ARCH']:
             # weight_file = f"{study_dir}/max.weights.h5"
             # tag += 'MaxF1'
@@ -2231,16 +2951,19 @@ elif mode=='export':
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
 
-    model_converter = 'TF' # 'TF' 'TFLite'
+    model_converter = 'ONNX' # 'TF' 'TFLite'
     if model_converter == 'ONNX':
-        
+
         import tf2onnx
         # Convert the model to ONNX format
-        spec = [tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype, name="x")]
+        # spec = [tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype, name="x")]
+        # spec = [tf.TensorSpec([1,92,8], model.inputs[0].dtype, name="x")]
+        spec = [tf.TensorSpec([1,44,8], model.inputs[0].dtype, name="x")]
+        # pdb.set_trace()
         output_path = f"./frozen_models/{model_name}/model.onnx"
-        model_proto, _ = tf2onnx.convert.from_keras(model, input_signature=spec, output_path=output_path)
+        model_proto, _ = tf2onnx.convert.from_keras(model, input_signature=spec, output_path=output_path, opset=15)
         print(f"Model saved to {output_path}")
-        
+
     elif model_converter == 'TFLite':
         # Convert the model to a TensorFlow Lite model
         converter = tf.lite.TFLiteConverter.from_keras_model(model)
@@ -2266,7 +2989,7 @@ elif mode=='export':
         print("Frozen model outputs: ")
         print(frozen_func.outputs)
 
-        
+
         # os.mkdir('./frozen_models/{}'.format(model_name))
         # Save frozen graph from frozen ConcreteFunction to hard drive
         tf.io.write_graph(graph_or_graph_def=frozen_func.graph,
@@ -2538,7 +3261,8 @@ elif mode == 'tune_worker':
         # from model.study_objectives import objective_triplet as objective
         objective = objective_triplet
     elif 'MixerOnly'.lower() in tag.lower():
-        from model.study_objectives import objective_only as objective
+        # from model.study_objectives import objective_only as objective
+        objective = objective_only
     elif 'CADOnly'.lower() in tag.lower():
         # from model.study_objectives import objective_only_30k as objective
         objective = objective_only_30k
@@ -2770,7 +3494,7 @@ elif mode == 'tune_viz_multi':
     # --- Pareto Optimal Trials Analysis ---
     print("Analyzing Pareto optimal trials...")
     pareto_trials = study.best_trials # These are the trials on the Pareto front
-    
+
     if not pareto_trials:
         print("No Pareto optimal trials found (study.best_trials is empty).")
         pareto_df = pd.DataFrame() # Create empty dataframe
@@ -2986,7 +3710,7 @@ elif mode == 'tune_viz_multi':
     print(json.dumps(stats, indent=2))
 
     print(f"\nVisualization generation complete. Results are in: {viz_dir}")
-     
+
 elif mode == 'tune_viz_multi_v2':
     import pandas as pd
     import plotly.graph_objects as go
@@ -3095,11 +3819,11 @@ elif mode == 'tune_viz_multi_v2':
 
     # --- Pareto Optimal Trials Analysis ---
     print("Analyzing Pareto optimal trials...")
-    pareto_trials_optuna_objects = study.best_trials 
-    
+    pareto_trials_optuna_objects = study.best_trials
+
     if not pareto_trials_optuna_objects:
         print("No Pareto optimal trials found (study.best_trials is empty).")
-        pareto_df = pd.DataFrame() 
+        pareto_df = pd.DataFrame()
     else:
         pareto_trial_numbers = [t.number for t in pareto_trials_optuna_objects]
         pareto_df = all_df[all_df['trial_number'].isin(pareto_trial_numbers)].copy()
@@ -3148,7 +3872,7 @@ elif mode == 'tune_viz_multi_v2':
         min_val, max_val = series.min(), series.max()
         if min_val <= 0: return False
         if min_val < 1e-9 : return False # Avoid log for extremely small values if range is also small
-        return (max_val / min_val) > 100 
+        return (max_val / min_val) > 100
 
     for param in hyperparams:
         if param not in all_df.columns or all_df[param].isnull().all() or all_df[param].nunique() <= 1:
@@ -3166,16 +3890,16 @@ elif mode == 'tune_viz_multi_v2':
             # Plot all completed trials as background
             if is_numeric:
                 sns.scatterplot(data=all_df, x=param, y='f1_score', ax=ax1, color='lightgray', alpha=0.3, label='_nolegend_', s=30)
-            else: 
+            else:
                  sns.stripplot(data=all_df, x=param, y='f1_score', ax=ax1, color='lightgray', alpha=0.3, order=sorted(all_df[param].astype(str).unique()), label='_nolegend_', s=4)
 
             # Highlight Pareto optimal trials for F1 Score
             if not pareto_df.empty and param in pareto_df.columns:
                 if is_numeric:
                     sns.scatterplot(data=pareto_df, x=param, y='f1_score', ax=ax1, color='skyblue', s=70, marker='o', label='Pareto F1 Score', alpha=0.7, edgecolor='blue')
-                else: 
+                else:
                     sns.stripplot(data=pareto_df, x=param, y='f1_score', ax=ax1, color='skyblue', s=7, marker='o', order=sorted(all_df[param].astype(str).unique()), label='Pareto F1 Score', alpha=0.7, jitter=False, edgecolor='blue')
-            
+
             # Highlight Top N Pareto optimal trials even more for F1 Score
             if not top_pareto_df.empty and param in top_pareto_df.columns:
                 if is_numeric:
@@ -3185,25 +3909,25 @@ elif mode == 'tune_viz_multi_v2':
 
             ax1.set_ylabel('F1 Score', color='blue')
             ax1.tick_params(axis='y', labelcolor='blue')
-            ax1.set_ylim(f1_ylim) 
+            ax1.set_ylim(f1_ylim)
             if use_log:
                 ax1.set_xscale('log')
                 ax1.set_xlabel(f"{param} (log scale)")
             else:
                 ax1.set_xlabel(param)
-            if not is_numeric: 
+            if not is_numeric:
                  plt.setp(ax1.get_xticklabels(), rotation=45, ha="right")
 
             ax2 = ax1.twinx()
             if is_numeric:
                 sns.scatterplot(data=all_df, x=param, y='latency', ax=ax2, color='lightpink', alpha=0.3, label='_nolegend_', s=30)
-            else: 
+            else:
                  sns.stripplot(data=all_df, x=param, y='latency', ax=ax2, color='lightpink', alpha=0.3, order=sorted(all_df[param].astype(str).unique()), label='_nolegend_', s=4)
 
             if not pareto_df.empty and param in pareto_df.columns:
                 if is_numeric:
                     sns.scatterplot(data=pareto_df, x=param, y='latency', ax=ax2, color='salmon', s=70, marker='X', label='Pareto Latency', alpha=0.7, edgecolor='red')
-                else: 
+                else:
                     sns.stripplot(data=pareto_df, x=param, y='latency', ax=ax2, color='salmon', s=7, marker='X', order=sorted(all_df[param].astype(str).unique()), label='Pareto Latency', alpha=0.7, jitter=False, edgecolor='red')
 
             if not top_pareto_df.empty and param in top_pareto_df.columns:
@@ -3214,32 +3938,32 @@ elif mode == 'tune_viz_multi_v2':
 
             ax2.set_ylabel('Latency', color='red')
             ax2.tick_params(axis='y', labelcolor='red')
-            ax2.set_ylim(lat_ylim) 
+            ax2.set_ylim(lat_ylim)
 
             # Combine legends
-            legend_items = {} 
+            legend_items = {}
             for ax_ in [ax1, ax2]:
                 h, l = ax_.get_legend_handles_labels()
                 for handle, label_text in zip(h, l):
                     if label_text != '_nolegend_' and label_text not in legend_items:
                         legend_items[label_text] = handle
-            
+
             priority_order = [
-                f'Top {N_TOP_PARETO} Pareto F1', f'Top {N_TOP_PARETO} Pareto Latency', 
+                f'Top {N_TOP_PARETO} Pareto F1', f'Top {N_TOP_PARETO} Pareto Latency',
                 'Pareto F1 Score', 'Pareto Latency'
             ]
             sorted_legend_items_tuples = []
             for label_text in priority_order:
                 if label_text in legend_items:
                     sorted_legend_items_tuples.append((legend_items[label_text], label_text))
-                    del legend_items[label_text] 
+                    del legend_items[label_text]
             for label_text, handle in legend_items.items():
                 sorted_legend_items_tuples.append((handle, label_text))
 
             if sorted_legend_items_tuples:
                 final_handles, final_labels = zip(*sorted_legend_items_tuples)
                 ax1.legend(final_handles, final_labels, loc='best', fontsize='small', frameon=True, facecolor='white', framealpha=0.7)
-            
+
             if ax2.get_legend() is not None: ax2.get_legend().remove()
 
 
@@ -3251,7 +3975,7 @@ elif mode == 'tune_viz_multi_v2':
 
         except Exception as e:
             print(f"Error plotting impact for parameter '{param}': {e}")
-            if 'fig' in locals() and fig: plt.close(fig) 
+            if 'fig' in locals() and fig: plt.close(fig)
             impact_plot_files = [f for f in impact_plot_files if f["name"] != param]
 
 
@@ -3284,7 +4008,7 @@ elif mode == 'tune_viz_multi_v2':
     else:
         print("No numeric hyperparameters found for correlation heatmap.")
         heatmap_rel_path = None
-    
+
     # --- Parallel Coordinate Plot for Pareto Front ---
     parallel_pareto_path_rel = None
     if not pareto_df.empty and pareto_trials_optuna_objects:
@@ -3295,10 +4019,10 @@ elif mode == 'tune_viz_multi_v2':
             if pareto_hyperparams: # Ensure there are params to plot
                 fig_parallel_pareto = optuna.visualization.plot_parallel_coordinate(
                     study,
-                    params=pareto_hyperparams, 
+                    params=pareto_hyperparams,
                     target=lambda t: (t.values[0], t.values[1]) if t.values and len(t.values)==2 else (float('nan'), float('nan')),
                     target_name=["F1 Score", "Latency"],
-                    trials=pareto_trials_optuna_objects 
+                    trials=pareto_trials_optuna_objects
                 )
                 fig_parallel_pareto.update_layout(title=f"Parallel Coordinate Plot (Pareto Optimal Trials - {len(pareto_trials_optuna_objects)} trials)")
                 parallel_pareto_filename = "parallel_coordinate_pareto.html"
@@ -3314,19 +4038,19 @@ elif mode == 'tune_viz_multi_v2':
 
     # --- Generate Summary HTML for Impact Plots ---
     print("Generating summary HTML for impact plots...")
-    
+
     html_parts = [f"""
     <!DOCTYPE html><html><head><title>Hyperparameter Impact Analysis: {study.study_name}</title>
-    <style> 
-        body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }} 
+    <style>
+        body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f4f4f4; color: #333; }}
         .container {{ max-width: 1200px; margin: auto; background-color: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1); }}
         .gallery {{ display: flex; flex-wrap: wrap; gap: 20px; justify-content: space-around; }}
         .param-card {{ border: 1px solid #ddd; padding: 15px; border-radius: 5px; background-color: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.05); margin-bottom: 20px; }}
-        .param-card img {{ max-width: 100%; height: auto; border-radius: 4px; }} 
+        .param-card img {{ max-width: 100%; height: auto; border-radius: 4px; }}
         .param-card.individual-plot {{ width: calc(50% - 20px); /* Two columns */ min-width: 400px; }}
         .param-card.full-width-plot {{ width: 100%; }}
         .param-card iframe {{ width: 100%; height: 500px; border: 1px solid #ccc; border-radius: 4px; }}
-        h1, h2 {{ color: #333; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 10px; }} 
+        h1, h2 {{ color: #333; text-align: center; border-bottom: 2px solid #eee; padding-bottom: 10px; }}
         h1 {{ font-size: 2em; }} h2 {{ font-size: 1.5em; margin-top: 30px; }}
         nav {{ text-align: center; margin-bottom: 30px; background-color: #007bff; padding: 10px; border-radius: 5px; }}
         nav a {{ margin: 0 15px; text-decoration: none; color: white; font-weight: bold; font-size: 1.1em; }}
@@ -3360,7 +4084,7 @@ elif mode == 'tune_viz_multi_v2':
             <p>This heatmap shows linear correlations between numeric hyperparameters. Values close to 1 or -1 indicate strong positive or negative correlation, respectively. Values close to 0 indicate weak linear correlation.</p>
             <a href="{heatmap_rel_path}" target="_blank"><img src="{heatmap_rel_path}" alt="Correlation Heatmap" style="max-width: 800px; display: inline-block;"></a>
         </div>""")
-    
+
     if parallel_pareto_path_rel:
         html_parts.append(f"""
         <h2 id="parallel_coord_pareto">Parallel Coordinate Plot (Pareto Optimal Trials)</h2>
@@ -3378,7 +4102,7 @@ elif mode == 'tune_viz_multi_v2':
                 <img src="{plot_info['path']}" alt="Impact of {plot_info['name']}">
             </a>
         </div>""")
-    html_parts.append("</div>") 
+    html_parts.append("</div>")
 
     html_parts.append("</div></body></html>") # Close container and body
     final_html_content = "\n".join(html_parts)
@@ -3392,9 +4116,9 @@ elif mode == 'tune_viz_multi_v2':
     print("Saving study statistics...")
     stats = {
         "study_name": study.study_name,
-        "n_total_trials_in_db": len(study.trials), 
+        "n_total_trials_in_db": len(study.trials),
         "n_completed_trials_retrieved": len(all_trials),
-        "n_completed_trials_with_valid_objectives": len(all_df), 
+        "n_completed_trials_with_valid_objectives": len(all_df),
         "n_pareto_trials": len(pareto_trials_optuna_objects),
         "n_top_pareto_highlighted": N_TOP_PARETO,
         "n_pruned_trials": len(study.get_trials(deepcopy=False, states=[optuna.trial.TrialState.PRUNED])),
@@ -3408,4 +4132,196 @@ elif mode == 'tune_viz_multi_v2':
 
     print(f"\nVisualization generation complete. Results are in: {viz_dir}")
     print(f"Main report: {os.path.join(viz_dir, 'hyperparameter_impact_analysis.html')}")
-                
+
+elif mode == 'tune_viz_multi_v3':
+    import argparse
+    import os
+    import sys
+    import json
+    import warnings
+    import math
+
+    import pandas as pd
+    import numpy as np
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import optuna
+    from scipy.stats import ks_2samp
+
+    # Optional imports – Plotly & SHAP
+    try:
+        import plotly.express as px
+        HAVE_PLOTLY = True
+    except ImportError:
+        HAVE_PLOTLY = False
+
+    try:
+        import lightgbm as lgb, shap
+        from sklearn.preprocessing import OrdinalEncoder
+        from sklearn.compose import ColumnTransformer
+        from sklearn.pipeline import Pipeline
+        HAVE_SHAP = True
+    except ImportError:
+        HAVE_SHAP = False
+
+    # 2. Paths
+    param_dir = f"params_{tag}"
+    viz_dir = os.path.join("studies", param_dir, "visualizations")
+    param_impact_dir = os.path.join(viz_dir, "param_impact")
+    os.makedirs(param_impact_dir, exist_ok=True)
+
+    # 3. Load study
+    try:
+        storage_url = f"sqlite:///studies/{param_dir}/{param_dir}.db"
+        study = optuna.load_study(study_name=param_dir, storage=storage_url)
+    except Exception as e:
+        print(f"Error loading study '{param_dir}': {e}")
+        sys.exit(1)
+
+    # 4. Standard Optuna plots
+    print("Generating standard Optuna plots...")
+    try:
+        hist_f1 = optuna.visualization.plot_optimization_history(
+            study,
+            target=lambda t: t.values[0] if t.values and len(t.values)>0 else float('nan'),
+            target_name="F1 Score")
+        hist_f1.write_html(os.path.join(viz_dir, "optimization_history_f1.html"))
+
+        hist_lat = optuna.visualization.plot_optimization_history(
+            study,
+            target=lambda t: t.values[1] if t.values and len(t.values)>1 else float('nan'),
+            target_name="Latency")
+        hist_lat.write_html(os.path.join(viz_dir, "optimization_history_latency.html"))
+
+        pareto = optuna.visualization.plot_pareto_front(
+            study, target_names=["F1 Score", "Latency"])
+        pareto.write_html(os.path.join(viz_dir, "pareto_front.html"))
+
+        imp_f1 = optuna.visualization.plot_param_importances(
+            study,
+            target=lambda t: t.values[0] if t.values and len(t.values)>0 else float('nan'),
+            target_name="F1 Score")
+        imp_f1.write_html(os.path.join(viz_dir, "param_importances_f1.html"))
+
+        imp_lat = optuna.visualization.plot_param_importances(
+            study,
+            target=lambda t: t.values[1] if t.values and len(t.values)>1 else float('nan'),
+            target_name="Latency")
+        imp_lat.write_html(os.path.join(viz_dir, "param_importances_latency.html"))
+
+        print("Standard plots generated.")
+    except Exception as e:
+        print(f"Warning: Error generating standard plots: {e}")
+
+    # 5. Data prep
+    all_trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
+    rows = []
+    for t in all_trials:
+        if t.values and len(t.values)==2:
+            try:
+                f1, lat = float(t.values[0]), float(t.values[1])
+            except:
+                continue
+            if not (np.isnan(f1) or np.isnan(lat)):
+                d = {"trial_number": t.number, "f1_score": f1, "latency": lat}
+                d.update(t.params)
+                rows.append(d)
+    all_df = pd.DataFrame(rows)
+
+    # 6. Axis quantiles
+    f1_q05, f1_q95 = np.nanquantile(all_df['f1_score'], [0.05,0.95])
+    lat_q05, lat_q95 = np.nanquantile(all_df['latency'], [0.05,0.95])
+    f1_ylim = (max(0, f1_q05-(f1_q95-f1_q05)*0.05), min(1, f1_q95+(f1_q95-f1_q05)*0.05))
+    lat_ylim = (max(0, lat_q05-(lat_q95-lat_q05)*0.05), lat_q95+(lat_q95-lat_q05)*0.05)
+
+    # 7. Pareto analysis
+    pareto_trials = study.best_trials
+    pareto_df = all_df[all_df['trial_number'].isin([t.number for t in pareto_trials])].copy()
+    pareto_df['combined_score'] = (pareto_df['f1_score'] + (1-pareto_df['latency']))/2
+    pareto_df.sort_values('combined_score', ascending=False, inplace=True)
+    N_TOP = min(10, len(pareto_df))
+
+    # 8. Quantitative summaries
+    hyperparams = [c for c in all_df.columns if c not in ['trial_number','f1_score','latency','combined_score']]
+    def summarize_param(p):
+        s_all = all_df[p].dropna()
+        s_par = pareto_df[p].dropna()
+        if pd.api.types.is_numeric_dtype(s_all) and not pd.api.types.is_bool_dtype(s_all):
+            qs = (0.10, 0.50, 0.90)
+            good = s_par
+            bad  = s_all[~s_all.index.isin(good.index)]
+            return {
+                "pareto_q": np.quantile(good, qs).round(6).tolist() if len(good) else [None]*3,
+                "other_q": np.quantile(bad, qs).round(6).tolist() if len(bad) else [None]*3,
+                "ks_p": float(ks_2samp(good, bad).pvalue) if len(good) and len(bad) else None
+            }
+        else:
+            return {
+                "all_counts": s_all.value_counts().to_dict(),
+                "pareto_counts": s_par.value_counts().to_dict()
+            }
+
+
+    with open(os.path.join(param_impact_dir, "param_ranges.json"), "w") as fp:
+        json.dump({p: summarize_param(p) for p in hyperparams}, fp, indent=2)
+
+    # 8c. Per‐param boxplots
+    # Create Top-k subsets
+    top_f1_df  = pareto_df.nlargest(N_TOP, 'f1_score')  if not pareto_df.empty else pd.DataFrame()
+    top_lat_df = pareto_df.nsmallest(N_TOP, 'latency')    if not pareto_df.empty else pd.DataFrame()
+
+    def make_bins(s, n=5):
+        try: return pd.qcut(s, n, duplicates='drop')
+        except: return s.astype(str)
+
+    for p in hyperparams:
+        # bin continuous
+        vals = all_df[p].dropna()
+        if pd.api.types.is_numeric_dtype(vals) and vals.nunique()>5:
+            bcol = f"{p}_bin"
+            all_df[bcol] = make_bins(all_df[p])
+            bin_map = all_df.set_index('trial_number')[bcol].to_dict()
+            pareto_df[bcol]  = pareto_df['trial_number'].map(bin_map)
+            top_f1_df[bcol]  = top_f1_df['trial_number'].map(bin_map)
+            top_lat_df[bcol] = top_lat_df['trial_number'].map(bin_map)
+            xcol, xlabel = bcol, f"{p} (binned)"
+        else:
+            xcol, xlabel = p, p
+
+        fig, ax1 = plt.subplots(figsize=(8,6))
+        ax2 = ax1.twinx()
+
+        # F1 box + Pareto + Top-F1
+        sns.boxplot(x=xcol, y='f1_score', data=all_df, ax=ax1, palette='Blues', fliersize=2)
+        sns.stripplot(x=xcol, y='f1_score', data=pareto_df, ax=ax1,
+                      color='navy', marker='o', size=8, edgecolor='white', label='Pareto F1', jitter=False)
+        sns.stripplot(x=xcol, y='f1_score', data=top_f1_df, ax=ax1,
+                      color='gold', marker='*', size=12, edgecolor='darkorange', label=f'Top {N_TOP} F1', jitter=False)
+        ax1.set_ylabel('F1 Score', color='navy'); ax1.tick_params(labelcolor='navy')
+        ax1.set_xlabel(xlabel); plt.setp(ax1.get_xticklabels(), rotation=30, ha='right')
+
+        # Latency box + Pareto + Top-Lat
+        sns.boxplot(x=xcol, y='latency', data=all_df, ax=ax2, palette='Reds', fliersize=2)
+        sns.stripplot(x=xcol, y='latency', data=pareto_df, ax=ax2,
+                      color='darkred', marker='^', size=8, edgecolor='white', label='Pareto Lat', jitter=False)
+        sns.stripplot(x=xcol, y='latency', data=top_lat_df, ax=ax2,
+                      color='orangered', marker='s', size=10, edgecolor='firebrick', label=f'Top {N_TOP} Lat', jitter=False)
+        ax2.set_ylabel('Latency', color='firebrick'); ax2.tick_params(labelcolor='firebrick')
+        ax2.set_ylim(lat_ylim)
+
+        # legend
+        h1,l1 = ax1.get_legend_handles_labels()
+        h2,l2 = ax2.get_legend_handles_labels()
+        lookup = dict(zip(l1+l2, h1+h2))
+        order = ['Pareto F1','Pareto Lat',f'Top {N_TOP} F1',f'Top {N_TOP} Lat']
+        labs   = [lbl for lbl in order if lbl in lookup]
+        handles= [lookup[lbl] for lbl in labs]
+        ax1.legend(handles, labs, loc='best', fontsize='small', frameon=True, facecolor='white', framealpha=0.85)
+
+        plt.title(f'Impact of {p} on F1 & Latency')
+        plt.tight_layout()
+        out_fp = os.path.join(param_impact_dir, f"{p}_impact_boxplot.png")
+        plt.savefig(out_fp, dpi=120)
+        plt.close(fig)
+        print(f"Saved {out_fp}")
+        

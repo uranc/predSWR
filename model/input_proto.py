@@ -468,6 +468,7 @@ def create_triplet_dataset(data, labels, params):
     )
     
     # Unpack triplets and ensure correct shapes
+    # pdb.set_trace()
     (anchor_samples, positive_samples, negative_samples), (anchor_labels, positive_labels, negative_labels) = initial_triplets
     
     # Ensure labels have shape [batch, time, 1]
@@ -744,6 +745,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, use_band=None):
     print("Using triplet loss for training")
     regenerator = TripletDatasetRegenerator(train_examples, train_labels, params)
     train_triplet_dataset = regenerator.dataset
+    train_triplet_dataset = train_triplet_dataset.repeat()
     test_triplet_dataset, _ = create_triplet_dataset(test_examples, test_labels, params)
     
     # Add regenerator to dataset params

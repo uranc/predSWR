@@ -7,7 +7,9 @@ import time
 import copy
 
 
-tag = 'mixerOnly' # FiltL, FiltH, FiltM, SingleCh
+tag = 'tripletOnlyLatentsTuned2500' # FiltL, FiltH, FiltM, SingleCh
+# tag = 'tripletOnlyLatents2500' # FiltL, FiltH, FiltM, SingleCh
+# tag = 'mixerOnly' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'mixerHori' # FiltL, FiltH, FiltM, SingleCh
 # model_lib = [1,10]#,16,165,89,186,3,11,23,150,142,2,148
 # model_lib = [3,2,4]# FiltL
@@ -21,9 +23,11 @@ tag = 'mixerOnly' # FiltL, FiltH, FiltM, SingleCh
 # model_lib = []
 # model_lib = [193,275,333,254] # only
 # model_lib = [286,302,303,278] # hori
-model_lib = [254, 275, 283, 319, 428, 437, 443, 504, 521] # only
+# model_lib = [254, 275, 283, 319, 428, 437, 443, 504, 521] # only
 
-
+# model_lib = [1022, 426,717,829,867,1033, 623, 946, 554, 1194] # latents
+# model_lib = [926, 398, 597, 377, 438] # latentsTuned
+model_lib = [1181, 1237, 1347, 1409]
 n=0
 for im, model in enumerate(model_lib):
     # subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model])
@@ -39,7 +43,7 @@ for im, model in enumerate(model_lib):
         print('submitting job for model: ', model_name, im, iv)
         # subprocess.call(['python', 'pred.py', '--mode', 'embedding', '--model', model_name, '--val', str(iv), '--tag', tag])
         subprocess.call(['python', 'pred.py', '--mode', 'predict', '--model', model_name, '--val', str(iv), '--tag', tag])
-        subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model_name, '--val', str(iv), '--tag', tag])
+        # subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model_name, '--val', str(iv), '--tag', tag])
 
         # subprocess.call(['sbatch', 'cpu_batch_16GBXS.sh', model_name, str(iv)])
     

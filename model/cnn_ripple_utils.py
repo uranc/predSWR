@@ -359,8 +359,8 @@ def filter_LFP(LFP, sf=1250, band='low'):
     # Set filter parameters based on band
     if band == 'low':
         print('Filtering low band')
-        lowcut = 1.0
-        highcut = 10.0
+        lowcut = 8.0
+        highcut = 40.0
     elif band == 'high':
         print('Filtering high band')
         lowcut = 120.0
@@ -404,7 +404,10 @@ def process_LFP(LFP, ch=np.arange(0,8), sf=30000, new_sf=1250, use_zscore=True, 
     # data=interpolate_channels(LFP,channels)
     data = LFP
     if use_band is not None:
-        data = filter_LFP(data, sf=sf, band=use_band)
+        if use_band == 'augment':
+            data = filter_LFP(data, sf=sf, band=use_band)
+        else:
+            data = filter_LFP(data, sf=sf, band=use_band)
             
     if sf!=1250:
         print('Downsampling data at {} Hz...'.format(new_sf))
