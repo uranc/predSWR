@@ -3027,6 +3027,129 @@ elif mode=='export':
                         logdir="./frozen_models/{}".format(model_name),
                         name="simple_frozen_graph.pb",
                         as_text=False)
+        
+elif mode=='exportBranch':
+
+
+    import numpy as np
+    import tensorflow as tf
+    from tensorflow.keras import layers
+
+    # modelname
+    model = args.model[0]
+    model_name = model
+    import importlib
+
+    # necessary !!!
+    # tf.compat.v1.disable_eager_execution()
+
+
+    if model_name.startswith('Tune'):
+        # Extract study number from model name (e.g., 'Tune_45_' -> '45')
+        study_num = model_name.split('_')[1]
+        print(f"Loading tuned model from study {study_num}")
+
+        # params['SRATE'] = 2500
+        # Find the study directory
+        import glob
+        # study_dirs = glob.glob(f'studies_1/study_{study_num}_*')
+        tag = args.tag[0]
+        param_dir = f"params_{tag}"
+        # study_dirs = glob.glob(f'/mnt/hpc/projects/OWVinckSWR/DL/predSWR/experiments/studies/{param_dir}/study_{study_num}_*')
+        # study_dirs = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/study_{study_num}_*')
+
+        study_dirs = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/study_{study_num}_*')
+        # study_dirs = glob.glob(f'studies_CHECK_SIGNALS/{param_dir}/study_{study_num}_*')
+        if not study_dirs:
+            raise ValueError(f"No study directory found for study number {study_num}")
+        study_dir = study_dirs[0]  # Take the first matching directory
+
+        # Load trial info to get parameters
+        with open(f"{study_dir}/trial_info.json", 'r') as f:
+            trial_info = json.load(f)
+            params.update(trial_info['parameters'])
+
+
+        if 'TripletOnly' in params['TYPE_ARCH']:
+            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+    
+        from model.model_fn import CSDLayer
+        from tcn import TCN
+        from tensorflow.keras.models import load_model
+        
+        # Load weights
+        params['mode'] = 'predict'
+        weight_file = f"{study_dir}/event.finetune.weights.h5"
+        print(f"Loading weights from: {weight_file}")
+        model1 = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+        model1.load_weights(weight_file)
+    model1.summary()
+    
+    
+    # model 2
+    param_dir_2 = 'params_tripletOnlyShort2500'
+    study_num_2 = 295
+    study_dirs = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir_2}/study_{study_num_2}_*')
+    # study_dirs = glob.glob(f'studies_CHECK_SIGNALS/{param_dir}/study_{study_num}_*')
+    if not study_dirs:
+        raise ValueError(f"No study directory found for study number {study_num}")
+    study_dir = study_dirs[0]  # Take the first matching directory
+
+    # Load trial info to get parameters
+    with open(f"{study_dir}/trial_info.json", 'r') as f:
+        trial_info = json.load(f)
+        params.update(trial_info['parameters'])
+
+
+    if 'TripletOnly' in params['TYPE_ARCH']:
+        # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+        model_module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(model_module)
+        build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+
+    from model.model_fn import CSDLayer
+    from tcn import TCN
+    from tensorflow.keras.models import load_model
+    
+    # Load weights
+    params['mode'] = 'predict'
+    # weight_file = f"{study_dir}/event.finetune.weights.h5"
+    weight_file = f"{study_dir}/max.tuned.weights.h5"
+    print(f"Loading weights from: {weight_file}")
+    model2 = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    model2.load_weights(weight_file)
+    model2.summary()    
+
+    T = 44
+    C = 8
+    inp = Input(shape=(T, C), dtype=tf.float32, name='x')
+    out1 = model1(inp)
+    out2 = model2(inp)
+    # if you want a tuple of outputs instead of concat, just do outputs=[out1,out2]
+    from tensorflow.keras.layers import Concatenate
+    from tensorflow.keras.models import Model
+    merged = Concatenate(axis=-1, name='combined_output')([out1, out2])
+    model = Model(inputs=inp, outputs=merged, name='TwoBranchModel')
+    model.summary()
+    
+    
+    import tf2onnx
+    # Convert the model to ONNX format
+    # spec = [tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype, name="x")]
+    # spec = [tf.TensorSpec([1,92,8], model.inputs[0].dtype, name="x")]
+    # spec = [tf.TensorSpec([2,44,8], model.inputs[0].dtype, name="x")]
+    spec = [tf.TensorSpec([1,44,8], model.inputs[0].dtype, name="x")]
+    # pdb.set_trace()
+    output_path = f"./frozen_models/{model_name}/model_combined.onnx"
+    model_proto, _ = tf2onnx.convert.from_keras(model, input_signature=spec, output_path=output_path, opset=15)
+    print(f"Model saved to {output_path}")
 
 elif mode == 'embedding':
 

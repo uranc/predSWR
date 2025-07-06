@@ -11,7 +11,7 @@
 
 source /mnt/hpc/slurm/uranc/anacond/bin/activate
 conda activate tf_2_14
-export TF_XLA_FLAGS=--tf_xla_cpu_global_jit
+# export TF_XLA_FLAGS=--tf_xla_cpu_global_jit
 export HDF5_USE_FILE_LOCKING=FALSE 
 export CUDA_VISIBLE_DEVICES=0
 
