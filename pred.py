@@ -451,10 +451,10 @@ def objective_triplet(trial):
     par_opt = 'Adam'
     # par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
 
-    reg_lib = ['LOne',  'None'] #'LTwo',
-    par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
+    # reg_lib = ['LOne',  'None'] #'LTwo',
+    # par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
     # par_reg = 'LOne'
-    # par_reg = 'None'  # No regularization for now
+    par_reg = 'None'  # No regularization for now
 
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
     # Build architecture string with timing parameters (adjust format)
@@ -468,9 +468,10 @@ def objective_triplet(trial):
     # params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
     # if params['USE_ZNorm']:
     # params['TYPE_ARCH'] += 'ZNorm'
-    params['USE_L2N'] = trial.suggest_categorical('USE_L2N', [True, False])
-    if params['USE_L2N']:
-        params['TYPE_ARCH'] += 'L2N'
+    # params['USE_L2N'] = trial.suggest_categorical('USE_L2N', [True, False])
+    # if params['USE_L2N']:
+    #     params['TYPE_ARCH'] += 'L2N'
+    params['TYPE_ARCH'] += 'L2N'
 
 
     # params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
@@ -1834,12 +1835,14 @@ elif mode == 'predict':
         from tensorflow.keras.models import load_model
 
         # Check which weight file is most recent
-        event_weights = f"{study_dir}/event.weights.h5"
-        max_weights = f"{study_dir}/max.weights.h5"
+        # event_weights = f"{study_dir}/event.weights.h5"
+        # max_weights = f"{study_dir}/max.weights.h5"
         # event_weights = f"{study_dir}/event.tuned.weights.h5"
         # max_weights = f"{study_dir}/max.tuned.weights.h5"
         # event_weights = f"{study_dir}/event.mpntuned.weights.h5"
         # max_weights = f"{study_dir}/max.mpntuned.weights.h5"
+        event_weights = f"{study_dir}/event.finetune.weights.h5"
+        max_weights = f"{study_dir}/max.finetune.weights.h5"
         if os.path.exists(event_weights) and os.path.exists(max_weights):
             # Both files exist, select the most recently modified one
             event_mtime = os.path.getmtime(event_weights)
@@ -1984,7 +1987,7 @@ elif mode == 'predict':
 
     # from model.input_aug import rippleAI_load_dataset
     # from model.input_fn import rippleAI_load_dataset
-    flag_numpy = True
+    flag_numpy = False
     if flag_numpy:
         print('Using numpy')
         # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/FlatLFP_2500.npy')
@@ -2190,12 +2193,12 @@ elif mode == 'fine_tune':
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
         elif 'TripletOnly' in params['TYPE_ARCH']:
-            from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
-            # import importlib.util
-            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
-            # model_module = importlib.util.module_from_spec(spec)
-            # spec.loader.exec_module(model_module)
-            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
 
             # spec_inp = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/input_proto_new.py")
             # inp_module = importlib.util.module_from_spec(spec_inp)
@@ -2299,9 +2302,14 @@ elif mode == 'fine_tune':
         elif 'Patch' in params['TYPE_ARCH']:
             model = build_DBI_TCN(params=params) # Pass only the params dictionary
         else:
-            params['LOSS_NEGATIVES'] = 100
-            params['LEARNING_RATE'] = 0.00001
+            params['LOSS_NEGATIVES'] = 30
+            # params['LOSS_WEIGHT'] = 30#100
+            # import pdb
+            # pdb.set_trace()
+            params['LOSS_WEIGHT'] = 0.01
+            params['LEARNING_RATE'] = 0.0001
             params['BATCH_SIZE'] = 32
+            params['HYPER_ENTROPY'] = 1.0
             params['mode'] = 'fine_tune'
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         model.load_weights(weight_file)
@@ -2331,7 +2339,9 @@ elif mode == 'fine_tune':
     else:
         if 'TripletOnly' in params['TYPE_ARCH']:
             params['steps_per_epoch'] = 1000
-            train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True)
+            flag_online = 'Online' in params['TYPE_ARCH']
+            train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
+
         else:
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
     # train_size = len(list(train_dataset))
@@ -2339,24 +2349,44 @@ elif mode == 'fine_tune':
 
 
     # Setup callbacks including the verifier
-    callbacks = [cb.EarlyStopping(monitor='val_f1',  # Change monitor
-                        patience=50,
+    # callbacks = [cb.EarlyStopping(monitor='val_f1',  # Change monitor
+    #                     patience=50,
+    #                     mode='max',
+    #                     verbose=1,
+    #                     restore_best_weights=True),
+    #             cb.ModelCheckpoint(f"{study_dir}/max.mpntuned.weights.h5",
+    #                         monitor='val_f1',
+    #                         verbose=1,
+    #                         save_best_only=True,
+    #                         save_weights_only=True,
+    #                         mode='max'),
+    #                         cb.ModelCheckpoint(
+    #                         f"{study_dir}/event.mpntuned.weights.h5",
+    #                         monitor='val_event_f1',  # Change monitor
+    #                         verbose=1,
+    #                         save_best_only=True,
+    #                         save_weights_only=True,
+    #                         mode='max')]
+    patience = 50
+    callbacks = [cb.EarlyStopping(monitor='val_event_pr_auc',  # Change monitor
+                        patience=patience,
                         mode='max',
                         verbose=1,
                         restore_best_weights=True),
-                cb.ModelCheckpoint(f"{study_dir}/max.mpntuned.weights.h5",
-                            monitor='val_f1',
+        cb.ModelCheckpoint(f"{study_dir}/max.finetune2.weights.h5",
+                            monitor='val_latency_weighted_f1',
                             verbose=1,
                             save_best_only=True,
                             save_weights_only=True,
                             mode='max'),
                             cb.ModelCheckpoint(
-                            f"{study_dir}/event.mpntuned.weights.h5",
-                            monitor='val_event_f1',  # Change monitor
+                            f"{study_dir}/event.finetune2.weights.h5",
+                            monitor='val_event_pr_auc',  # Change monitor
                             verbose=1,
                             save_best_only=True,
                             save_weights_only=True,
-                            mode='max')]
+                            mode='max')
+    ]    
     val_steps = dataset_params['VAL_STEPS']
 
     # Train and evaluate
@@ -2838,7 +2868,7 @@ elif mode=='export':
                 weight_file = f"{study_dir}/max.weights.h5"
                 tag += 'MaxF1'
             params['mode'] = 'predict'
-            weight_file = f"{study_dir}/event.tuned.weights.h5"
+            weight_file = f"{study_dir}/event.finetune.weights.h5"
 
             # weight_file = f"{study_dir}/max.mpntuned.weights.h5"
             # max_weights = f"{study_dir}/max.mpntuned.weights.h5"
@@ -2958,7 +2988,8 @@ elif mode=='export':
         # Convert the model to ONNX format
         # spec = [tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype, name="x")]
         # spec = [tf.TensorSpec([1,92,8], model.inputs[0].dtype, name="x")]
-        spec = [tf.TensorSpec([1,44,8], model.inputs[0].dtype, name="x")]
+        spec = [tf.TensorSpec([2,44,8], model.inputs[0].dtype, name="x")]
+        # spec = [tf.TensorSpec([1,44,8], model.inputs[0].dtype, name="x")]
         # pdb.set_trace()
         output_path = f"./frozen_models/{model_name}/model.onnx"
         model_proto, _ = tf2onnx.convert.from_keras(model, input_signature=spec, output_path=output_path, opset=15)

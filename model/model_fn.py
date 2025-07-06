@@ -1011,13 +1011,12 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
         # Metrics - only applied to anchor output for metric tracking
         model._is_classification_only = True
-
-        f1_metric = MaxF1MetricHorizon(model=model)
-        # r1_metric = RobustF1Metric(model=model)
-        # latency_metric = LatencyMetric(model=model)
-        event_f1_metric = EventAwareF1(model=model)
-        fp_event_metric = EventFalsePositiveRateMetric(model=model)
-
+        metrics = [
+            EventPRAUC(model=model),
+            LatencyWeightedF1Metric(tau=32, model=model),
+            TPRatFixedFPMetric(1., params['NO_TIMEPOINTS']/params['SRATE'],  # adjust to your sampling rate
+                            model=model),
+        ]
         # Create loss function and compile model
         # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
@@ -1025,7 +1024,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         model.compile(
             optimizer=this_optimizer,
             loss=loss_fn,
-            metrics=[f1_metric, event_f1_metric, fp_event_metric]
+            metrics=metrics
         ) 
     else:
         all_inputs = Input(shape=(None, input_chans), name='all_inputs')
@@ -1859,7 +1858,7 @@ def _ch(t, is_cls):               # [B,T,?] -> [B,T]
 # 1) EVENT-LEVEL PR-AUC
 # =====================================================================
 class EventPRAUC(tf.keras.metrics.Metric):
-    def __init__(self, thresholds=tf.linspace(0., 1., 51),
+    def __init__(self, thresholds=tf.linspace(0., 1., 11),
                  name="event_pr_auc", model=None, **kw):
         super().__init__(name=name, **kw)
         self.tau = tf.cast(thresholds, tf.float32)              # [K]
@@ -1907,7 +1906,7 @@ class LatencyWeightedF1Metric(tf.keras.metrics.Metric):
     Each TP is weighted by w = min(1, exp(-(max(latency,0))/tau)).
     tau in **samples**.
     """
-    def __init__(self, tau, thresholds=tf.linspace(0., 1., 21),
+    def __init__(self, tau, thresholds=tf.linspace(0., 1., 11),
                  name="latency_weighted_f1", model=None, **kw):
         super().__init__(name=name, **kw)
         self.tau = float(tau)
@@ -1969,51 +1968,50 @@ class LatencyWeightedF1Metric(tf.keras.metrics.Metric):
 # 3) TPR at FIXED FP/min
 # =====================================================================
 class TPRatFixedFPMetric(tf.keras.metrics.Metric):
-    """
-    True-positive rate at the highest threshold that keeps FP/min ≤ budget.
-    win_sec = window length in seconds (64 / Fs, etc.).
-    """
     def __init__(self, target_fp_per_min, win_sec,
-                 thresholds=tf.linspace(0., 1., 51),
+                 thresholds=tf.linspace(0., 1., 11),
                  name="tpr_at_fpmin", model=None, **kw):
         super().__init__(name=name, **kw)
-        self.fpb   = float(target_fp_per_min)
-        self.wsec  = float(win_sec)
-        self.t     = tf.cast(thresholds, tf.float32)
+        self.fpb  = float(target_fp_per_min)
+        self.wsec = tf.constant(win_sec, tf.float32)           # window sec
+        self.t    = tf.cast(thresholds, tf.float32)
         k = len(thresholds)
         self.tp = self.add_weight("tp", shape=(k,), initializer="zeros")
         self.fp = self.add_weight("fp", shape=(k,), initializer="zeros")
         self.fn = self.add_weight("fn", shape=(k,), initializer="zeros")
         self.n_win = self.add_weight("n_win", initializer="zeros")
         self.model = model
+        self.eps = tf.constant(tf.keras.backend.epsilon(), tf.float32)
 
     def update_state(self, y_true, y_pred, **_):
         is_cls = getattr(self.model, "_is_classification_only", True)
         yt, yp = _ch(y_true, is_cls), _ch(y_pred, is_cls)
 
-        true_evt_b = tf.reduce_max(yt, 1) >= 0.5                 # [B]
-        pred_max_b = tf.reduce_max(yp, 1)[:, None]               # [B,1]
+        true_evt = tf.reduce_max(yt, 1) >= 0.5                 # [B]
+        pred_max = tf.reduce_max(yp, 1)[:, None]               # [B,1]
 
-        pred_evt_bk = pred_max_b >= self.t[None, :]              # [B,K] bool
-        true_bk     = true_evt_b[:, None]                        # [B,1]
+        pred_evt = pred_max >= self.t[None, :]                 # [B,K] bool
 
-        self.tp.assign_add(tf.reduce_sum(tf.cast(pred_evt_bk &  true_bk, tf.float32), 0))
-        self.fp.assign_add(tf.reduce_sum(tf.cast(pred_evt_bk & ~true_bk, tf.float32), 0))
-        self.fn.assign_add(tf.reduce_sum(tf.cast(~pred_evt_bk &  true_bk, tf.float32), 0))
+        self.tp.assign_add(tf.reduce_sum(
+            tf.cast(pred_evt &  true_evt[:, None], tf.float32), axis=0))
+        self.fp.assign_add(tf.reduce_sum(
+            tf.cast(pred_evt & ~true_evt[:, None], tf.float32), axis=0))
+        self.fn.assign_add(tf.reduce_sum(
+            tf.cast(~pred_evt &  true_evt[:, None], tf.float32), axis=0))
+
         self.n_win.assign_add(tf.cast(tf.shape(yt)[0], tf.float32))
 
     def result(self):
-        minutes = (self.n_win * self.wsec) / 60.0 + EPS
+        minutes = (self.n_win * self.wsec) / 60.0 + self.eps
         fp_per_min = self.fp / minutes
-        tpr = self.tp / (self.tp + self.fn + EPS)
-
-        valid = tf.where(fp_per_min <= self.fpb, tpr, 0.)
-        return tf.reduce_max(valid)
+        tpr = self.tp / (self.tp + self.fn + self.eps)
+        valid_tpr = tf.where(fp_per_min <= self.fpb, tpr, 0.)
+        return tf.reduce_max(valid_tpr)
 
     def reset_state(self):
-        for v in (self.tp, self.fp, self.fn):
+        for v in (self.tp, self.fp, self.fn, self.n_win):
             v.assign(tf.zeros_like(v))
-        self.n_win.assign(0.)
+
 
 def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None):
     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
@@ -2808,7 +2806,7 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 
 
         # Weight between triplet and classification loss
-        total_loss = tf.reduce_mean(triplet_loss_val) + tf.reduce_mean(total_class_loss)
+        total_loss = loss_weight*tf.reduce_mean(triplet_loss_val) + tf.reduce_mean(total_class_loss)
         # total_loss = tf.reduce_mean(total_class_loss)
         if ('Entropy' in params['TYPE_LOSS']) and ('HYPER_ENTROPY' in params):
             entropy_factor = params['HYPER_ENTROPY']
