@@ -5,7 +5,7 @@
 #SBATCH --gpus=rtxa6000:1
 #SBATCH --cpus-per-gpu=8
 #SBATCH --mem-per-cpu=7800
-#SBATCH --time=3-00:00:00
+#SBATCH --time=1-00:00:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cem.uran@esi-frankfurt.de
 
@@ -16,6 +16,6 @@ export HDF5_USE_FILE_LOCKING=FALSE
 export CUDA_VISIBLE_DEVICES=0
 
 
-srun /mnt/hpc/slurm/uranc/anacond/envs/tf_2_14/bin/python /cs/projects/MWNaturalPredict/DL/predSWR/pred.py --mode tune_worker --tag tripletOnlyShort2500
+srun /mnt/hpc/slurm/uranc/anacond/envs/tf_2_14/bin/python /cs/projects/MWNaturalPredict/DL/predSWR/pred.py --mode tune_worker --tag $1
 
 exit 0

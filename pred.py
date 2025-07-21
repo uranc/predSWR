@@ -319,7 +319,7 @@ def objective_triplet(trial):
 
     # Dynamic learning rate range
     # learning_rate = trial.suggest_float('learning_rate', 1e-3, 1e-2, log=True)
-    learning_rate = 3e-3
+    learning_rate = 1e-3
     params['LEARNING_RATE'] = learning_rate
 
     # Optional batch size tuning
@@ -383,10 +383,10 @@ def objective_triplet(trial):
     params['HORIZON_MS'] = 1#trial.suggest_int('HORIZON_MS', 1, 5)
     params['SHIFT_MS'] = 0
 
-    params['LOSS_TupMPN'] = 1.0#trial.suggest_float('LOSS_TupMPN', 0.0001, 100.0, log=True)
-    params['LOSS_SupCon'] = 50.0#trial.suggest_float('LOSS_SupCon', 0.1, 100.0, log=True)
-    params['LOSS_WEIGHT'] = trial.suggest_float('LOSS_WEIGHT', 0.001, 100.0, log=True)
-    params['LOSS_NEGATIVES'] = trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
+    params['LOSS_TupMPN'] = trial.suggest_float('LOSS_TupMPN', 0.1, 100.0, log=True)
+    params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 0.1, 100.0, log=True)
+    params['LOSS_WEIGHT'] = 1.0#trial.suggest_float('LOSS_WEIGHT', 0.001, 100.0, log=True)
+    params['LOSS_NEGATIVES'] = 10#trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
 
     ax = 25#trial.suggest_int('AX', 25, 85, step=20)
@@ -396,8 +396,8 @@ def objective_triplet(trial):
     # params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
     params['TYPE_LOSS'] = 'FocalAx{:03d}Gx{:03d}'.format(ax, gx)
 
-    entropyLib = [0, 0.5, 1, 3, 10]
-    entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3,4])
+    entropyLib = [0, 0.5, 1, 3]
+    entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
     if entropy_ind > 0:
         params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
         params['TYPE_LOSS'] += 'Entropy'
@@ -445,7 +445,7 @@ def objective_triplet(trial):
 
     # act_lib = ['ELU', 'GELU'] # 'RELU',
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    par_act = 'ELU'
+    par_act = 'GELU'
 
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'Adam'
@@ -485,10 +485,11 @@ def objective_triplet(trial):
         params['TYPE_ARCH'] += 'StopGrad'
     # params['TYPE_ARCH'] += 'StopGrad'
 
-    params['USE_Attention'] = trial.suggest_categorical('USE_Attention', [True, False])
-    if params['USE_Attention']:
-        print('Using Attention')
-        params['TYPE_ARCH'] += 'Att'
+    # params['USE_Attention'] = trial.suggest_categorical('USE_Attention', [True, False])
+    # if params['USE_Attention']:
+    #     print('Using Attention')
+    #     params['TYPE_ARCH'] += 'Att'
+    params['TYPE_ARCH'] += 'Att'
         
     # params['USE_Attention'] = trial.suggest_categorical('USE_Online', [True, False])
     # if params['USE_Attention']:
@@ -505,11 +506,11 @@ def objective_triplet(trial):
     # if params['USE_L2Reg']:
     #     params['TYPE_LOSS'] += 'L2Reg'
 
-    # drop_lib = [0, 5, 10, 20, 50]
-    # drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3,4])
-    # print('Dropout rate:', drop_lib[drop_ind])
-    # if drop_ind > 0:
-    #     params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
+    drop_lib = [0, 5, 10, 20]
+    drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3])
+    print('Dropout rate:', drop_lib[drop_ind])
+    if drop_ind > 0:
+        params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
 
     params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
 
@@ -1836,13 +1837,13 @@ elif mode == 'predict':
 
         # Check which weight file is most recent
         # event_weights = f"{study_dir}/event.weights.h5"
-        # max_weights = f"{study_dir}/max.weights.h5"
+        max_weights = f"{study_dir}/max.weights.h5"
         # event_weights = f"{study_dir}/event.tuned.weights.h5"
         # max_weights = f"{study_dir}/max.tuned.weights.h5"
         # event_weights = f"{study_dir}/event.mpntuned.weights.h5"
         # max_weights = f"{study_dir}/max.mpntuned.weights.h5"
         event_weights = f"{study_dir}/event.finetune.weights.h5"
-        max_weights = f"{study_dir}/max.finetune.weights.h5"
+        # max_weights = f"{study_dir}/max.finetune.weights.h5"
         if os.path.exists(event_weights) and os.path.exists(max_weights):
             # Both files exist, select the most recently modified one
             event_mtime = os.path.getmtime(event_weights)
@@ -2303,13 +2304,11 @@ elif mode == 'fine_tune':
             model = build_DBI_TCN(params=params) # Pass only the params dictionary
         else:
             params['LOSS_NEGATIVES'] = 30
-            # params['LOSS_WEIGHT'] = 30#100
-            # import pdb
-            # pdb.set_trace()
-            params['LOSS_WEIGHT'] = 0.01
-            params['LEARNING_RATE'] = 0.0001
+            params['LOSS_WEIGHT'] = 0.25
+            params['LEARNING_RATE'] = 0.00003
             params['BATCH_SIZE'] = 32
-            params['HYPER_ENTROPY'] = 1.0
+            params['HYPER_ENTROPY'] = 3.0
+            params['LOSS_TupMPN'] = 10.0
             params['mode'] = 'fine_tune'
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         model.load_weights(weight_file)
@@ -2373,14 +2372,14 @@ elif mode == 'fine_tune':
                         mode='max',
                         verbose=1,
                         restore_best_weights=True),
-        cb.ModelCheckpoint(f"{study_dir}/max.finetune2.weights.h5",
+        cb.ModelCheckpoint(f"{study_dir}/max.finetune.weights.h5",
                             monitor='val_latency_weighted_f1',
                             verbose=1,
                             save_best_only=True,
                             save_weights_only=True,
                             mode='max'),
                             cb.ModelCheckpoint(
-                            f"{study_dir}/event.finetune2.weights.h5",
+                            f"{study_dir}/event.finetune.weights.h5",
                             monitor='val_event_pr_auc',  # Change monitor
                             verbose=1,
                             save_best_only=True,
@@ -2785,7 +2784,8 @@ elif mode=='export':
                 pretrained_params.update(trial_info['parameters'])
 
             # Check which weight file is most recent
-            event_weights = f"{pretrained_dir}/event.tuned.weights.h5"
+            event_weights = f"{pretrained_dir}/event.finetune.weights.h5"
+            # event_weights = f"{pretrained_dir}/event.weights.h5"
             max_weights = f"{pretrained_dir}/max.weights.h5"
 
             if os.path.exists(event_weights) and os.path.exists(max_weights):
@@ -2868,7 +2868,7 @@ elif mode=='export':
                 weight_file = f"{study_dir}/max.weights.h5"
                 tag += 'MaxF1'
             params['mode'] = 'predict'
-            weight_file = f"{study_dir}/event.finetune.weights.h5"
+            weight_file = f"{study_dir}/event.weights.h5"
 
             # weight_file = f"{study_dir}/max.mpntuned.weights.h5"
             # max_weights = f"{study_dir}/max.mpntuned.weights.h5"
@@ -2988,8 +2988,8 @@ elif mode=='export':
         # Convert the model to ONNX format
         # spec = [tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype, name="x")]
         # spec = [tf.TensorSpec([1,92,8], model.inputs[0].dtype, name="x")]
-        spec = [tf.TensorSpec([2,44,8], model.inputs[0].dtype, name="x")]
-        # spec = [tf.TensorSpec([1,44,8], model.inputs[0].dtype, name="x")]
+        # spec = [tf.TensorSpec([2,44,8], model.inputs[0].dtype, name="x")]
+        spec = [tf.TensorSpec([1,44,8], model.inputs[0].dtype, name="x")]
         # pdb.set_trace()
         output_path = f"./frozen_models/{model_name}/model.onnx"
         model_proto, _ = tf2onnx.convert.from_keras(model, input_signature=spec, output_path=output_path, opset=15)
@@ -3362,13 +3362,15 @@ elif mode == 'tune_server':
     storage=storage,
     directions=["maximize", "minimize"],  # Maximize F1, minimize FP
     load_if_exists=True,
-    sampler=NSGAIISampler(
-        # population_size=30,  # Number of parallel solutions evolved
-        population_size=16,  # Number of parallel solutions evolved
-        crossover_prob=0.9,  # Probability of crossover between solutions
-        mutation_prob=0.3,   # Probability of mutating a solution
-        seed=42
-    ),
+    sampler=optuna.samplers.GPSampler())
+
+    # sampler=NSGAIISampler(
+    #     # population_size=30,  # Number of parallel solutions evolved
+    #     population_size=16,  # Number of parallel solutions evolved
+    #     crossover_prob=0.9,  # Probability of crossover between solutions
+    #     mutation_prob=0.3,   # Probability of mutating a solution
+    #     seed=42
+    # ),
     # pruner=optuna.pruners.PatientPruner(
     #     optuna.pruners.MedianPruner(
     #         n_startup_trials=20,
@@ -3378,7 +3380,7 @@ elif mode == 'tune_server':
     # patience=3,
     # min_delta=0.0
     # )
-)
+# )
 
     print("Resilient async study server started.")
     print("Study name:", study.study_name)
@@ -3428,7 +3430,7 @@ elif mode == 'tune_worker':
 
     study.optimize(
         objective,
-        n_trials=1000,
+        n_trials=48,
         gc_after_trial=True,
         show_progress_bar=True,
         callbacks=[lambda study, trial: logger.info(f"Trial {trial.number} finished")]

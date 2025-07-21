@@ -830,6 +830,24 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         else:
             inputs_nets = normalized
 
+        if params['TYPE_ARCH'].find('Att')>-1:
+            print('Using Attention')            
+            attn_in = MultiHeadAttention(
+                num_heads=32,
+                key_dim=inputs_nets.shape[-1] // 4,
+                name='temporal_attn'
+            )(query=inputs_nets, key=inputs_nets, value=inputs_nets)  # [B, T, C]
+
+            # collapse attended vectors to a scalar gate per timestep
+            inp_gate = Conv1D(
+                1, 1, activation='sigmoid',
+                kernel_initializer='glorot_uniform',
+                name='input_gate'
+            )(attn_in)  # [B, T, 1]
+
+            # apply gate to the raw TCN features
+            tcn_output = Multiply(name='gated_inputs')([inputs_nets, inp_gate])  # [B, T, C]
+
         # Apply TCN
         if model_type=='Base':
             print('Using Base TCN')
@@ -908,16 +926,24 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             print('Using Stop Gradient for Class. Branch')
             # Stop gradient flow from classification branch to TCN
             frozen_features = tf.stop_gradient(tcn_output)
-            # Classification branch uses frozen features
-            classification_output = Conv1D(1, kernel_size=1,
-                                           kernel_initializer='glorot_uniform',
-                                            use_bias=True, activation='sigmoid',
-                                            name='tmp_class')(frozen_features)
+            
+            # Classification branch uses frozen features - remove sigmoid to prevent saturation
+            logits = Conv1D(1, kernel_size=1,
+                           kernel_initializer='he_normal',
+                           bias_initializer='zeros',
+                           use_bias=True, activation=None,
+                           name='tmp_logits')(frozen_features)
+            # Apply sigmoid after for compatibility
+            classification_output = Activation('sigmoid', name='tmp_class')(logits)
         else:
-            classification_output = Conv1D(1, kernel_size=1,
-                                           kernel_initializer='glorot_uniform',
-                                           use_bias=True, activation='sigmoid',
-                                           name='tmp_class')(tcn_output)
+            # Remove sigmoid to prevent saturation
+            logits = Conv1D(1, kernel_size=1,
+                           kernel_initializer='he_normal',
+                           bias_initializer='zeros',
+                           use_bias=True, activation=None,
+                           name='tmp_logits')(tcn_output)
+            # Apply sigmoid after for compatibility  
+            classification_output = Activation('sigmoid', name='tmp_class')(logits)
 
         # linear projection for the triplet loss
         tmp_pred = Dense(n_filters*2, activation=None, 
@@ -965,18 +991,27 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
         # Metrics - only applied to anchor output for metric tracking
         model._is_classification_only = True
-
+ 
         # f1_metric = MaxF1MetricHorizon(model=model)
         # # r1_metric = RobustF1Metric(model=model)
         # # latency_metric = LatencyMetric(model=model)
         # event_f1_metric = EventAwareF1(model=model)
         # fp_event_metric = EventFalsePositiveRateMetric(model=model)
         metrics = [
-            EventPRAUC(model=model),
-            LatencyWeightedF1Metric(tau=32, model=model),
-            TPRatFixedFPMetric(1., params['NO_TIMEPOINTS']/params['SRATE'],  # adjust to your sampling rate
-                            model=model),
-        ]
+            EventPRAUC(mode="consec", consec_k=3, model=model),
+            LatencyWeightedF1Metric(tau=16, mode="consec", consec_k=3, model=model),
+            FPperMinMetric(thresh=0.5, win_sec=64/2500, mode="consec", consec_k=3, model=model),
+        ]        
+        # metrics = [
+        #     EventPRAUC(consec_k=5, model=model),          # consecutive rule
+        #     LatencyWeightedF1Metric(tau=16,                # τ in samples
+        #                             consec_k=5,
+        #                             model=model),
+        #     FPperMinMetric(thresh=0.5,           # your operating τ
+        #                 win_sec=64/2500,
+        #                 consec_k=3,           # or majority_ratio=0.5
+        #                 model=model),            
+        # ]
         # Create loss function and compile model
         # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
@@ -1011,12 +1046,23 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
         # Metrics - only applied to anchor output for metric tracking
         model._is_classification_only = True
+        # metrics = [
+        #     EventPRAUC(model=model),
+        #     LatencyWeightedF1Metric(tau=32, model=model),
+        #     TPRatFixedFPMetric(1., params['NO_TIMEPOINTS']/params['SRATE'],  # adjust to your sampling rate
+        #                     model=model),
+        # ]
         metrics = [
-            EventPRAUC(model=model),
-            LatencyWeightedF1Metric(tau=32, model=model),
-            TPRatFixedFPMetric(1., params['NO_TIMEPOINTS']/params['SRATE'],  # adjust to your sampling rate
-                            model=model),
+            EventPRAUC(consec_k=5, model=model),          # consecutive rule
+            LatencyWeightedF1Metric(tau=16,                # τ in samples
+                                    consec_k=5,
+                                    model=model),
+            TPRatFixedFPMetric(target_fp_per_min=1.0,
+                            win_sec=64/2500,
+                            consec_k=5,
+                            model=model)
         ]
+        
         # Create loss function and compile model
         # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
@@ -1702,194 +1748,107 @@ class EventFalsePositiveRateMetric(tf.keras.metrics.Metric):
         self.fp.assign(tf.zeros_like(self.fp))
         self.tn.assign(tf.zeros_like(self.tn))
 
-class LatencyMetric(tf.keras.metrics.Metric):
-    def __init__(self, name='latency_metric', threshold=0.5, max_early_detection=50, model=None, **kwargs):
-        super(LatencyMetric, self).__init__(name=name, **kwargs)
-        self.threshold = threshold
-        self.max_early_detection = max_early_detection
-        # Initialize with a large positive value so any real latency will be an improvement
-        self.total_latency = self.add_weight(name='total_latency', initializer=lambda shape, dtype: tf.constant(1000.0, dtype=dtype))
-        self.valid_events = self.add_weight(name='valid_events', initializer='zeros')
-        self.model = model
-
-    def update_state(self, y_true, y_pred, **kwargs):
-        # Get classification mode from model property
-        is_classification_only = getattr(self.model, '_is_classification_only', True)
-
-        # Extract labels based on mode
-        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
-        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
-
-        # Calculate onset times using cumsum trick instead of where
-        true_shifts = tf.pad(y_true_labels[:, :-1], [[0, 0], [1, 0]], constant_values=0.0)
-        onset_mask = tf.cast(tf.logical_and(true_shifts < 0.5, y_true_labels >= 0.5), tf.float32)
-
-        # Calculate detection times
-        detection_mask = tf.cast(y_pred_labels >= self.threshold, tf.float32)
-
-        # Find first occurrence using cumsum trick
-        onset_cumsum = tf.cumsum(onset_mask, axis=1)
-        detection_cumsum = tf.cumsum(detection_mask, axis=1)
-
-        # Get indices of first 1s
-        onset_indices = tf.cast(tf.argmax(onset_cumsum > 0, axis=1), tf.float32)
-        detection_indices = tf.cast(tf.argmax(detection_cumsum > 0, axis=1), tf.float32)
-
-        # Calculate latency only for valid events
-        has_event = tf.reduce_max(onset_cumsum, axis=1) > 0
-        has_detection = tf.reduce_max(detection_cumsum, axis=1) > 0
-        valid_mask = tf.cast(tf.logical_and(has_event, has_detection), tf.float32)
-
-        # Calculate latency
-        latency = detection_indices - onset_indices
-        latency = tf.clip_by_value(latency, -self.max_early_detection, tf.cast(tf.shape(y_true_labels)[1], tf.float32))
-
-        # Reset the accumulators for each batch to properly compute the average
-        if tf.reduce_sum(valid_mask) > 0:
-            self.total_latency.assign(tf.reduce_sum(latency * valid_mask))
-            self.valid_events.assign(tf.reduce_sum(valid_mask))
-        else:
-            # If no valid events in this batch, keep the previous value
-            # But for the first batch with no events, set to a large value
-            self.total_latency.assign(1000.0 if self.valid_events == 0 else self.total_latency)
-
-    def result(self):
-        # Return large positive value if no valid events have been seen
-        return tf.cond(
-            self.valid_events > 0,
-            lambda: self.total_latency / self.valid_events,
-            lambda: tf.constant(1000.0, dtype=self.total_latency.dtype)
-        )
-
-    def reset_state(self):
-        # Initialize to large positive value instead of zero
-        self.total_latency.assign(1000.0)
-        self.valid_events.assign(0.0)
-
-class RobustF1Metric(tf.keras.metrics.Metric):
-    def __init__(self, name='robust_f1', thresholds=tf.linspace(0.0, 1.0, 11), model=None, **kwargs):
-        super(RobustF1Metric, self).__init__(name=name, **kwargs)
-        self.thresholds = thresholds
-        # Use tf.shape instead of len for graph compatibility
-        self.tp = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer='zeros', name='tp')
-        self.fp = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer='zeros', name='fp')
-        self.fn = self.add_weight(shape=(tf.shape(thresholds)[0],), initializer='zeros', name='fn')
-        self.pred_sum = self.add_weight(name='pred_sum', initializer='zeros')
-        self.pred_count = self.add_weight(name='pred_count', initializer='zeros')
-        self.temp_diff_sum = self.add_weight(name='temp_diff_sum', initializer='zeros')
-        self.model = model
-
-    def update_state(self, y_true, y_pred, **kwargs):
-        # Get classification mode from model property
-        is_classification_only = getattr(self.model, '_is_classification_only', True)
-
-        # Extract labels based on mode
-        y_true_labels = y_true[..., 0] if is_classification_only else y_true[..., 8]
-        y_pred_labels = y_pred[..., 0] if is_classification_only else y_pred[..., 8]
-
-        def process_threshold(threshold):
-            pred_events = tf.cast(y_pred_labels >= threshold, tf.float32)
-            true_events = tf.cast(y_true_labels >= 0.5, tf.float32)
-
-            tp = tf.reduce_sum(pred_events * true_events)
-            fp = tf.reduce_sum(pred_events * (1 - true_events))
-            fn = tf.reduce_sum((1 - pred_events) * true_events)
-
-            return tp, fp, fn
-
-        # Process all thresholds using map_fn
-        metrics = tf.map_fn(
-            process_threshold,
-            self.thresholds,
-            fn_output_signature=(tf.float32, tf.float32, tf.float32)
-        )
-        tp_all, fp_all, fn_all = metrics
-
-        # Update main F1 accumulators
-        self.tp.assign_add(tp_all)
-        self.fp.assign_add(fp_all)
-        self.fn.assign_add(fn_all)
-
-        # Update additional metrics
-        non_event_pred = y_pred_labels * (1 - y_true_labels)
-        self.pred_sum.assign_add(tf.reduce_sum(non_event_pred))
-        self.pred_count.assign_add(tf.cast(tf.size(non_event_pred), tf.float32))
-
-        # Temporal consistency using valid time steps only
-        temp_diff = tf.abs(y_pred_labels[:, 1:] - y_pred_labels[:, :-1])
-        self.temp_diff_sum.assign_add(tf.reduce_sum(temp_diff))
-
-    def result(self):
-        # Calculate F1 scores
-        precision = self.tp / (self.tp + self.fp + tf.keras.backend.epsilon())
-        recall = self.tp / (self.tp + self.fn + tf.keras.backend.epsilon())
-        f1_scores = 2 * (precision * recall) / (precision + recall + tf.keras.backend.epsilon())
-
-        # Calculate components
-        mean_f1 = tf.reduce_mean(f1_scores)
-        f1_stability = 1.0 - tf.math.reduce_std(f1_scores)
-        noise_penalty = 1.0 - (self.pred_sum / (self.pred_count + tf.keras.backend.epsilon()))
-        temp_consistency = 1.0 - (self.temp_diff_sum / (self.pred_count + tf.keras.backend.epsilon()))
-
-        # Combine metrics with weights
-        return (0.7 * mean_f1 +
-                0.1 * f1_stability +
-                0.1 * noise_penalty +
-                0.1 * temp_consistency)
-
-    def reset_state(self):
-        self.tp.assign(tf.zeros_like(self.tp))
-        self.fp.assign(tf.zeros_like(self.fp))
-        self.fn.assign(tf.zeros_like(self.fn))
-        self.pred_sum.assign(0.0)
-        self.pred_count.assign(0.0)
-        self.temp_diff_sum.assign(0.0)
-
 EPS = tf.keras.backend.epsilon()
 
+# ──────────────────────────────────────────────────────────────────────
+# 1.  Helper: ≥ k consecutive TRUE anywhere in the sequence
+#    pred_bin: bool [..., T]
+#    returns  : bool [...]  (True if any run ≥ k)
+# ──────────────────────────────────────────────────────────────────────
+def _has_run_k(pred_bin, k):
+    if k <= 1:
+        return tf.reduce_any(pred_bin, axis=-1)          # same shape [...]
+    x   = tf.cast(pred_bin, tf.float32)                  # [...,T]
+    shp = tf.shape(x)
+    T   = shp[-1]
+    flat = tf.reshape(x, [-1, T, 1])                     # [N,T,1]
+    filt = tf.ones((k, 1, 1), flat.dtype)                # [k,1,1]
+    runsum = tf.nn.conv1d(flat, filt,
+                          stride=1, padding="SAME")      # [N,T,1]
+    has_run = tf.reduce_max(runsum, axis=1)[:, 0] >= float(k)  # [N]
+    return tf.reshape(has_run, shp[:-1])                 # [...]
 
-# ---------------------------------------------------------------------
-# helper to slice the right channel
-def _ch(t, is_cls):               # [B,T,?] -> [B,T]
+# ──────────────────────────────────────────────────────────────────────
+# 2.  Helper: ≥ ratio·T positives in the sequence
+# ──────────────────────────────────────────────────────────────────────
+def _has_majority(pred_bin, ratio):
+    if ratio <= 0.0:
+        return tf.reduce_any(pred_bin, axis=-1)
+    T = tf.shape(pred_bin)[-1]
+    m = tf.cast(tf.math.round(tf.cast(T, tf.float32)*ratio), tf.int32)
+    cnt = tf.reduce_sum(tf.cast(pred_bin, tf.int32), axis=-1)
+    return cnt >= m
+
+# (keep your _ch(t,is_cls) helper)
+def _ch(t, is_cls):                  # [B,T,?] -> [B,T]
     return t[..., 0] if is_cls else t[..., 8]
 
+# --------------------------------------------------------------------- #
+# Voting helpers (time axis = 1)
+# --------------------------------------------------------------------- #
+def _vote_consecutive(pred_bin, k):          # [B,T] bool
+    if k <= 1:
+        return pred_bin
+    # causal SAME padding keeps length T
+    pool = tf.nn.max_pool1d(tf.cast(pred_bin, tf.float32)[..., None],
+                            ksize=k, strides=1, padding="SAME",
+                            data_format="NWC")
+    return tf.cast(pool[..., 0] >= 1.0, tf.bool)                # [B,T]
 
-# =====================================================================
-# 1) EVENT-LEVEL PR-AUC
-# =====================================================================
+def _vote_majority(pred_bin, ratio):
+    if ratio <= 0.0:
+        return pred_bin
+    m = tf.cast(tf.math.round(
+            tf.cast(tf.shape(pred_bin)[1] * ratio, tf.float32)), tf.int32)
+    count = tf.reduce_sum(tf.cast(pred_bin, tf.int32), axis=1, keepdims=True)
+    return count >= m                                           # [B,1]  broadcast later
+# --------------------------------------------------------------------- #
+# Channel helper (unchanged)
+# --------------------------------------------------------------------- #
+def _ch(t, is_cls):          # [B,T,?] -> [B,T]
+    return t[..., 0] if is_cls else t[..., 8]
+
+# ===================================================================== #
+# 1) EVENT-LEVEL PR-AUC with vote rule
+# ===================================================================== #
 class EventPRAUC(tf.keras.metrics.Metric):
     def __init__(self, thresholds=tf.linspace(0., 1., 11),
+                 mode="consec", consec_k=3, majority_ratio=0.0,
                  name="event_pr_auc", model=None, **kw):
         super().__init__(name=name, **kw)
-        self.tau = tf.cast(thresholds, tf.float32)              # [K]
+        self.tau = tf.cast(thresholds, tf.float32)
         k = len(thresholds)
         self.tp = self.add_weight("tp", shape=(k,), initializer="zeros")
         self.fp = self.add_weight("fp", shape=(k,), initializer="zeros")
         self.fn = self.add_weight("fn", shape=(k,), initializer="zeros")
         self.model = model
+        self.mode = mode
+        self.consec_k = int(consec_k)
+        self.maj_ratio = float(majority_ratio)
 
     def update_state(self, y_true, y_pred, **_):
         is_cls = getattr(self.model, "_is_classification_only", True)
-        yt, yp = _ch(y_true, is_cls), _ch(y_pred, is_cls)       # [B,T]
+        yt, yp = _ch(y_true, is_cls), _ch(y_pred, is_cls)            # [B,T]
+        true_evt_b = tf.reduce_max(yt, 1) >= 0.5                     # [B]
+        pred_bin_kbt = yp[None,...] >= self.tau[:,None,None]         # [K,B,T]
 
-        true_evt_b = tf.reduce_max(yt, 1) >= 0.5                # [B] bool
-        pred_max_b = tf.reduce_max(yp, 1)[:, None]              # [B,1]
+        if self.mode == "consec":
+            pred_evt_bk = _has_run_k(pred_bin_kbt, self.consec_k)    # [K,B]
+        elif self.mode == "majority":
+            pred_evt_bk = _has_majority(pred_bin_kbt, self.maj_ratio)
+        else:  # "any"
+            pred_evt_bk = tf.reduce_any(pred_bin_kbt, axis=-1)
 
-        pred_evt_bk = pred_max_b >= self.tau[None, :]           # [B,K] bool
-        true_bk     = true_evt_b[:, None]                       # [B,1]
-
-        self.tp.assign_add(tf.reduce_sum(tf.cast(pred_evt_bk &  true_bk, tf.float32), 0))
-        self.fp.assign_add(tf.reduce_sum(tf.cast(pred_evt_bk & ~true_bk, tf.float32), 0))
-        self.fn.assign_add(tf.reduce_sum(tf.cast(~pred_evt_bk &  true_bk, tf.float32), 0))
+        true_bk = true_evt_b[None,:]
+        self.tp.assign_add(tf.reduce_sum(tf.cast(pred_evt_bk &  true_bk, tf.float32), 1))
+        self.fp.assign_add(tf.reduce_sum(tf.cast(pred_evt_bk & ~true_bk, tf.float32), 1))
+        self.fn.assign_add(tf.reduce_sum(tf.cast(~pred_evt_bk &  true_bk, tf.float32), 1))
 
     def result(self):
         prec = self.tp / (self.tp + self.fp + EPS)
         reca = self.tp / (self.tp + self.fn + EPS)
-
-        # sort by recall asc for trapz (safer than tf.reverse)
-        idx   = tf.argsort(reca)
-        reca  = tf.gather(reca, idx); prec = tf.gather(prec, idx)
-
+        idx  = tf.argsort(reca)
+        reca = tf.gather(reca, idx); prec = tf.gather(prec, idx)
         return tf.reduce_sum((reca[1:] - reca[:-1]) *
                              (prec[1:] + prec[:-1]) * 0.5)
 
@@ -1898,120 +1857,169 @@ class EventPRAUC(tf.keras.metrics.Metric):
             v.assign(tf.zeros_like(v))
 
 
-# =====================================================================
-# 2) LATENCY-WEIGHTED F1
-# =====================================================================
+# ===================================================================== #
+# 2) LATENCY-WEIGHTED F1 with vote rule
+# ===================================================================== #
 class LatencyWeightedF1Metric(tf.keras.metrics.Metric):
-    """
-    Each TP is weighted by w = min(1, exp(-(max(latency,0))/tau)).
-    tau in **samples**.
-    """
-    def __init__(self, tau, thresholds=tf.linspace(0., 1., 11),
+    def __init__(self, tau, thresholds=tf.linspace(0.,1.,11),
+                 mode="consec", consec_k=3, majority_ratio=0.0,
                  name="latency_weighted_f1", model=None, **kw):
         super().__init__(name=name, **kw)
         self.tau = float(tau)
-        self.t  = tf.cast(thresholds, tf.float32)               # [K]
+        self.t   = tf.cast(thresholds, tf.float32)
         k = len(thresholds)
         self.wtp = self.add_weight("wtp", shape=(k,), initializer="zeros")
         self.fp  = self.add_weight("fp",  shape=(k,), initializer="zeros")
         self.fn  = self.add_weight("fn",  shape=(k,), initializer="zeros")
         self.model = model
+        self.mode = mode
+        self.consec_k = int(consec_k)
+        self.maj_ratio = float(majority_ratio)
 
     @staticmethod
-    def _first_true_bool(mat):          # [*,T] bool -> idx [*], -1 if none
+    def _first_true_bool(mat):
         idx = tf.argmax(tf.cast(mat, tf.int32), 1, output_type=tf.int32)
         return tf.where(tf.reduce_any(mat, 1), idx, -tf.ones_like(idx))
 
     def update_state(self, y_true, y_pred, **_):
         is_cls = getattr(self.model, "_is_classification_only", True)
-        yt, yp = _ch(y_true, is_cls), _ch(y_pred, is_cls)       # [B,T]
-
-        B = tf.shape(yt)[0]
-
-        onset_b = self._first_true_bool(yt >= 0.5)              # [B] int
+        yt, yp = _ch(y_true, is_cls), _ch(y_pred, is_cls)
+        onset_b = self._first_true_bool(yt >= 0.5)
         has_ev  = onset_b >= 0
 
-        # prediction cube: [K,B,T] bool
-        pred_bin_kbt = yp[None, ...] >= self.t[:, None, None]   # broadcast
-        # detection index per (K,B)
-        has_det_kb = tf.reduce_any(pred_bin_kbt, 2)             # [K,B] bool
-        detect_kb  = tf.argmax(tf.cast(pred_bin_kbt, tf.int32), 2,
-                               output_type=tf.int32)            # [K,B]
-        detect_kb  = tf.where(has_det_kb, detect_kb,
-                              -tf.ones_like(detect_kb))
+        pred_bin_kbt = yp[None,...] >= self.t[:,None,None]
 
-        # latency & weight
-        latency = tf.cast(detect_kb - onset_b[None, :], tf.float32)   # [K,B]
-        latency = tf.where(has_ev[None, :] & has_det_kb,
+        if self.mode == "consec":
+            has_det_kb = _has_run_k(pred_bin_kbt, self.consec_k)
+        elif self.mode == "majority":
+            has_det_kb = _has_majority(pred_bin_kbt, self.maj_ratio)
+        else:
+            has_det_kb = tf.reduce_any(pred_bin_kbt, -1)
+
+        # earliest detection index from RAW predictions
+        detect_kb = tf.argmax(tf.cast(pred_bin_kbt, tf.int32), 2, output_type=tf.int32)
+        detect_kb = tf.where(has_det_kb, detect_kb, -tf.ones_like(detect_kb))
+
+        latency = tf.cast(detect_kb - onset_b[None,:], tf.float32)
+        latency = tf.where(has_ev[None,:] & has_det_kb,
                            latency,
                            tf.fill(tf.shape(latency), tf.float32.max))
-        weight = tf.minimum(1.0,
-                            tf.exp(-tf.maximum(latency, 0.) / self.tau))
+        weight = tf.minimum(1.0, tf.exp(-tf.maximum(latency,0.)/self.tau))
 
-        self.wtp.assign_add(tf.reduce_sum(
-            tf.where(has_ev[None, :] & has_det_kb, weight, 0.), 1))
-        self.fp.assign_add(tf.reduce_sum(
-            tf.where(~has_ev[None, :] & has_det_kb, 1., 0.), 1))
-        self.fn.assign_add(tf.reduce_sum(
-            tf.where(has_ev[None, :] & ~has_det_kb, 1., 0.), 1))
+        self.wtp.assign_add(tf.reduce_sum(tf.where(has_ev[None,:] & has_det_kb, weight, 0.), 1))
+        self.fp.assign_add (tf.reduce_sum(tf.where(~has_ev[None,:] & has_det_kb, 1., 0.), 1))
+        self.fn.assign_add (tf.reduce_sum(tf.where(has_ev[None,:] & ~has_det_kb, 1., 0.), 1))
 
     def result(self):
-        f1 = 2 * self.wtp / (2 * self.wtp + self.fp + self.fn + EPS)
+        f1 = 2*self.wtp / (2*self.wtp + self.fp + self.fn + EPS)
         return tf.reduce_max(f1)
 
     def reset_state(self):
         for v in (self.wtp, self.fp, self.fn):
             v.assign(tf.zeros_like(v))
 
-
-# =====================================================================
-# 3) TPR at FIXED FP/min
-# =====================================================================
-class TPRatFixedFPMetric(tf.keras.metrics.Metric):
-    def __init__(self, target_fp_per_min, win_sec,
-                 thresholds=tf.linspace(0., 1., 11),
-                 name="tpr_at_fpmin", model=None, **kw):
+# --------------------------------------------------------------------- #
+# FALSE-POSITIVES PER MINUTE  (negative windows only)
+# --------------------------------------------------------------------- #
+class FPperMinMetric(tf.keras.metrics.Metric):
+    def __init__(self, thresh=0.5, win_sec=64/2500,
+                 mode="consec", consec_k=3, majority_ratio=0.0,
+                 name="fp_per_min", model=None, **kw):
         super().__init__(name=name, **kw)
-        self.fpb  = float(target_fp_per_min)
-        self.wsec = tf.constant(win_sec, tf.float32)           # window sec
-        self.t    = tf.cast(thresholds, tf.float32)
-        k = len(thresholds)
-        self.tp = self.add_weight("tp", shape=(k,), initializer="zeros")
-        self.fp = self.add_weight("fp", shape=(k,), initializer="zeros")
-        self.fn = self.add_weight("fn", shape=(k,), initializer="zeros")
-        self.n_win = self.add_weight("n_win", initializer="zeros")
+        self.tau  = float(thresh)
+        self.wsec = tf.constant(win_sec, tf.float32)
+        self.fp   = self.add_weight("fp",   initializer="zeros")
+        self.nwin = self.add_weight("nwin", initializer="zeros")
         self.model = model
-        self.eps = tf.constant(tf.keras.backend.epsilon(), tf.float32)
+        self.mode = mode
+        self.consec_k = int(consec_k)
+        self.maj_ratio = float(majority_ratio)
+        self.eps = tf.keras.backend.epsilon()
 
     def update_state(self, y_true, y_pred, **_):
         is_cls = getattr(self.model, "_is_classification_only", True)
         yt, yp = _ch(y_true, is_cls), _ch(y_pred, is_cls)
 
-        true_evt = tf.reduce_max(yt, 1) >= 0.5                 # [B]
-        pred_max = tf.reduce_max(yp, 1)[:, None]               # [B,1]
+        neg_win = tf.reduce_max(yt, 1) < 0.5                       # [B]
+        pred_bin = yp >= self.tau                                  # [B,T]
 
-        pred_evt = pred_max >= self.t[None, :]                 # [B,K] bool
+        if self.mode == "consec":
+            has_det = _has_run_k(pred_bin, self.consec_k)
+        elif self.mode == "majority":
+            has_det = _has_majority(pred_bin, self.maj_ratio)
+        else:
+            has_det = tf.reduce_any(pred_bin, 1)
 
-        self.tp.assign_add(tf.reduce_sum(
-            tf.cast(pred_evt &  true_evt[:, None], tf.float32), axis=0))
-        self.fp.assign_add(tf.reduce_sum(
-            tf.cast(pred_evt & ~true_evt[:, None], tf.float32), axis=0))
-        self.fn.assign_add(tf.reduce_sum(
-            tf.cast(~pred_evt &  true_evt[:, None], tf.float32), axis=0))
-
-        self.n_win.assign_add(tf.cast(tf.shape(yt)[0], tf.float32))
+        self.fp.assign_add(tf.reduce_sum(tf.cast(has_det & neg_win, tf.float32)))
+        self.nwin.assign_add(tf.cast(tf.shape(yt)[0], tf.float32))
 
     def result(self):
-        minutes = (self.n_win * self.wsec) / 60.0 + self.eps
-        fp_per_min = self.fp / minutes
-        tpr = self.tp / (self.tp + self.fn + self.eps)
-        valid_tpr = tf.where(fp_per_min <= self.fpb, tpr, 0.)
-        return tf.reduce_max(valid_tpr)
+        minutes = (self.nwin * self.wsec) / 60.0 + self.eps
+        return self.fp / minutes
 
     def reset_state(self):
-        for v in (self.tp, self.fp, self.fn, self.n_win):
-            v.assign(tf.zeros_like(v))
+        self.fp.assign(0.); self.nwin.assign(0.)
 
+
+# ===================================================================== #
+# 3) TPR at FIXED FP/min with vote rule
+# ===================================================================== #
+class TPRatFixedFPMetric(tf.keras.metrics.Metric):
+    def __init__(self, target_fp_per_min, win_sec,
+                 thresholds=tf.linspace(0., 1., 11),
+                 consec_k=1, majority_ratio=0.0,
+                 name="tpr_at_fpmin", model=None, **kw):
+        super().__init__(name=name, **kw)
+        self.fpb   = float(target_fp_per_min)
+        self.wsec  = tf.constant(win_sec, tf.float32)
+        self.t     = tf.cast(thresholds, tf.float32)
+        k = len(thresholds)
+        self.tp  = self.add_weight("tp", shape=(k,), initializer="zeros")
+        self.fp  = self.add_weight("fp", shape=(k,), initializer="zeros")
+        self.fn  = self.add_weight("fn", shape=(k,), initializer="zeros")
+        self.n_w = self.add_weight("n_win", initializer="zeros")
+        self.model = model
+        self.eps = tf.constant(EPS, tf.float32)
+        self.consec_k = int(consec_k)
+        self.majority_ratio = float(majority_ratio)
+
+    def update_state(self, y_true, y_pred, **_):
+        is_cls = getattr(self.model, "_is_classification_only", True)
+        yt, yp = _ch(y_true, is_cls), _ch(y_pred, is_cls)
+
+        true_evt_b = tf.reduce_max(yt, 1) >= 0.5                 # [B]
+        pred_bin_kbt = yp[None, ...] >= self.t[:, None, None]    # [K,B,T]
+
+        if self.consec_k > 1:
+            voted_kbt = _vote_consecutive(pred_bin_kbt, self.consec_k)
+        else:
+            voted_kbt = pred_bin_kbt
+        pred_evt_bk = tf.reduce_any(voted_kbt, 2)                # [K,B]
+        if self.majority_ratio > 0:
+            maj_kb = _vote_majority(pred_bin_kbt, self.majority_ratio)
+            pred_evt_bk = tf.logical_and(pred_evt_bk, maj_kb)
+
+        true_bk = true_evt_b[None, :]
+
+        self.tp.assign_add(tf.reduce_sum(
+            tf.cast(pred_evt_bk &  true_bk, tf.float32), 1))
+        self.fp.assign_add(tf.reduce_sum(
+            tf.cast(pred_evt_bk & ~true_bk, tf.float32), 1))
+        self.fn.assign_add(tf.reduce_sum(
+            tf.cast(~pred_evt_bk &  true_bk, tf.float32), 1))
+        self.n_w.assign_add(tf.cast(tf.shape(yt)[0], tf.float32))
+
+    def result(self):
+        minutes = (self.n_w * self.wsec) / 60.0
+        fp_per_min = self.fp / (minutes + self.eps)
+        has_ev = (self.tp + self.fn) > 0
+        tpr = tf.where(has_ev, self.tp / (self.tp + self.fn), 0.)
+        return tf.reduce_max(tf.where((fp_per_min <= self.fpb) & has_ev,
+                                      tpr, 0.))
+
+    def reset_state(self):
+        for v in (self.tp, self.fp, self.fn, self.n_w):
+            v.assign(tf.zeros_like(v))
 
 def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None):
     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
@@ -2777,13 +2785,16 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 
         print(f"Using Focal loss with alpha={alpha}, gamma={gamma}")
 
-        use_class_balancing = alpha > 0
-        focal_loss_fn = tf.keras.losses.BinaryFocalCrossentropy( # Renamed to avoid conflict if focal_loss is a variable
-            apply_class_balancing=use_class_balancing,
-            alpha=alpha if alpha > 0 else None,
-            gamma=gamma,
-            reduction=tf.keras.losses.Reduction.NONE
-        )
+        # use_class_balancing = alpha > 0
+        # focal_loss_fn = tf.keras.losses.BinaryFocalCrossentropy( # Renamed to avoid conflict if focal_loss is a variable
+        #     apply_class_balancing=use_class_balancing,
+        #     alpha=alpha if alpha > 0 else None,
+        #     gamma=gamma,
+        #     reduction=tf.keras.losses.Reduction.NONE
+        # )
+        focal_loss_fn = tf.keras.losses.BinaryCrossentropy(from_logits=False)
+
+        
         # The following lines for 'loss_values' and 'classification_loss' seemed to refer to
         # y_true_exp and y_pred_exp which are not defined in this scope of loss_fn
         # Reverting to using the specific anchor/positive/negative class predictions and labels
