@@ -534,9 +534,9 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
     
     onset_params = {
         # Core onset detection parameters
-        'USE_ONSET_WEIGHTING': True,
+        'USE_ONSET_WEIGHTING': False,
         'ONSET_BIAS': 0.4,                    # 50% bias toward onset windows
-        'USE_ONSET_SHIFTED_LABELS': True,     # Enable label shifting
+        'USE_ONSET_SHIFTED_LABELS': False,     # Enable label shifting
         'ONSET_SHIFT_SAMPLES': -8,            # Start positive labels 8 samples before onset
         'ONSET_EXTEND_SAMPLES': 8,           # Extend positive region 15 samples after onset
         
@@ -548,7 +548,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
         'GRACE': 25,                          # Larger grace period
         
         # Debug
-        'DEBUG_ONSETS': True                  # Enable onset analysis
+        'DEBUG_ONSETS': False                  # Enable onset analysis
     }
 
     # Update your existing params:
@@ -563,14 +563,14 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
 
     # ---- gather raw sessions ------------------------------------------------
     train_LFPs, train_GTs, all_SFs = [], [], []
-
-    for mouse, fig_id in [('Amigo2', '16847521'), ('Som2', '16856137')]:
-        path = os.path.join('/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/',
-                            'Downloaded_data', mouse, f'figshare_{fig_id}')
-        LFP, GT = load_lab_data(path)
-        train_LFPs.append(LFP)
-        train_GTs.append(GT)
-        all_SFs.append(30000)
+    if mode == 'train':
+        for mouse, fig_id in [('Amigo2', '16847521'), ('Som2', '16856137')]:
+            path = os.path.join('/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/',
+                                'Downloaded_data', mouse, f'figshare_{fig_id}')
+            LFP, GT = load_lab_data(path)
+            train_LFPs.append(LFP)
+            train_GTs.append(GT)
+            all_SFs.append(30000)
 
     val_LFPs, val_GTs = [], []
     if mode == 'test':
@@ -590,13 +590,14 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
         sf=all_SFs, new_sf=params['SRATE'],
         zscore=preprocess, process_online=process_online, use_band=use_band
     )
-    train_data = train_data.astype('float32')
 
     if mode == 'test':
+        print('Returning validation data only')
         val_data = [v.astype('float32') for v in val_data]
         return val_data, val_GT
 
     # ---- train / test split -------------------------------------------------
+    train_data = train_data.astype('float32')
     te_x, ev_test, tr_x, ev_train = split_data(
         train_data, train_GT,
         sf=params['SRATE'], split=0.7
@@ -613,14 +614,16 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
 
     label_ratio = train_lab.sum() / len(train_lab)    
     # ---- triplet datasets ---------------------------------------------------
-    train_ds = create_triplet_dataset(tr_x, train_lab, params)
-    train_ds = (train_ds.repeat().prefetch(tf.data.AUTOTUNE))    
-
+    # train_ds = create_triplet_dataset(tr_x, train_lab, params)
+    # train_ds = (train_ds.prefetch(tf.data.AUTOTUNE))    
+    train_seq = TripletSequence(tr_x, train_lab, params)   # Sequence
+    train_ds = train_seq        # keeps API identical to caller
+    
     # test set
     sample_length = params['NO_TIMEPOINTS']*2
     label_length = sample_length/2
     label_skip = int(sample_length/2)    
-    stride_step = params['STRIDE_STEP'] if 'STRIDE_STEP' in params else 32
+    stride_step = 1#params['STRIDE_STEP'] if 'STRIDE_STEP' in params else 32
     
     # Create standard test dataset with T-length windows
     test_x = timeseries_dataset_from_array(
@@ -654,6 +657,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
 
     dataset_params = params.copy()
     dataset_params['VAL_STEPS'] = val_steps
+    dataset_params['ESTIMATED_STEPS_PER_EPOCH'] = len(train_seq)
     return train_ds, test_ds, label_ratio, dataset_params
 
 
@@ -1323,3 +1327,98 @@ def analyze_onset_detection_performance(predictions, true_labels, onset_toleranc
             print(f"  Delay range: [{np.min(delay_ms):.1f}, {np.max(delay_ms):.1f}]ms")
 
     return results
+
+
+# -------------------------------------------------------
+# TripletSequence with its own _sample_triplet ----------
+# -------------------------------------------------------
+
+class TripletSequence(tf.keras.utils.Sequence):
+    """
+    Keras Sequence that:
+      1) Rebuilds the negative/positive/anchor catalog each epoch
+      2) Samples triplets on the fly (with jitter, onset-shift, etc.)
+    """
+    def __init__(self, data, labels, params):
+        self.data   = data
+        self.labels = labels
+        self.p      = params
+        self.B      = params['BATCH_SIZE']
+        self.rng    = np.random.default_rng()
+        self._rebuild_catalogue()
+
+    def _safe_extract_window(self, idx, data, labels, win_total, win_label):
+        # exactly as in your snippet
+        if idx < 0 or idx + win_total > len(data):
+            idx = max(0, min(idx, len(data) - win_total))
+        dw = data[idx:idx+win_total]
+        offset = win_total - win_label
+        lw = labels[idx+offset:idx+win_total]
+        return dw, lw
+
+    def _sample_triplet(self):
+        # unpack parameters
+        W      = self.p['NO_TIMEPOINTS']
+        mul    = self.p.get('WINDOW_MULTIPLIER', 2)
+        Wtot   = W * mul
+        jitter = self.p.get('JITTER', 8)
+        # choose indices
+        a = int(self.rng.choice(self.anchor_idx))
+        p = int(self.rng.choice(self.pos_idx))
+        n = int(self.rng.choice(self.neg_idx))
+        # apply jitter
+        if jitter > 0:
+            j = lambda i: max(0, min(i + self.rng.integers(-jitter, jitter+1),
+                                      len(self.data)-Wtot))
+            a, p, n = j(a), j(p), j(n)
+        # extract windows
+        Ad, Al = self._safe_extract_window(a, self.data, self.labels, Wtot, W)
+        Pd, Pl = self._safe_extract_window(p, self.data, self.labels, Wtot, W)
+        Nd, Nl = self._safe_extract_window(n, self.data, self.labels, Wtot, W)
+        # optional onset shift
+        if self.p.get('USE_ONSET_SHIFTED_LABELS', False):
+            shift, extend = self.p['ONSET_SHIFT_SAMPLES'], self.p['ONSET_EXTEND_SAMPLES']
+            Al = _create_onset_shifted_labels(Al, shift, extend)
+            Pl = _create_onset_shifted_labels(Pl, shift, extend)
+        # ensure channel dim
+        for arr in (Ad, Pd, Nd):
+            if arr.ndim == 1:
+                arr.resize((arr.shape[0], 1))
+        return (Ad.astype(np.float32), Al.astype(np.float32)), \
+               (Pd.astype(np.float32), Pl.astype(np.float32)), \
+               (Nd.astype(np.float32), Nl.astype(np.float32))
+
+    def _rebuild_catalogue(self):
+        W   = self.p['NO_TIMEPOINTS']
+        mul = self.p.get('WINDOW_MULTIPLIER', 2)
+        self.anchor_idx, self.pos_idx, self.neg_idx = _build_window_catalogue_2T(
+            self.labels, W,
+            self.p['GRACE'], self.p['ANCHOR_THR'],
+            self.p['POS_THR'], self.p['MIN_NEG_GAP'],
+            multiplier=mul
+        )
+        self.steps = max(1, len(self.anchor_idx) // self.B)
+
+    def __len__(self):
+        return self.steps
+
+    def __getitem__(self, idx):
+        triplets = [self._sample_triplet() for _ in range(self.B)]
+        A, P, N = zip(*triplets)
+        Ad, Al = zip(*A)
+        Pd, Pl = zip(*P)
+        Nd, Nl = zip(*N)
+        # stack in [A, P, N] order
+        data_batch = np.concatenate([np.stack(Ad),
+                                     np.stack(Pd),
+                                     np.stack(Nd)], axis=0)
+        labels_batch = np.concatenate([np.stack(Al)[:, :, None],
+                                       np.stack(Pl)[:, :, None],
+                                       np.stack(Nl)[:, :, None]], axis=0)
+        return data_batch, labels_batch
+
+    def on_epoch_end(self):
+        # triggers a fresh negative sample catalog
+        self._rebuild_catalogue()
+
+        self._rebuild_catalogue()

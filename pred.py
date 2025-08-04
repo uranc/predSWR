@@ -383,8 +383,8 @@ def objective_triplet(trial):
     params['HORIZON_MS'] = 1#trial.suggest_int('HORIZON_MS', 1, 5)
     params['SHIFT_MS'] = 0
 
-    params['LOSS_TupMPN'] = trial.suggest_float('LOSS_TupMPN', 0.1, 100.0, log=True)
-    params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 0.1, 100.0, log=True)
+    params['LOSS_TupMPN'] = 1.0#trial.suggest_float('LOSS_TupMPN', 0.1, 500.0, log=True)
+    params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 0.1, 500.0, log=True)
     params['LOSS_WEIGHT'] = 1.0#trial.suggest_float('LOSS_WEIGHT', 0.001, 100.0, log=True)
     params['LOSS_NEGATIVES'] = 10#trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
@@ -396,7 +396,7 @@ def objective_triplet(trial):
     # params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
     params['TYPE_LOSS'] = 'FocalAx{:03d}Gx{:03d}'.format(ax, gx)
 
-    entropyLib = [0, 0.5, 1, 3]
+    entropyLib = [0, 0.005, 0.5, 1]
     entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
     if entropy_ind > 0:
         params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
@@ -743,16 +743,17 @@ def objective_triplet(trial):
         validation_steps=val_steps,  # Explicitly set to avoid the partial batch
         epochs=params['NO_EPOCHS'],
         callbacks=callbacks,
-        verbose=1
-    )
-
+        verbose=1,
+        workers=4,               # >0  → background threads / procs
+        use_multiprocessing=True,# True → processes, False → threads
+        max_queue_size=8)       # how many batches to keep ready
     # tf.profiler.experimental.stop()
     # val_event_pr_auc: 0.83 ‖ val_latency_weighted_f1: 0.71 ‖ val_tpr_at_fpmin: 0.88
 
     val_accuracy = (max(history.history['val_event_pr_auc'])+max(history.history['val_latency_weighted_f1']))/2
     val_accuracy_mean = (np.mean(history.history['val_event_pr_auc'])+np.mean(history.history['val_latency_weighted_f1']))/2
     val_accuracy = (val_accuracy + val_accuracy_mean)/2
-    val_latency = np.mean(history.history['val_tpr_at_fpmin'])
+    val_latency = np.mean(history.history['val_fp_per_min'])
 
     # val_accuracy = (max(history.history['val_event_f1'])+max(history.history['val_f1']))/2
     # val_accuracy_mean = (np.mean(history.history['val_event_f1'])+np.mean(history.history['val_f1']))/2
@@ -1836,13 +1837,13 @@ elif mode == 'predict':
         from tensorflow.keras.models import load_model
 
         # Check which weight file is most recent
-        # event_weights = f"{study_dir}/event.weights.h5"
+        event_weights = f"{study_dir}/event.weights.h5"
         max_weights = f"{study_dir}/max.weights.h5"
         # event_weights = f"{study_dir}/event.tuned.weights.h5"
         # max_weights = f"{study_dir}/max.tuned.weights.h5"
         # event_weights = f"{study_dir}/event.mpntuned.weights.h5"
         # max_weights = f"{study_dir}/max.mpntuned.weights.h5"
-        event_weights = f"{study_dir}/event.finetune.weights.h5"
+        # event_weights = f"{study_dir}/event.finetune.weights.h5"
         # max_weights = f"{study_dir}/max.finetune.weights.h5"
         if os.path.exists(event_weights) and os.path.exists(max_weights):
             # Both files exist, select the most recently modified one
@@ -1978,8 +1979,8 @@ elif mode == 'predict':
     params['NO_TIMEPOINTS'] = 44
     params["BATCH_SIZE"] = 1024*4
     # pdb.set_trace()
-    from model.input_augment_weighted import rippleAI_load_dataset
-    # from model.input_proto_new import rippleAI_load_dataset
+    # from model.input_augment_weighted import rippleAI_load_dataset
+    from model.input_proto_new import rippleAI_load_dataset
     # import importlib.util
     # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/input_augment_weighted.py")
     # model_module = importlib.util.module_from_spec(spec)
@@ -2017,7 +2018,12 @@ elif mode == 'predict':
         elif 'FiltM' in params['NAME']:
             val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', use_band='muax', preprocess=preproc)
         else:
-            val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=preproc)
+            if 'TripletOnly' in params['TYPE_ARCH']:
+                flag_online = 'Online' in params['TYPE_ARCH']
+                val_datasets, val_labels = rippleAI_load_dataset(params, mode='test', preprocess=True, process_online=flag_online)
+            else:
+                val_datasets, val_labels = rippleAI_load_dataset(params, preprocess=preproc)
+                
         print('val_id: ', val_id)
         LFP = val_datasets[val_id]
         labels = val_labels[val_id]
@@ -2304,11 +2310,11 @@ elif mode == 'fine_tune':
             model = build_DBI_TCN(params=params) # Pass only the params dictionary
         else:
             params['LOSS_NEGATIVES'] = 30
-            params['LOSS_WEIGHT'] = 0.25
+            # params['LOSS_WEIGHT'] = 0.25
             params['LEARNING_RATE'] = 0.00003
             params['BATCH_SIZE'] = 32
-            params['HYPER_ENTROPY'] = 3.0
-            params['LOSS_TupMPN'] = 10.0
+            # params['HYPER_ENTROPY'] = 3.0
+            # params['LOSS_TupMPN'] = 10.0
             params['mode'] = 'fine_tune'
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         model.load_weights(weight_file)
@@ -4481,3 +4487,174 @@ elif mode == 'tune_viz_multi_v3':
         plt.close(fig)
         print(f"Saved {out_fp}")
         
+elif mode == 'tune_viz_multi_v4':
+    import seaborn as sns
+    # Directories and study loading
+    param_dir = f"params_{tag}"
+    study_db = f"studies/{param_dir}/{param_dir}.db"
+    viz_dir = f"studies/{param_dir}/visualizations/advanced"
+    os.makedirs(viz_dir, exist_ok=True)
+
+    # Load the Optuna study
+    try:
+        study = optuna.load_study(
+            study_name=param_dir,
+            storage=f"sqlite:///{study_db}",
+        )
+        print(f"Loaded study '{param_dir}' from {study_db}")
+    except Exception as e:
+        print(f"Error loading study '{param_dir}': {e}")
+        sys.exit(1)
+
+    # Gather completed trials
+    trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
+    if not trials:
+        print("No completed trials found. Exiting.")
+        sys.exit(0)
+
+    # Build DataFrame of trial results
+    records = []
+    for t in trials:
+        if t.values and len(t.values) == 2:
+            f1 = float(t.values[0])
+            fpr = float(t.values[1])  # fprate per minute
+            params = {k: v for k, v in t.params.items()}
+            records.append({"trial_number": t.number, "f1_score": f1, "fprate_per_min": fpr, **params})
+
+    all_df = pd.DataFrame(records)
+    if all_df.empty:
+        print("No valid trial data. Exiting.")
+        sys.exit(0)
+    print(f"Built DataFrame with {len(all_df)} trials.")
+
+    # Identify Pareto-optimal trials
+    pareto_trials = study.best_trials
+    pareto_nums = [t.number for t in pareto_trials]
+    pareto_df = all_df[all_df.trial_number.isin(pareto_nums)].copy()
+    if pareto_df.empty:
+        print("No Pareto-optimal trials.")
+    else:
+        print(f"Found {len(pareto_df)} Pareto-optimal trials.")
+
+    # --- Advanced Visualizations ---
+    print("Generating advanced multi-objective visualizations...")
+    try:
+        # 1. Hypervolume History
+        max_fpr = all_df['fprate_per_min'].max() * 1.1
+        ref_point = [0.0, max_fpr]
+        fig_hv = optuna.visualization.plot_hypervolume_history(
+            study,
+            reference_point=ref_point
+        )
+        fig_hv.write_html(os.path.join(viz_dir, "hypervolume_history.html"))
+
+        # 2. Empirical Distribution Functions (EDF)
+        for col, name in [("f1_score", "F1 Score"), ("fprate_per_min", "FPRate/min")]:
+            fig_edf = optuna.visualization.plot_edf(
+                study,
+                target=(lambda t: t.values[0]) if col == "f1_score" else (lambda t: t.values[1]),
+                target_name=name
+            )
+            fig_edf.write_html(os.path.join(viz_dir, f"edf_{col}.html"))
+
+        # 3. Pareto front scatter + marginals
+        jp = sns.jointplot(
+            data=all_df,
+            x="fprate_per_min",
+            y="f1_score",
+            kind="scatter",
+            marginal_kws={"bins": 20, "fill": True},
+            space=0.2
+        )
+        jp.set_axis_labels("FPRate/min", "F1 Score")
+        jp.fig.suptitle("Pareto Trade-off: FPRate/min vs. F1", y=1.02)
+        jp.savefig(os.path.join(viz_dir, "pareto_marginals.png"))
+        plt.close()
+
+        # 4. Pareto front plot
+        fig_pareto = optuna.visualization.plot_pareto_front(
+            study,
+            target_names=["F1 Score", "FPRate/min"]
+        )
+        fig_pareto.write_html(os.path.join(viz_dir, "pareto_front.html"))
+
+        # 5. Rank plots for each objective
+        params = [c for c in all_df.columns if c not in ["trial_number", "f1_score", "fprate_per_min"]]
+        fig_rank_f1 = optuna.visualization.plot_rank(
+            study,
+            params=params,
+            target=lambda t: t.values[0],
+            target_name="F1 Score"
+        )
+        fig_rank_f1.write_html(os.path.join(viz_dir, "param_rank_f1.html"))
+        fig_rank_fpr = optuna.visualization.plot_rank(
+            study,
+            params=params,
+            target=lambda t: t.values[1],
+            target_name="FPRate/min"
+        )
+        fig_rank_fpr.write_html(os.path.join(viz_dir, "param_rank_fpr.html"))
+
+        # 6. Slice & Contour plots for each objective
+        fig_slice_f1 = optuna.visualization.plot_slice(
+            study,
+            params=params,
+            target=lambda t: t.values[0],
+            target_name="F1 Score"
+        )
+        fig_slice_f1.write_html(os.path.join(viz_dir, "slice_f1.html"))
+        fig_slice_fpr = optuna.visualization.plot_slice(
+            study,
+            params=params,
+            target=lambda t: t.values[1],
+            target_name="FPRate/min"
+        )
+        fig_slice_fpr.write_html(os.path.join(viz_dir, "slice_fpr.html"))
+
+        numeric_params = [p for p in params if pd.api.types.is_numeric_dtype(all_df[p])]
+        if len(numeric_params) >= 2:
+            fig_contour_f1 = optuna.visualization.plot_contour(
+                study,
+                params=numeric_params[:2],
+                target=lambda t: t.values[0],
+                target_name="F1 Score"
+            )
+            fig_contour_f1.write_html(os.path.join(viz_dir, "contour_f1.html"))
+            fig_contour_fpr = optuna.visualization.plot_contour(
+                study,
+                params=numeric_params[:2],
+                target=lambda t: t.values[1],
+                target_name="FPRate/min"
+            )
+            fig_contour_fpr.write_html(os.path.join(viz_dir, "contour_fpr.html"))
+
+        # 7. Timeline plot
+        fig_time = optuna.visualization.plot_timeline(study)
+        fig_time.write_html(os.path.join(viz_dir, "timeline.html"))
+
+        # 8. Hypervolume contributions (optional, requires pygmo)
+        try:
+            import pygmo as pg
+            pts = np.array([[1 - t.values[0], t.values[1]] for t in study.best_trials])
+            hv = pg.hypervolume(pts)
+            contribs = hv.contributions(ref_point=[1, max_fpr])
+            order = np.argsort(contribs)[::-1]
+            labels = [f"#{study.best_trials[i].number}" for i in order]
+            vals = contribs[order]
+            plt.figure(figsize=(8, 4))
+            plt.bar(labels, vals)
+            plt.xlabel("Pareto Trial")
+            plt.ylabel("HV Contribution")
+            plt.title("Hypervolume Contribution per Pareto Trial")
+            plt.xticks(rotation=45, ha="right")
+            plt.tight_layout()
+            plt.savefig(os.path.join(viz_dir, "hv_contributions.png"))
+            plt.close()
+        except ImportError:
+            print("pygmo not installed; skipping HV contributions")
+
+        print("Advanced visualizations written to:", viz_dir)
+
+    except Exception as err:
+        print("Error generating advanced visualizations:", err)
+

@@ -930,6 +930,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             # Classification branch uses frozen features - remove sigmoid to prevent saturation
             logits = Conv1D(1, kernel_size=1,
                            kernel_initializer='he_normal',
+                           kernel_regularizer=tf.keras.regularizers.L1(1e-4),
                            bias_initializer='zeros',
                            use_bias=True, activation=None,
                            name='tmp_logits')(frozen_features)
@@ -939,6 +940,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             # Remove sigmoid to prevent saturation
             logits = Conv1D(1, kernel_size=1,
                            kernel_initializer='he_normal',
+                           kernel_regularizer=tf.keras.regularizers.L1(1e-4),
                            bias_initializer='zeros',
                            use_bias=True, activation=None,
                            name='tmp_logits')(tcn_output)
@@ -1053,16 +1055,10 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         #                     model=model),
         # ]
         metrics = [
-            EventPRAUC(consec_k=5, model=model),          # consecutive rule
-            LatencyWeightedF1Metric(tau=16,                # τ in samples
-                                    consec_k=5,
-                                    model=model),
-            TPRatFixedFPMetric(target_fp_per_min=1.0,
-                            win_sec=64/2500,
-                            consec_k=5,
-                            model=model)
-        ]
-        
+            EventPRAUC(mode="consec", consec_k=3, model=model),
+            LatencyWeightedF1Metric(tau=16, mode="consec", consec_k=3, model=model),
+            FPperMinMetric(thresh=0.5, win_sec=64/2500, mode="consec", consec_k=3, model=model),
+        ]      
         # Create loss function and compile model
         # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
@@ -1812,7 +1808,7 @@ def _ch(t, is_cls):          # [B,T,?] -> [B,T]
 # 1) EVENT-LEVEL PR-AUC with vote rule
 # ===================================================================== #
 class EventPRAUC(tf.keras.metrics.Metric):
-    def __init__(self, thresholds=tf.linspace(0., 1., 11),
+    def __init__(self, thresholds=tf.linspace(0., 1., 51),
                  mode="consec", consec_k=3, majority_ratio=0.0,
                  name="event_pr_auc", model=None, **kw):
         super().__init__(name=name, **kw)
@@ -1861,7 +1857,7 @@ class EventPRAUC(tf.keras.metrics.Metric):
 # 2) LATENCY-WEIGHTED F1 with vote rule
 # ===================================================================== #
 class LatencyWeightedF1Metric(tf.keras.metrics.Metric):
-    def __init__(self, tau, thresholds=tf.linspace(0.,1.,11),
+    def __init__(self, tau, thresholds=tf.linspace(0.,1.,51),
                  mode="consec", consec_k=3, majority_ratio=0.0,
                  name="latency_weighted_f1", model=None, **kw):
         super().__init__(name=name, **kw)
@@ -2817,7 +2813,8 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 
 
         # Weight between triplet and classification loss
-        total_loss = loss_weight*tf.reduce_mean(triplet_loss_val) + tf.reduce_mean(total_class_loss)
+        ratio = tf.stop_gradient(tf.reduce_mean(triplet_loss_val) / (tf.reduce_mean(total_class_loss) + 1e-6))
+        total_loss = tf.reduce_mean(triplet_loss_val) + 0.5 * ratio * tf.reduce_mean(total_class_loss)
         # total_loss = tf.reduce_mean(total_class_loss)
         if ('Entropy' in params['TYPE_LOSS']) and ('HYPER_ENTROPY' in params):
             entropy_factor = params['HYPER_ENTROPY']

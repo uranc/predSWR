@@ -453,7 +453,11 @@ def apply_augmentation_to_dataset(dataset, params=None, sampling_rate=1250):
     # Apply augment_batch function to each batch using map
     return dataset.map(augment_batch, num_parallel_calls=tf.data.experimental.AUTOTUNE)
 
-def rippleAI_prepare_training_data(train_LFPs,train_GTs,val_LFPs,val_GTs,sf=1250,new_sf=1250,channels=np.arange(0,8),zscore=True,use_band=None):
+def rippleAI_prepare_training_data(train_LFPs, train_GTs,
+                                   val_LFPs,   val_GTs,
+                                   sf=1250, new_sf=1250,
+                                   channels=np.arange(0, 8),
+                                   zscore=True, process_online=False, use_band=None):    
     '''
         Prepares data for training: subsamples, interpolates (if required), z-scores and concatenates
         the train/test data passed. Does the same for the validation data, but without concatenating
