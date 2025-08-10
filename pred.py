@@ -310,7 +310,7 @@ def objective_triplet(trial):
     tf.config.run_functions_eagerly(False)
 
     # Start with base parameters
-    params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
+    params = {'BATCH_SIZE': 64, 'SHUFFLE_BUFFER_SIZE': 4096*2,
             'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
             'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
             'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
@@ -324,7 +324,7 @@ def objective_triplet(trial):
 
     # Optional batch size tuning
     # batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
-    batch_size = 32
+    batch_size = 64
     params['BATCH_SIZE'] = batch_size
     # ...rest of existing objective function code...
 
@@ -386,7 +386,7 @@ def objective_triplet(trial):
     params['LOSS_TupMPN'] = 1.0#trial.suggest_float('LOSS_TupMPN', 0.1, 500.0, log=True)
     params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 0.1, 500.0, log=True)
     params['LOSS_WEIGHT'] = 1.0#trial.suggest_float('LOSS_WEIGHT', 0.001, 100.0, log=True)
-    params['LOSS_NEGATIVES'] = 10#trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
+    params['LOSS_NEGATIVES'] = 30#trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
 
     ax = 25#trial.suggest_int('AX', 25, 85, step=20)
@@ -445,7 +445,7 @@ def objective_triplet(trial):
 
     # act_lib = ['ELU', 'GELU'] # 'RELU',
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    par_act = 'GELU'
+    par_act = 'ELU'
 
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'Adam'
@@ -476,7 +476,7 @@ def objective_triplet(trial):
 
     # params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
     # if params['USE_Aug']:
-    # params['TYPE_ARCH'] += 'Aug'
+    params['TYPE_ARCH'] += 'Aug'
 
 
     params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
@@ -506,11 +506,11 @@ def objective_triplet(trial):
     # if params['USE_L2Reg']:
     #     params['TYPE_LOSS'] += 'L2Reg'
 
-    drop_lib = [0, 5, 10, 20]
-    drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3])
-    print('Dropout rate:', drop_lib[drop_ind])
-    if drop_ind > 0:
-        params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
+    # drop_lib = [0, 5, 10, 20]
+    # drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3])
+    # print('Dropout rate:', drop_lib[drop_ind])
+    # if drop_ind > 0:
+    #     params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
 
     params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
 
@@ -632,11 +632,17 @@ def objective_triplet(trial):
                         verbose=1,
                         restore_best_weights=True),
         cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
-                            monitor='val_latency_weighted_f1',
+                            monitor='val_f1',
                             verbose=1,
                             save_best_only=True,
                             save_weights_only=True,
-                            mode='max'),
+                            mode='max'),                        
+        # cb.ModelCheckpoint(f"{study_dir}/max.weights.h5",
+        #                     monitor='val_latency_weighted_f1',
+        #                     verbose=1,
+        #                     save_best_only=True,
+        #                     save_weights_only=True,
+        #                     mode='max'),
                             # cb.ModelCheckpoint(
                             # f"{study_dir}/robust.weights.h5",
                             # monitor='val_robust_f1',  # Change monitor
@@ -734,8 +740,7 @@ def objective_triplet(trial):
     #         print(f"\nEarly stopping triggered! No improvement for {patience} epochs.")
     #         break
     val_steps = dataset_params['VAL_STEPS']
-    # pdb.set_trace()
-    # Train and evaluate
+    # pdb.set_trace()    # Train and evaluate
     history = model.fit(
         train_dataset,
         steps_per_epoch=dataset_params['ESTIMATED_STEPS_PER_EPOCH'],
@@ -744,14 +749,17 @@ def objective_triplet(trial):
         epochs=params['NO_EPOCHS'],
         callbacks=callbacks,
         verbose=1,
-        workers=4,               # >0  → background threads / procs
-        use_multiprocessing=True,# True → processes, False → threads
         max_queue_size=8)       # how many batches to keep ready
+            # workers=4,               # >0  → background threads / procs
+        # use_multiprocessing=True,# True → processes, False → threads
+
     # tf.profiler.experimental.stop()
     # val_event_pr_auc: 0.83 ‖ val_latency_weighted_f1: 0.71 ‖ val_tpr_at_fpmin: 0.88
 
-    val_accuracy = (max(history.history['val_event_pr_auc'])+max(history.history['val_latency_weighted_f1']))/2
-    val_accuracy_mean = (np.mean(history.history['val_event_pr_auc'])+np.mean(history.history['val_latency_weighted_f1']))/2
+    # val_accuracy = (max(history.history['val_event_pr_auc'])+max(history.history['val_latency_weighted_f1']))/2
+    # val_accuracy_mean = (np.mean(history.history['val_event_pr_auc'])+np.mean(history.history['val_latency_weighted_f1']))/2
+    val_accuracy = (max(history.history['val_event_pr_auc'])+max(history.history['val_f1']))/2
+    val_accuracy_mean = (np.mean(history.history['val_event_pr_auc'])+np.mean(history.history['val_f1']))/2    
     val_accuracy = (val_accuracy + val_accuracy_mean)/2
     val_latency = np.mean(history.history['val_fp_per_min'])
 

@@ -623,7 +623,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
     sample_length = params['NO_TIMEPOINTS']*2
     label_length = sample_length/2
     label_skip = int(sample_length/2)    
-    stride_step = 1#params['STRIDE_STEP'] if 'STRIDE_STEP' in params else 32
+    stride_step = 8#params['STRIDE_STEP'] if 'STRIDE_STEP' in params else 32
     
     # Create standard test dataset with T-length windows
     test_x = timeseries_dataset_from_array(
@@ -646,11 +646,11 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
     
     # Simple validation dataset - drop incomplete batches to avoid splitting errors
     test_ds = tf.data.Dataset.zip((test_x, test_y))
-    test_ds = test_ds.batch(params['BATCH_SIZE']*3, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
+    test_ds = test_ds.batch(params['BATCH_SIZE']*6, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
     
     # Calculate validation steps for complete batches only
     total_windows = (len(te_x) - sample_length) // stride_step + 1
-    val_steps = total_windows // (params['BATCH_SIZE'] * 3)  # Integer division - drops partial batch
+    val_steps = total_windows // (params['BATCH_SIZE'] * 6)  # Integer division - drops partial batch
     
     print(f"Validation: {len(te_x)} samples, {total_windows} windows")
     print(f"Validation steps: {val_steps} (dropping partial batch)")
@@ -1389,6 +1389,7 @@ class TripletSequence(tf.keras.utils.Sequence):
                (Nd.astype(np.float32), Nl.astype(np.float32))
 
     def _rebuild_catalogue(self):
+        tf.print("Rebuilding triplet catalogue...")
         W   = self.p['NO_TIMEPOINTS']
         mul = self.p.get('WINDOW_MULTIPLIER', 2)
         self.anchor_idx, self.pos_idx, self.neg_idx = _build_window_catalogue_2T(
@@ -1419,6 +1420,4 @@ class TripletSequence(tf.keras.utils.Sequence):
 
     def on_epoch_end(self):
         # triggers a fresh negative sample catalog
-        self._rebuild_catalogue()
-
         self._rebuild_catalogue()

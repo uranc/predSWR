@@ -842,6 +842,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             inp_gate = Conv1D(
                 1, 1, activation='sigmoid',
                 kernel_initializer='glorot_uniform',
+                use_bias=True,
                 name='input_gate'
             )(attn_in)  # [B, T, 1]
 
@@ -916,6 +917,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             time_gate = Conv1D(
                 1, 1, activation='sigmoid',
                 kernel_initializer='glorot_uniform',
+                use_bias=True,
                 name='time_gate'
             )(attn_out)  # [B, T, 1]
 
@@ -1000,8 +1002,9 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # event_f1_metric = EventAwareF1(model=model)
         # fp_event_metric = EventFalsePositiveRateMetric(model=model)
         metrics = [
-            EventPRAUC(mode="consec", consec_k=3, model=model),
-            LatencyWeightedF1Metric(tau=16, mode="consec", consec_k=3, model=model),
+            EventPRAUC(mode="consec", consec_k=5, model=model),
+            MaxF1MetricHorizon(model=model),
+            # LatencyWeightedF1Metric(tau=16, mode="consec", consec_k=3, model=model),
             FPperMinMetric(thresh=0.5, win_sec=64/2500, mode="consec", consec_k=3, model=model),
         ]        
         # metrics = [
@@ -1055,8 +1058,9 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         #                     model=model),
         # ]
         metrics = [
-            EventPRAUC(mode="consec", consec_k=3, model=model),
-            LatencyWeightedF1Metric(tau=16, mode="consec", consec_k=3, model=model),
+            EventPRAUC(mode="consec", consec_k=5, model=model),
+            MaxF1MetricHorizon(model=model),
+            # LatencyWeightedF1Metric(tau=16, mode="consec", consec_k=3, model=model),
             FPperMinMetric(thresh=0.5, win_sec=64/2500, mode="consec", consec_k=3, model=model),
         ]      
         # Create loss function and compile model
@@ -1808,7 +1812,7 @@ def _ch(t, is_cls):          # [B,T,?] -> [B,T]
 # 1) EVENT-LEVEL PR-AUC with vote rule
 # ===================================================================== #
 class EventPRAUC(tf.keras.metrics.Metric):
-    def __init__(self, thresholds=tf.linspace(0., 1., 51),
+    def __init__(self, thresholds=tf.linspace(0., 1., 11),
                  mode="consec", consec_k=3, majority_ratio=0.0,
                  name="event_pr_auc", model=None, **kw):
         super().__init__(name=name, **kw)
@@ -1857,7 +1861,7 @@ class EventPRAUC(tf.keras.metrics.Metric):
 # 2) LATENCY-WEIGHTED F1 with vote rule
 # ===================================================================== #
 class LatencyWeightedF1Metric(tf.keras.metrics.Metric):
-    def __init__(self, tau, thresholds=tf.linspace(0.,1.,51),
+    def __init__(self, tau, thresholds=tf.linspace(0.,1.,11),
                  mode="consec", consec_k=3, majority_ratio=0.0,
                  name="latency_weighted_f1", model=None, **kw):
         super().__init__(name=name, **kw)
@@ -2776,11 +2780,12 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 
 
         # Extract alpha and gamma parameters
-        alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.25) # Assuming extract_param_from_loss_type is defined elsewhere
-        gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0) # Assuming extract_param_from_loss_type is defined elsewhere
+        # alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.25) # Assuming extract_param_from_loss_type is defined elsewhere
+        # gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0) # Assuming extract_param_from_loss_type is defined elsewhere
 
-        print(f"Using Focal loss with alpha={alpha}, gamma={gamma}")
-
+        # print(f"Using Focal loss with alpha={alpha}, gamma={gamma}")
+        print(f"Using BCE")
+        # focal_loss_fn = tf.keras.losses.BinaryFocalCrossentropy(
         # use_class_balancing = alpha > 0
         # focal_loss_fn = tf.keras.losses.BinaryFocalCrossentropy( # Renamed to avoid conflict if focal_loss is a variable
         #     apply_class_balancing=use_class_balancing,
