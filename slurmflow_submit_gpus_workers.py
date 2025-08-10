@@ -12,7 +12,7 @@ tag = 'tripletOnlyGPSeq2500'
 
 # Rest of script remains unchanged
 ijob = -1
-for model_name in range(24):
+for model_name in range(32):
     # exp_dir = 'experiments/' + model_name
     # pr = exp_dir + '/model/'
     # if not path.exists(pr):
@@ -23,7 +23,7 @@ for model_name in range(24):
     ijob += 1
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
-    if ijob < 8:
+    if ijob < 12:
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
         subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
     # elif ijob < 16:
