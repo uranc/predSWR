@@ -95,7 +95,6 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
     if model_type=='Base':
         print('Using Base TCN')
         from tcn import TCN
-        # pdb.set_trace()
 
         tcn_op = TCN(nb_filters=n_filters,
                         kernel_size=n_kernels,

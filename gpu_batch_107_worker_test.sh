@@ -1,11 +1,11 @@
 #!/bin/bash
-
+   
 #SBATCH --job-name=tensorflow_gpu
-#SBATCH --partition=GPUshort
+#SBATCH --partition=GPUtest
 #SBATCH --gpus=rtxa6000:1
-#SBATCH --cpus-per-gpu=4
+#SBATCH --cpus-per-gpu=3
 #SBATCH --mem-per-cpu=7800
-#SBATCH --time=00-23:59:00
+#SBATCH --time=00-03:59:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cem.uran@esi-frankfurt.de
 

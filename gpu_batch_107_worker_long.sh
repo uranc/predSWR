@@ -3,9 +3,9 @@
 #SBATCH --job-name=tensorflow_gpu
 #SBATCH --partition=GPUlong
 #SBATCH --gpus=rtxa6000:1
-#SBATCH --cpus-per-gpu=6
+#SBATCH --cpus-per-gpu=4
 #SBATCH --mem-per-cpu=7800
-#SBATCH --time=0-23:59:00
+#SBATCH --time=2-23:59:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cem.uran@esi-frankfurt.de
 

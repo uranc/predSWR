@@ -318,13 +318,13 @@ def objective_triplet(trial):
             }
 
     # Dynamic learning rate range
-    # learning_rate = trial.suggest_float('learning_rate', 1e-3, 1e-2, log=True)
-    learning_rate = 1e-3
+    learning_rate = trial.suggest_float('learning_rate', 1e-3, 1e-2, log=True)
+    # learning_rate = 3e-3
     params['LEARNING_RATE'] = learning_rate
 
     # Optional batch size tuning
-    # batch_size = trial.suggest_categorical('batch_size', [32, 64, 128, 256])
-    batch_size = 64
+    batch_size = trial.suggest_categorical('batch_size', [32, 64, 128])
+    # batch_size = 64
     params['BATCH_SIZE'] = batch_size
     # ...rest of existing objective function code...
 
@@ -384,9 +384,9 @@ def objective_triplet(trial):
     params['SHIFT_MS'] = 0
 
     params['LOSS_TupMPN'] = 1.0#trial.suggest_float('LOSS_TupMPN', 0.1, 500.0, log=True)
-    params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 0.1, 500.0, log=True)
+    params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 100, 1000.0, log=True)
     params['LOSS_WEIGHT'] = 1.0#trial.suggest_float('LOSS_WEIGHT', 0.001, 100.0, log=True)
-    params['LOSS_NEGATIVES'] = 30#trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
+    params['LOSS_NEGATIVES'] = trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
 
     ax = 25#trial.suggest_int('AX', 25, 85, step=20)
@@ -396,11 +396,12 @@ def objective_triplet(trial):
     # params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
     params['TYPE_LOSS'] = 'FocalAx{:03d}Gx{:03d}'.format(ax, gx)
 
-    entropyLib = [0, 0.005, 0.5, 1]
-    entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
-    if entropy_ind > 0:
-        params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
-        params['TYPE_LOSS'] += 'Entropy'
+    # entropyLib = [0, 0.005, 0.5, 1]
+    # entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
+    # if entropy_ind > 0:
+    #     params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
+    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.005, 5.0, log=True)
+    params['TYPE_LOSS'] += 'Entropy'
 
     # params['HYPER_TMSE'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
     # params['HYPER_BARLOW'] = 2e-5
@@ -425,8 +426,8 @@ def objective_triplet(trial):
         dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
-    # params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
-    params['NO_FILTERS'] = 64
+    params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
+    # params['NO_FILTERS'] = 64
 
     # Remove the hardcoded use_freq and derive it from tag instead
 
@@ -451,10 +452,10 @@ def objective_triplet(trial):
     par_opt = 'Adam'
     # par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
 
-    # reg_lib = ['LOne',  'None'] #'LTwo',
-    # par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
+    reg_lib = ['LOne',  'None'] #'LTwo',
+    par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
     # par_reg = 'LOne'
-    par_reg = 'None'  # No regularization for now
+    # par_reg = 'None'  # No regularization for now
 
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
     # Build architecture string with timing parameters (adjust format)
@@ -479,10 +480,10 @@ def objective_triplet(trial):
     params['TYPE_ARCH'] += 'Aug'
 
 
-    params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
-    if params['USE_StopGrad']:
-        print('Using Stop Gradient for Class. Branch')
-        params['TYPE_ARCH'] += 'StopGrad'
+    # params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
+    # if params['USE_StopGrad']:
+    #     print('Using Stop Gradient for Class. Branch')
+    #     params['TYPE_ARCH'] += 'StopGrad'
     # params['TYPE_ARCH'] += 'StopGrad'
 
     # params['USE_Attention'] = trial.suggest_categorical('USE_Attention', [True, False])
@@ -3703,7 +3704,7 @@ elif mode == 'tune_viz_multi':
 
     # --- Hyperparameter Impact Analysis ---
     print("Generating hyperparameter impact plots...")
-    hyperparams = [p for p in all_df.columns if p not in ['trial_number', 'f1_score', 'latency', 'combined_score']]
+    hyperparams = [p for p in all_df.columns if p not in ['trial_number', 'f1_score', 'fp_per_min', 'combined_score']]
     impact_plot_files = []
 
     # Function to check if a parameter should use log scale
@@ -3921,21 +3922,21 @@ elif mode == 'tune_viz_multi_v2':
         fig_hist_f1 = optuna.visualization.plot_optimization_history(study, target=lambda t: t.values[0] if t.values and len(t.values) > 0 else float('nan'), target_name="F1 Score")
         fig_hist_f1.write_html(os.path.join(viz_dir, "optimization_history_f1.html"))
 
-        # Plot optimization history for Latency (Objective 1)
-        fig_hist_latency = optuna.visualization.plot_optimization_history(study, target=lambda t: t.values[1] if t.values and len(t.values) > 1 else float('nan'), target_name="Latency")
-        fig_hist_latency.write_html(os.path.join(viz_dir, "optimization_history_latency.html"))
+        # Plot optimization history for FP Rate per Minute (Objective 1)
+        fig_hist_fp = optuna.visualization.plot_optimization_history(study, target=lambda t: t.values[1] if t.values and len(t.values) > 1 else float('nan'), target_name="FP Rate per Minute")
+        fig_hist_fp.write_html(os.path.join(viz_dir, "optimization_history_fp_per_min.html"))
 
         # Plot Pareto Front
-        fig_pareto = optuna.visualization.plot_pareto_front(study, target_names=["F1 Score", "Latency"])
+        fig_pareto = optuna.visualization.plot_pareto_front(study, target_names=["F1 Score", "FP Rate per Minute"])
         fig_pareto.write_html(os.path.join(viz_dir, "pareto_front.html"))
 
         # Plot parameter importance for F1 Score
         fig_imp_f1 = optuna.visualization.plot_param_importances(study, target=lambda t: t.values[0] if t.values and len(t.values) > 0 else float('nan'), target_name="F1 Score")
         fig_imp_f1.write_html(os.path.join(viz_dir, "param_importances_f1.html"))
 
-        # Plot parameter importance for Latency
-        fig_imp_latency = optuna.visualization.plot_param_importances(study, target=lambda t: t.values[1] if t.values and len(t.values) > 1 else float('nan'), target_name="Latency")
-        fig_imp_latency.write_html(os.path.join(viz_dir, "param_importances_latency.html"))
+        # Plot parameter importance for FP Rate per Minute
+        fig_imp_fp = optuna.visualization.plot_param_importances(study, target=lambda t: t.values[1] if t.values and len(t.values) > 1 else float('nan'), target_name="FP Rate per Minute")
+        fig_imp_fp.write_html(os.path.join(viz_dir, "param_importances_fp_per_min.html"))
         print("Standard plots generated.")
     except Exception as e:
         print(f"Warning: Error generating standard Optuna plots: {e}")
@@ -3953,21 +3954,21 @@ elif mode == 'tune_viz_multi_v2':
         if trial.values is not None and len(trial.values) == 2:
             try:
                 f1_score = float(trial.values[0]) if trial.values[0] is not None else np.nan
-                latency = float(trial.values[1]) if trial.values[1] is not None else np.nan
+                fp_per_min = float(trial.values[1]) if trial.values[1] is not None else np.nan
             except (ValueError, TypeError):
                 f1_score = np.nan
-                latency = np.nan
+                fp_per_min = np.nan
 
-            if not (np.isnan(f1_score) or np.isnan(latency)):
+            if not (np.isnan(f1_score) or np.isnan(fp_per_min)):
                  all_trial_data.append({
                     "trial_number": trial.number,
                     "f1_score": f1_score,
-                    "latency": latency,
+                    "fp_per_min": fp_per_min,
                     **trial.params
                 })
 
     if not all_trial_data:
-        print("No completed trials with valid F1 score and Latency found. Exiting visualization.")
+        print("No completed trials with valid F1 score and FP Rate per Minute found. Exiting visualization.")
         sys.exit(0)
 
     all_df = pd.DataFrame(all_trial_data)
@@ -3976,15 +3977,16 @@ elif mode == 'tune_viz_multi_v2':
 
     # --- Calculate Quantile Ranges for Plotting ---
     f1_q05, f1_q95 = np.nanquantile(all_df['f1_score'], [0.05, 0.95]) if not all_df['f1_score'].isnull().all() else (0, 1)
-    lat_q05, lat_q95 = np.nanquantile(all_df['latency'], [0.05, 0.95]) if not all_df['latency'].isnull().all() else (0, 1)
+    fp_q05, fp_q95 = np.nanquantile(all_df['fp_per_min'], [0.05, 0.95]) if not all_df['fp_per_min'].isnull().all() else (0, 1)
     f1_margin = (f1_q95 - f1_q05) * 0.05 if (f1_q95 - f1_q05) > 0 else 0.05
-    lat_margin = (lat_q95 - lat_q05) * 0.05 if (lat_q95 - lat_q05) > 0 else 0.05
+    fp_margin = (fp_q95 - fp_q05) * 0.05 if (fp_q95 - fp_q05) > 0 else 0.05
     f1_ylim = (max(0, f1_q05 - f1_margin), min(1, f1_q95 + f1_margin))
-    lat_ylim = (max(0, lat_q05 - lat_margin), lat_q95 + lat_margin)
+    fp_ylim = (max(0, fp_q05 - fp_margin), fp_q95 + fp_margin)
     if f1_ylim[0] >= f1_ylim[1]: f1_ylim = (max(0, f1_ylim[0] - 0.1), min(1, f1_ylim[1] + 0.1))
-    if lat_ylim[0] >= lat_ylim[1]: lat_ylim = (max(0, lat_ylim[0] - 0.1), min(1, lat_ylim[1] + 0.1))
+    if fp_ylim[0] >= fp_ylim[1]: fp_ylim = (max(0, fp_ylim[0] - 0.1), min(1, fp_ylim[1] + 0.1))
     print(f"Using F1 Score Y-axis range: {f1_ylim}")
-    print(f"Using Latency Y-axis range: {lat_ylim}")
+    print(f"Using FP Rate per Minute Y-axis range: {fp_ylim}")
+    # NOTE: fp_per_min may be overcounted due to stride/window overlap. Each event can be counted multiple times if it spans multiple windows. No deduplication is performed here.
 
 
     # --- Pareto Optimal Trials Analysis ---
@@ -3999,7 +4001,7 @@ elif mode == 'tune_viz_multi_v2':
         pareto_df = all_df[all_df['trial_number'].isin(pareto_trial_numbers)].copy()
 
         if not pareto_df.empty:
-            pareto_df['combined_score'] = (pareto_df['f1_score'] + (1 - pareto_df['latency'])) / 2 # Ensure latency is inverted for maximization
+            pareto_df['combined_score'] = (pareto_df['f1_score'] + (1 - pareto_df['fp_per_min'])) / 2 # Lower fp_per_min is better
             pareto_df = pareto_df.sort_values('combined_score', ascending=False)
             pareto_df.to_csv(os.path.join(viz_dir, "pareto_optimal_trials.csv"), index=False)
 
@@ -4008,8 +4010,8 @@ elif mode == 'tune_viz_multi_v2':
             <style> table {{ border-collapse: collapse; width: 100%; }} th, td {{ border: 1px solid black; padding: 8px; text-align: left; }} tr:nth-child(even) {{ background-color: #f2f2f2; }} th {{ background-color: #007bff; color: white; }} </style>
             </head><body>
             <h2>Pareto Optimal Trials ({len(pareto_df)} trials)</h2>
-            <p>These trials represent the best trade-offs found between maximizing F1 Score and minimizing Latency.</p>
-            <p>Sorted by combined score = (F1 Score + (1 - Latency)) / 2</p>
+            <p>These trials represent the best trade-offs found between maximizing F1 Score and minimizing FP Rate per Minute.</p>
+            <p>Sorted by a simple combined score = (F1 Score + (1 - FP/min)) / 2. See combined_scores.html for robust variants.</p>
             {pareto_df.to_html(index=False)}
             </body></html>
             """
@@ -4019,7 +4021,7 @@ elif mode == 'tune_viz_multi_v2':
             print(f"Pareto optimal trials saved to {os.path.join(viz_dir, 'pareto_optimal_trials.csv')} and .html")
             if not pareto_df.empty:
                  print("\nTop 10 Pareto Optimal Trials (ranked by combined_score):")
-                 print(pareto_df[['trial_number', 'f1_score', 'latency', 'combined_score']].head(10))
+                 print(pareto_df[['trial_number', 'f1_score', 'fp_per_min', 'combined_score']].head(10))
         else:
             print("Pareto DataFrame is empty after filtering.")
             # Create an empty pareto_optimal_trials.html if no pareto trials
@@ -4030,10 +4032,179 @@ elif mode == 'tune_viz_multi_v2':
     N_TOP_PARETO = min(10, len(pareto_df)) if not pareto_df.empty else 0
     top_pareto_df = pareto_df.head(N_TOP_PARETO) if not pareto_df.empty else pd.DataFrame()
 
+    # --- Combined Score Strategies and Rankings ---
+    print("Computing combined score strategies and consensus ranking...")
+    df = all_df.copy()
+    # Robust normalization for fp_per_min
+    fp_q05, fp_q50, fp_q95 = np.nanquantile(df['fp_per_min'], [0.05, 0.50, 0.95]) if not df['fp_per_min'].isnull().all() else (0.0, 0.0, 1.0)
+    # Min-max on 5-95% range with clipping
+    denom = max(1e-9, fp_q95 - fp_q05)
+    df['fp_norm_minmax'] = np.clip((df['fp_per_min'] - fp_q05) / denom, 0, 1)
+    df['fp_score_minmax'] = 1 - df['fp_norm_minmax']
+    # Rank-based percentiles
+    n = len(df)
+    if n > 1:
+        df['f1_rank_score'] = (df['f1_score'].rank(method='min', ascending=True) - 1) / (n - 1)
+        fp_rank_raw = (df['fp_per_min'].rank(method='min', ascending=True) - 1) / (n - 1)
+        df['fp_rank_score'] = 1 - fp_rank_raw
+    else:
+        df['f1_rank_score'] = 0.5
+        df['fp_rank_score'] = 0.5
+    # Logistic transform for FP (lower is better). Midpoint at median.
+    k = max(1e-9, fp_q50)
+    df['fp_score_logistic'] = 1.0 / (1.0 + (df['fp_per_min'] / k))
+    # Approximate deduplication based on window and stride; defaults: window=64 samples, stride=8 samples
+    default_window = 64
+    default_stride = 8
+    try:
+        window_samples = int(np.nanmedian(df['NO_TIMEPOINTS'])) if 'NO_TIMEPOINTS' in df.columns else default_window
+    except Exception:
+        window_samples = default_window
+    # Try a few possible stride param names; fallback to default
+    if 'VAL_STRIDE' in df.columns:
+        try:
+            approx_stride = int(np.nanmedian(df['VAL_STRIDE']))
+        except Exception:
+            approx_stride = default_stride
+    elif 'SEQ_STRIDE' in df.columns:
+        try:
+            approx_stride = int(np.nanmedian(df['SEQ_STRIDE']))
+        except Exception:
+            approx_stride = default_stride
+    else:
+        approx_stride = default_stride
+    dup_factor = max(1, int(round(window_samples / max(1, approx_stride))))
+    df['fp_per_min_adj'] = df['fp_per_min'] / dup_factor
+    # Recompute minmax/logistic on adjusted FP
+    fp_adj_q05, fp_adj_q50, fp_adj_q95 = np.nanquantile(df['fp_per_min_adj'], [0.05, 0.50, 0.95]) if not df['fp_per_min_adj'].isnull().all() else (0.0, 0.0, 1.0)
+    denom_adj = max(1e-9, fp_adj_q95 - fp_adj_q05)
+    df['fp_adj_norm_minmax'] = np.clip((df['fp_per_min_adj'] - fp_adj_q05) / denom_adj, 0, 1)
+    df['fp_adj_score_minmax'] = 1 - df['fp_adj_norm_minmax']
+    k_adj = max(1e-9, fp_adj_q50)
+    df['fp_adj_score_logistic'] = 1.0 / (1.0 + (df['fp_per_min_adj'] / k_adj))
+    # Combined metrics
+    eps = 1e-9
+    df['combined_avg_minmax'] = (df['f1_score'] + df['fp_score_minmax']) / 2.0
+    df['combined_hmean_minmax'] = 2 * df['f1_score'] * df['fp_score_minmax'] / np.clip(df['f1_score'] + df['fp_score_minmax'], eps, None)
+    df['combined_avg_logistic'] = (df['f1_score'] + df['fp_score_logistic']) / 2.0
+    df['combined_rank_avg'] = (df['f1_rank_score'] + df['fp_rank_score']) / 2.0
+    # Using adjusted FP
+    df['combined_adj_avg_minmax'] = (df['f1_score'] + df['fp_adj_score_minmax']) / 2.0
+    df['combined_adj_hmean_minmax'] = 2 * df['f1_score'] * df['fp_adj_score_minmax'] / np.clip(df['f1_score'] + df['fp_adj_score_minmax'], eps, None)
+    df['combined_adj_avg_logistic'] = (df['f1_score'] + df['fp_adj_score_logistic']) / 2.0
+
+    # Rank each combined metric (higher is better)
+    combined_cols = [
+        'combined_avg_minmax','combined_hmean_minmax','combined_avg_logistic','combined_rank_avg',
+        'combined_adj_avg_minmax','combined_adj_hmean_minmax','combined_adj_avg_logistic'
+    ]
+    for c in combined_cols:
+        df[f'rank_{c}'] = df[c].rank(method='min', ascending=False)
+    rank_cols = [f'rank_{c}' for c in combined_cols]
+    df['consensus_rank_sum'] = df[rank_cols].sum(axis=1)
+    df['consensus_rank'] = df['consensus_rank_sum'].rank(method='min', ascending=True)
+    # Save outputs
+    df_path = os.path.join(viz_dir, 'all_trials_with_scores.csv')
+    df.to_csv(df_path, index=False)
+    top_consensus = df.sort_values(['consensus_rank','trial_number']).head(20)
+    top_consensus_path = os.path.join(viz_dir, 'top_consensus_trials.csv')
+    top_consensus.to_csv(top_consensus_path, index=False)
+    for c in combined_cols:
+        out = df.sort_values(c, ascending=False).head(20)
+        out.to_csv(os.path.join(viz_dir, f'top20_{c}.csv'), index=False)
+
+    # Visualization: Overlay scatter with combined metrics and Pareto
+    try:
+        plt.figure(figsize=(10, 7))
+        # All trials as background
+        plt.scatter(df['fp_per_min'], df['f1_score'], c='lightgray', s=18, label='_nolegend_')
+
+        # Pareto front trials
+        pareto_nums = [t.number for t in pareto_trials_optuna_objects] if pareto_trials_optuna_objects else []
+        df_pareto = df[df['trial_number'].isin(pareto_nums)]
+        if not df_pareto.empty:
+            plt.scatter(df_pareto['fp_per_min'], df_pareto['f1_score'], facecolors='none', edgecolors='black', s=60, linewidths=1.2, label='Optuna Pareto')
+
+        # Select a few representative combined metrics to highlight
+        highlight_metrics = [
+            'combined_avg_minmax',
+            'combined_hmean_minmax',
+            'combined_adj_hmean_minmax',
+            'combined_rank_avg'
+        ]
+        colors = {
+            'combined_avg_minmax': 'tab:blue',
+            'combined_hmean_minmax': 'tab:orange',
+            'combined_adj_hmean_minmax': 'tab:green',
+            'combined_rank_avg': 'tab:red'
+        }
+        markers = {
+            'combined_avg_minmax': 'o',
+            'combined_hmean_minmax': 's',
+            'combined_adj_hmean_minmax': 'D',
+            'combined_rank_avg': '^'
+        }
+        top_k = 20
+        for m in highlight_metrics:
+            if m in df.columns:
+                dtop = df.nlargest(top_k, m)
+                plt.scatter(dtop['fp_per_min'], dtop['f1_score'], c=colors[m], marker=markers[m], s=45, edgecolors='white', linewidths=0.6, label=f'Top {top_k} {m}')
+
+        # Iso-score lines for combined_avg_minmax over fp range
+        if 'fp_norm_minmax' in df.columns:
+            x_min = float(df['fp_per_min'].min())
+            x_max = float(df['fp_per_min'].max())
+            xs = np.linspace(x_min, x_max, 100)
+            # Using previously computed fp_q05, denom (from this scope)
+            iso_scores = [0.6, 0.7, 0.8]
+            for s in iso_scores:
+                ys = 2*s - 1 + np.clip((xs - fp_q05) / denom, 0, 1)
+                plt.plot(xs, ys, linestyle='--', linewidth=1.0, label=f'iso combined_avg_minmax={s}', alpha=0.6)
+
+        plt.xlabel('FP Rate per Minute')
+        plt.ylabel('F1 Score')
+        plt.title('F1 vs FP/min with Pareto and Combined Metrics (Top-20)')
+        # Build a clean legend (dedupe labels)
+        handles, labels = plt.gca().get_legend_handles_labels()
+        seen = set(); new_h = []; new_l = []
+        for h, l in zip(handles, labels):
+            if l == '_nolegend_' or l in seen: continue
+            seen.add(l); new_h.append(h); new_l.append(l)
+        plt.legend(new_h, new_l, loc='best', fontsize='small', frameon=True)
+        plt.grid(True, linestyle='--', alpha=0.3)
+        overlay_path = os.path.join(viz_dir, 'combined_metrics_pareto_overlay.png')
+        plt.tight_layout()
+        plt.savefig(overlay_path, dpi=140)
+        plt.close()
+        print(f"Saved overlay scatter to {overlay_path}")
+    except Exception as e:
+        print(f"Warning: failed to create combined metrics overlay plot: {e}")
+    # Create a small HTML report
+    combined_html = f"""
+    <html><head><title>Combined Score Rankings: {study.study_name}</title>
+    <style> table {{ border-collapse: collapse; width: 100%; }} th, td {{ border: 1px solid #ddd; padding: 6px; }} th {{ background:#007bff; color:white; }} tr:nth-child(even){{background:#f9f9f9}} body {{ font-family: Arial; margin:20px; }} </style>
+    </head><body>
+    <h2>Combined Score Strategies</h2>
+    <p>This study uses F1 Score (higher is better) and FP Rate per Minute (lower is better). We compute several robust combined scores to rank trials, addressing scale issues and potential window/stride overcounting:</p>
+    <ul>
+      <li><b>combined_avg_minmax</b>: (F1 + (1 - minmax(FP/min))) / 2 over 5–95% range.</li>
+      <li><b>combined_hmean_minmax</b>: Harmonic mean of F1 and (1 - minmax(FP/min)).</li>
+      <li><b>combined_avg_logistic</b>: (F1 + 1/(1 + FP/min / median(FP/min))) / 2.</li>
+      <li><b>combined_rank_avg</b>: Average of percentile ranks (F1 ascending, FP/min descending).</li>
+      <li><b>combined_adj_* </b>: Same as above but with FP/min adjusted by an approximate duplication factor = round(window/stride) (window≈{window_samples}, stride≈{approx_stride}).</li>
+    </ul>
+    <p>CSV with all scores: <a href="all_trials_with_scores.csv" target="_blank">all_trials_with_scores.csv</a></p>
+    <h3>Top 20 by Consensus Rank (average of ranks across strategies)</h3>
+    {top_consensus[['trial_number','f1_score','fp_per_min','consensus_rank'] + combined_cols].to_html(index=False)}
+    </body></html>
+    """
+    with open(os.path.join(viz_dir, 'combined_scores.html'), 'w') as fh:
+        fh.write(combined_html)
+
 
     # --- Hyperparameter Impact Analysis ---
     print("Generating hyperparameter impact plots...")
-    hyperparams = [p for p in all_df.columns if p not in ['trial_number', 'f1_score', 'latency', 'combined_score']]
+    hyperparams = [p for p in all_df.columns if p not in ['trial_number', 'f1_score', 'fp_per_min', 'combined_score']]
     impact_plot_files = []
 
     def should_use_log_scale(series):
@@ -4090,25 +4261,25 @@ elif mode == 'tune_viz_multi_v2':
 
             ax2 = ax1.twinx()
             if is_numeric:
-                sns.scatterplot(data=all_df, x=param, y='latency', ax=ax2, color='lightpink', alpha=0.3, label='_nolegend_', s=30)
+                sns.scatterplot(data=all_df, x=param, y='fp_per_min', ax=ax2, color='lightpink', alpha=0.3, label='_nolegend_', s=30)
             else:
-                 sns.stripplot(data=all_df, x=param, y='latency', ax=ax2, color='lightpink', alpha=0.3, order=sorted(all_df[param].astype(str).unique()), label='_nolegend_', s=4)
+                 sns.stripplot(data=all_df, x=param, y='fp_per_min', ax=ax2, color='lightpink', alpha=0.3, order=sorted(all_df[param].astype(str).unique()), label='_nolegend_', s=4)
 
             if not pareto_df.empty and param in pareto_df.columns:
                 if is_numeric:
-                    sns.scatterplot(data=pareto_df, x=param, y='latency', ax=ax2, color='salmon', s=70, marker='X', label='Pareto Latency', alpha=0.7, edgecolor='red')
+                    sns.scatterplot(data=pareto_df, x=param, y='fp_per_min', ax=ax2, color='salmon', s=70, marker='X', label='Pareto FP/min', alpha=0.7, edgecolor='red')
                 else:
-                    sns.stripplot(data=pareto_df, x=param, y='latency', ax=ax2, color='salmon', s=7, marker='X', order=sorted(all_df[param].astype(str).unique()), label='Pareto Latency', alpha=0.7, jitter=False, edgecolor='red')
+                    sns.stripplot(data=pareto_df, x=param, y='fp_per_min', ax=ax2, color='salmon', s=7, marker='X', order=sorted(all_df[param].astype(str).unique()), label='Pareto FP/min', alpha=0.7, jitter=False, edgecolor='red')
 
             if not top_pareto_df.empty and param in top_pareto_df.columns:
                 if is_numeric:
-                    sns.scatterplot(data=top_pareto_df, x=param, y='latency', ax=ax2, color='orangered', s=150, marker='P', edgecolor='black', label=f'Top {N_TOP_PARETO} Pareto Latency', alpha=1.0, zorder=5)
+                    sns.scatterplot(data=top_pareto_df, x=param, y='fp_per_min', ax=ax2, color='orangered', s=150, marker='P', edgecolor='black', label=f'Top {N_TOP_PARETO} Pareto FP/min', alpha=1.0, zorder=5)
                 else:
-                    sns.stripplot(data=top_pareto_df, x=param, y='latency', ax=ax2, color='orangered', s=12, marker='P', order=sorted(all_df[param].astype(str).unique()), label=f'Top {N_TOP_PARETO} Pareto Latency', alpha=1.0, jitter=False, zorder=5, edgecolor='black')
+                    sns.stripplot(data=top_pareto_df, x=param, y='fp_per_min', ax=ax2, color='orangered', s=12, marker='P', order=sorted(all_df[param].astype(str).unique()), label=f'Top {N_TOP_PARETO} Pareto FP/min', alpha=1.0, jitter=False, zorder=5, edgecolor='black')
 
-            ax2.set_ylabel('Latency', color='red')
+            ax2.set_ylabel('FP Rate per Minute', color='red')
             ax2.tick_params(axis='y', labelcolor='red')
-            ax2.set_ylim(lat_ylim)
+            ax2.set_ylim(fp_ylim)
 
             # Combine legends
             legend_items = {}
@@ -4119,8 +4290,8 @@ elif mode == 'tune_viz_multi_v2':
                         legend_items[label_text] = handle
 
             priority_order = [
-                f'Top {N_TOP_PARETO} Pareto F1', f'Top {N_TOP_PARETO} Pareto Latency',
-                'Pareto F1 Score', 'Pareto Latency'
+                f'Top {N_TOP_PARETO} Pareto F1', f'Top {N_TOP_PARETO} Pareto FP/min',
+                'Pareto F1 Score', 'Pareto FP/min'
             ]
             sorted_legend_items_tuples = []
             for label_text in priority_order:
@@ -4137,7 +4308,7 @@ elif mode == 'tune_viz_multi_v2':
             if ax2.get_legend() is not None: ax2.get_legend().remove()
 
 
-            plt.title(f'Impact of {param} on F1 Score & Latency (Pareto & Top {N_TOP_PARETO} Highlighted)')
+            plt.title(f'Impact of {param} on F1 Score & FP/min (Pareto & Top {N_TOP_PARETO} Highlighted)')
             ax1.grid(True, axis='x', linestyle='--', alpha=0.6)
             fig.tight_layout()
             plt.savefig(plot_filename)
@@ -4191,7 +4362,7 @@ elif mode == 'tune_viz_multi_v2':
                     study,
                     params=pareto_hyperparams,
                     target=lambda t: (t.values[0], t.values[1]) if t.values and len(t.values)==2 else (float('nan'), float('nan')),
-                    target_name=["F1 Score", "Latency"],
+                    target_name=["F1 Score", "FP Rate per Minute"],
                     trials=pareto_trials_optuna_objects
                 )
                 fig_parallel_pareto.update_layout(title=f"Parallel Coordinate Plot (Pareto Optimal Trials - {len(pareto_trials_optuna_objects)} trials)")
@@ -4230,10 +4401,11 @@ elif mode == 'tune_viz_multi_v2':
     </head><body><div class="container">
     <h1>Hyperparameter Impact Analysis: {study.study_name}</h1>
     <nav>
-        <a href="#pareto_details">Pareto Trial Details</a> |
+    <a href="#pareto_details">Pareto Trial Details</a> |
         { '<a href="#correlation">Correlation Analysis</a> |' if heatmap_rel_path else ""}
         { '<a href="#parallel_coord_pareto">Parallel Coordinate (Pareto)</a> |' if parallel_pareto_path_rel else ""}
-        <a href="#individual_params">Individual Parameter Analysis</a>
+    <a href="#combined_scores">Combined Scores</a> |
+    <a href="#individual_params">Individual Parameter Analysis</a>
     </nav>
     <p style="text-align:center; font-style:italic;">Plots show all completed trials (light gray), Pareto optimal trials (skyblue/salmon), and Top {N_TOP_PARETO} Pareto trials (gold star/orangered P).</p>
     <p style="text-align:center; font-style:italic;">Y-axis ranges for individual plots are focused on the 5th-95th percentile of all completed trials for better visibility.</p>
@@ -4242,7 +4414,7 @@ elif mode == 'tune_viz_multi_v2':
     html_parts.append(f"""
     <h2 id="pareto_details">Pareto Optimal Trial Details</h2>
     <div class="param-card full-width-plot">
-        <p>The following table details the <strong>{len(pareto_df)}</strong> trials found on the Pareto front, representing the best trade-offs between F1 Score (higher is better) and Latency (lower is better). They are sorted by a combined score for ranking purposes.</p>
+    <p>The following table details the <strong>{len(pareto_df)}</strong> trials found on the Pareto front, representing the best trade-offs between F1 Score (higher is better) and FP Rate per Minute (lower is better). They are sorted by a combined score for ranking purposes.</p>
         <p><a href="pareto_optimal_trials.html" target="_blank" style="font-weight:bold; color: #007bff;">Open Pareto Optimal Trials Table in new tab</a> (Recommended for full view)</p>
         <iframe src="pareto_optimal_trials.html" title="Pareto Optimal Trials Details" style="height: 400px;"></iframe>
     </div>""")
@@ -4259,9 +4431,28 @@ elif mode == 'tune_viz_multi_v2':
         html_parts.append(f"""
         <h2 id="parallel_coord_pareto">Parallel Coordinate Plot (Pareto Optimal Trials)</h2>
         <div class="param-card full-width-plot">
-            <p>This plot shows the parameter values for trials on the Pareto front. Each line represents a trial. It helps visualize combinations of parameters that lead to optimal trade-offs for F1 Score and Latency.</p>
+            <p>This plot shows the parameter values for trials on the Pareto front. Each line represents a trial. It helps visualize combinations of parameters that lead to optimal trade-offs for F1 Score and FP Rate per Minute.</p>
             <iframe src="{parallel_pareto_path_rel}" title="Parallel Coordinate Plot for Pareto Optimal Trials"></iframe>
         </div>""")
+    # Combined overlay figure
+    overlay_rel = 'combined_metrics_pareto_overlay.png'
+    if os.path.exists(os.path.join(viz_dir, overlay_rel)):
+        html_parts.append(f"""
+        <h2 id="combined_overlay">F1 vs FP/min with Combined Metrics</h2>
+        <div class="param-card full-width-plot" style="text-align:center;">
+            <p>Scatter of all trials (gray), Optuna Pareto (black circles), and Top-20 per selected combined metrics (colors/markers). Dashed lines show iso-scores for combined_avg_minmax.</p>
+            <a href="{overlay_rel}" target="_blank"><img src="{overlay_rel}" alt="Combined metrics overlay" style="max-width: 900px; display: inline-block;"></a>
+        </div>
+        """)
+    # Combined score section
+    html_parts.append(f"""
+    <h2 id='combined_scores'>Combined Scores and Consensus Ranking</h2>
+    <div class='param-card full-width-plot'>
+        <p>We compute several combined-score variants to balance F1 and FP/min, including min-max, logistic, rank-based, and approximate de-duplication based on window/stride. See details in the linked report.</p>
+        <p><a href="combined_scores.html" target="_blank" style="font-weight:bold; color: #007bff;">Open Combined Scores Report</a></p>
+        <iframe src="combined_scores.html" title="Combined Scores"></iframe>
+    </div>
+    """)
 
     html_parts.append("<h2 id='individual_params'>Individual Parameter Analysis</h2><div class='gallery'>")
     for plot_info in impact_plot_files:

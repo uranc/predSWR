@@ -1,5 +1,6 @@
 # ----------------------------- Imports --------------------------------------
 import os
+import pdb
 import numpy as np
 import tensorflow as tf
 from scipy.ndimage import binary_dilation
@@ -120,11 +121,17 @@ def rippleAI_prepare_training_data(train_LFPs, train_GTs,
     # ---- validation sessions processed separately --------------------------
     norm_val_LFP = []
     for LFP in val_LFPs:
-        print('Original validation data shape:', LFP.shape, '| sf:', sf[counter_sf])
-        tmp = process_LFP(LFP, ch=channels, sf=sf[counter_sf],
-                          new_sf=new_sf, use_zscore=False, use_band=use_band)
-        if zscore:
-            tmp = (tmp - tmp.mean(0)) / tmp.std(0)
+        if process_online:
+            LFP = LFP[::int(sf[counter_sf] // new_sf), :].astype(np.float32)
+            print('Sub-sampled data shape:', LFP.shape, '| new sf:', new_sf)
+            tmp = sliding_window_zscore(LFP, win=new_sf, eps=1e-8)
+            print('Sliding-window z-scored data shape:', tmp.shape, '| running window:', new_sf)
+        else:        
+            print('Original validation data shape:', LFP.shape, '| sf:', sf[counter_sf])
+            tmp = process_LFP(LFP, ch=channels, sf=sf[counter_sf],
+                            new_sf=new_sf, use_zscore=False, use_band=use_band)
+            if zscore:
+                tmp = (tmp - tmp.mean(0)) / tmp.std(0)
         norm_val_LFP.append(tmp)
         counter_sf += 1
 
@@ -137,27 +144,26 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
     Build train / test tf.data.Datasets of triplets.
     """
     onset_params = {
-        # Onset / sampling
-        'USE_ONSET_WEIGHTING': False,
-        'ONSET_BIAS': 0.4,
         'USE_ONSET_SHIFTED_LABELS': False,
-        'ONSET_SHIFT_SAMPLES': -8,
-        'ONSET_EXTEND_SAMPLES': 8,
+        'ONSET_SHIFT_SAMPLES': -10,
+        'ONSET_EXTEND_SAMPLES': 30,
 
         # Triplet sampling
         'WINDOW_MULTIPLIER': 2,
-        'JITTER': 8,
-        'MIN_NEG_GAP': 150,
+        'JITTER': 20,
+        'MIN_NEG_GAP': 20,
         'ANCHOR_THR': 0.85,
-        'POS_THR': 0.65,
-        'GRACE': 25,
+        'POS_THR': 0.5,
+        'GRACE': 20,
 
         # Strict positive selection
         'POS_SAME_EVENT': True,
         'POS_EXCLUDE_ANCHORS': True,  # never allow P==A
-
-        # Debug
-        'DEBUG_ONSETS': False
+        
+        # NEW: onset/center positive mixing
+        'POS_CENTER_PROB': 0.33,   # 33% of positives centered, rest onset-biased
+        'POS_ONSET_PRE': 10,       # allow up to 10 samples before onset
+        'POS_ONSET_POST': 30,      # allow up to 30 after onset
     }
     params.update(onset_params)
 
@@ -401,6 +407,11 @@ class TripletSequence(tf.keras.utils.Sequence):
         self.neg_idx    = n_idx
         self.pos_by_event = {eid: np.array(sorted(list(pool)), dtype=int) for eid, pool in pos_by_event.items()}
 
+        if self.neg_idx.size == 0:
+            raise RuntimeError(
+                "TripletSequence: no valid negatives. Decrease MIN_NEG_GAP or thresholds."
+            )
+
         if len(self.anchor_idx) == 0:
             raise RuntimeError(
                 "TripletSequence: no anchors have a same-event positive. "
@@ -417,34 +428,92 @@ class TripletSequence(tf.keras.utils.Sequence):
     def __len__(self):
         return self.steps
 
+    def _event_bounds(self, eid):
+        return int(self._evt_starts[eid]), int(self._evt_ends[eid])
+
+    def _pick_positive_index(self, a_idx, pool, W, mul):
+        """
+        Pick a positive from the same-event pool, biased either to ONSET or CENTER.
+        Falls back to a random pool pick if no candidates in the bias window.
+        """
+        if pool.size == 0:
+            return None
+
+        # event info
+        eid = self._label_event_id_for_start(a_idx, W, mul)
+        if eid < 0:
+            return int(self.rng.choice(pool))
+
+        e_s, e_e = self._event_bounds(eid)
+        onset = e_s
+        center = (e_s + e_e) // 2
+
+        # label-region mapping for a start index i:
+        # label_start = i + (mul-1)*W ; label_end = i + mul*W ; label_mid = label_start + W//2
+        def label_mid(i):
+            return i + (mul - 1) * W + (W // 2)
+
+        # choose mode
+        center_prob = float(self.p.get('POS_CENTER_PROB', 0.33))
+        use_center  = (self.rng.random() < center_prob)
+
+        if use_center:
+            half_span = max(1, W // 6)
+            lo, hi = center - half_span, center + half_span
+        else:
+            pre  = max(0, int(self.p.get('POS_ONSET_PRE', 10)))
+            post = max(1, int(self.p.get('POS_ONSET_POST', 30)))  # ensure ≥1
+            lo, hi = onset - pre, onset + post
+
+        # clamp the target window inside the true event
+        lo = max(lo, e_s)
+        hi = min(hi, e_e)
+        if lo > hi:
+            lo, hi = e_s, e_e  # fall back to whole event band
+
+        # candidates whose label midpoint falls in [lo, hi]
+        mids = label_mid(pool)
+        mask = (mids >= lo) & (mids <= hi)
+        cand = pool[mask]
+        if cand.size == 0:
+            cand = pool  # graceful fallback
+
+        # avoid picking the exact anchor index if requested
+        if self.p.get('POS_EXCLUDE_ANCHORS', True) and cand.size > 1:
+            cand = cand[cand != a_idx] if np.any(cand != a_idx) else pool
+
+        return int(self.rng.choice(cand))
+
+
     def _sample_triplet(self):
         W   = self.p['NO_TIMEPOINTS']
         mul = self.p.get('WINDOW_MULTIPLIER', 2)
         Wtot = W * mul
         jitter = int(self.p.get('JITTER', 8))
 
-        # --- sample anchor from anchors_with_pool
+        # --- sample anchor
         a = int(self.rng.choice(self.anchor_idx))
         a_eid = self._label_event_id_for_start(a, W, mul)
 
-        # --- choose positive from SAME EVENT as anchor (pool guaranteed non-empty, P != A)
+        # --- pool for same-event positives (P != A)
         pool = self.pos_by_event.get(a_eid, np.empty((0,), dtype=int))
-        if self.p.get('POS_EXCLUDE_ANCHORS', True):
-            if pool.size and a in pool:
-                pool = pool[pool != a]
         if pool.size == 0:
-            # This shouldn't happen due to filtering, but guard anyway
             raise RuntimeError("Invariant violated: empty positive pool for chosen anchor event.")
 
-        p = int(self.rng.choice(pool))
+        # NEW: choose positive biased to onset or center
+        p = self._pick_positive_index(a, pool, W, mul)
+        if p is None:
+            raise RuntimeError("No valid positive candidate after biasing.")
+
+        # --- choose negative
         n = int(self.rng.choice(self.neg_idx))
 
-        # --- jitter: keep A and P inside their event in the label region
+        # --- jitter inside event for A and P (clamped)
         a = self._jitter_within_event(a, a_eid, W, mul, jitter)
-        p_eid = self._label_event_id_for_start(p, W, mul)  # recompute for safety
+        p_eid = self._label_event_id_for_start(p, W, mul)
         p = self._jitter_within_event(p, p_eid, W, mul, jitter)
 
-        # Negatives can jitter freely (bounded by data)
+        # Negatives can jitter freely
         if jitter > 0:
             n = max(0, min(n + int(self.rng.integers(-jitter, jitter+1)), len(self.data) - Wtot))
 
