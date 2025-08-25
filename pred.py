@@ -318,12 +318,12 @@ def objective_triplet(trial):
             }
 
     # Dynamic learning rate range
-    learning_rate = trial.suggest_float('learning_rate', 1e-3, 1e-2, log=True)
+    learning_rate = trial.suggest_float('learning_rate', 1e-4, 1e-2, log=True)
     # learning_rate = 3e-3
     params['LEARNING_RATE'] = learning_rate
 
     # Optional batch size tuning
-    batch_size = trial.suggest_categorical('batch_size', [32, 64, 128])
+    batch_size = 128#trial.suggest_categorical('batch_size', [32, 64, 128])
     # batch_size = 64
     params['BATCH_SIZE'] = batch_size
     # ...rest of existing objective function code...
@@ -383,10 +383,10 @@ def objective_triplet(trial):
     params['HORIZON_MS'] = 1#trial.suggest_int('HORIZON_MS', 1, 5)
     params['SHIFT_MS'] = 0
 
-    params['LOSS_TupMPN'] = 1.0#trial.suggest_float('LOSS_TupMPN', 0.1, 500.0, log=True)
-    params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 100, 1000.0, log=True)
+    params['LOSS_TupMPN'] = trial.suggest_float('LOSS_TupMPN', 1.0, 1000.0, log=True)
+    params['LOSS_SupCon'] = trial.suggest_float('LOSS_SupCon', 100.0, 1000.0, log=True)
     params['LOSS_WEIGHT'] = 1.0#trial.suggest_float('LOSS_WEIGHT', 0.001, 100.0, log=True)
-    params['LOSS_NEGATIVES'] = trial.suggest_float('LOSS_NEGATIVES', 1.0, 1000.0, log=True)
+    params['LOSS_NEGATIVES'] = trial.suggest_float('LOSS_NEGATIVES', 100.0, 1000.0, log=True)
     # params['LOSS_WEIGHT'] = 7.5e-4
 
     ax = 25#trial.suggest_int('AX', 25, 85, step=20)
@@ -400,7 +400,7 @@ def objective_triplet(trial):
     # entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
     # if entropy_ind > 0:
     #     params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
-    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.005, 5.0, log=True)
+    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 5.0, log=True)
     params['TYPE_LOSS'] += 'Entropy'
 
     # params['HYPER_TMSE'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
@@ -426,7 +426,7 @@ def objective_triplet(trial):
         dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
-    params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
+    params['NO_FILTERS'] = 32 #trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
     # params['NO_FILTERS'] = 64
 
     # Remove the hardcoded use_freq and derive it from tag instead
@@ -475,9 +475,9 @@ def objective_triplet(trial):
     params['TYPE_ARCH'] += 'L2N'
 
 
-    # params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
-    # if params['USE_Aug']:
-    params['TYPE_ARCH'] += 'Aug'
+    params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
+    if params['USE_Aug']:
+        params['TYPE_ARCH'] += 'Aug'
 
 
     # params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
@@ -560,6 +560,18 @@ def objective_triplet(trial):
         else:
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
 
+    # for batch in next(iter(train_dataset)):
+    #     x_batch, y_batch = batch
+    #     x_batch = x_batch.numpy()
+    #     y_batch = y_batch.numpy()
+    #     # Optional: convert x-axis to milliseconds
+    #     t = np.arange(x_batch.shape[1]) / args.sr * 1000.0
+    #     plot_triplet_batch(x_batch, y_batch,
+    #                        n_examples=args.n_examples,
+    #                        channel=args.channel,
+    #                        timepoints=t,
+    #                        title_prefix=f"SR={args.sr}Hz")        
+    #     pdb.set_trace()
 
     # # Ensure we're not in eager execution mode during training
     # tf.config.run_functions_eagerly(False)
@@ -1653,6 +1665,47 @@ if mode == 'train':
     # train_size = len(list(train_dataset))
     params['RIPPLE_RATIO'] = label_ratio
 
+    # --- Preview one triplet batch (debug utility) ---
+    DEBUG_PLOT_TRIPLET = True  # set False to disable
+    # pdb.set_trace()
+    if DEBUG_PLOT_TRIPLET:
+        # Fetch first batch (supports tf.data.Dataset or Keras Sequence / custom Sequence)
+        if isinstance(train_dataset, tf.data.Dataset):
+            first_batch = next(iter(train_dataset))
+        else:  # Sequence-like
+            first_batch = train_dataset[0]
+
+        # Unpack (x, y, *rest)
+        if isinstance(first_batch, (list, tuple)):
+            if len(first_batch) < 2:
+                raise ValueError("First batch does not contain at least (x, y)")
+            x_preview, y_preview = first_batch[0], first_batch[1]
+        else:
+            raise ValueError("Unsupported batch type returned by dataset")
+
+        # Convert tensors to numpy
+        if tf.is_tensor(x_preview):
+            x_preview = x_preview.numpy()
+        if tf.is_tensor(y_preview):
+            y_preview = y_preview.numpy()
+
+        # pdb.set_trace()
+        n=0
+        for ii in range(0, 10):
+            n+=1
+            plt.subplot(10,3,n)
+            plt.plot(np.arange(128), x_preview[0+ii, :, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
+            plt.plot(np.arange(64)+64, y_preview[0+ii, :]*50, 'r')
+            n+=1
+            plt.subplot(10,3,n)
+            plt.plot(np.arange(128), x_preview[32+ii, :, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
+            plt.plot(np.arange(64)+64, y_preview[32+ii, :]*50, 'r')
+            n+=1
+            plt.subplot(10,3,n)
+            plt.plot(np.arange(128), x_preview[64+ii, :, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
+            plt.plot(np.arange(64)+64, y_preview[64+ii, :]*50, 'r')
+        plt.show()
+    pdb.set_trace()
     # n = 0
     # pdb.set_trace()
     # for ii in range(2000):

@@ -833,7 +833,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             print('Using Attention')            
             attn_in = MultiHeadAttention(
                 num_heads=32,
-                key_dim=inputs_nets.shape[-1] // 4,
+                key_dim=inputs_nets.shape[-1],
                 name='temporal_attn'
             )(query=inputs_nets, key=inputs_nets, value=inputs_nets)  # [B, T, C]
 
