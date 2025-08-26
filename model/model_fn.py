@@ -1017,7 +1017,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             SamplePRAUC(model=model),                  # timepoint PR-AUC
             SampleMaxMCC(model=model),                 # timepoint max MCC
             SampleMaxF1(model=model),                  # timepoint max F1
-            LatencyScore(thresholds=tf.linspace(0.,1.,21), tau=16.0, model=model),    
+            LatencyScore(thresholds=tf.linspace(0.01, 0.99, 21), min_run = 5, tau=16.0, model=model),    
             FPperMinMetric(
                 thresh=0.5,
                 win_sec=params['NO_STRIDES']/params['SRATE'],  # <- stride/fs (NOT window)
@@ -1834,54 +1834,58 @@ class SampleMaxF1(tf.keras.metrics.Metric):
 # ================= Sample-level LATENCY SCORE =================
 class LatencyScore(tf.keras.metrics.Metric):
     """
-    For each threshold, compute first detection index and onset index per window,
-    form latency = detect - onset, score = exp(-relu(latency)/tau), average over
-    valid positives, and return the max score across thresholds.
+    Early-OK latency: score = exp(-max(0, det_idx - onset_idx)/tau).
+    - Early detections (det_idx < onset_idx) get full credit (score=1).
+    - Higher is better; 1.0 means zero (or negative) latency.
+    - Uses thresholds in (0,1) to avoid the 'always 1' degeneracy.
+    - Optional min_run to ignore single-frame spikes.
     """
-    def __init__(self, thresholds=tf.linspace(0., 1., 21),
-                 tau=16.0, name="latency_score", model=None, **kw):
+    def __init__(self, thresholds=tf.linspace(0.05, 0.95, 19),
+                 tau=16.0, min_run=1, name="latency_score", model=None, **kw):
         super().__init__(name=name, **kw)
-        self.tau = tf.constant(float(tau), tf.float32)    # in samples
+        self.tau = tf.constant(float(tau), tf.float32)      # in samples
         self.tau_grid = tf.cast(thresholds, tf.float32)
+        self.min_run = int(min_run)
         k = int(thresholds.shape[0])
         self.sum_score = self.add_weight("sum_score", shape=(k,), initializer="zeros")
         self.count     = self.add_weight("count",     shape=(k,), initializer="zeros")
         self.model = model
 
     @staticmethod
-    def _first_true_idx(mat_bool):   # mat: [B,T] or [K,B,T] reduced over last axis
-        # for [B,T]: returns [B], for [K,B,T] we'll call per K slice
+    def _first_true_idx(mat_bool):              # [B,T] -> (idx[B], has[B])
         idx = tf.argmax(tf.cast(mat_bool, tf.int32), axis=-1, output_type=tf.int32)
         has = tf.reduce_any(mat_bool, axis=-1)
         return idx, has
 
+    @staticmethod
+    def _enforce_min_run(pred_bt, k):           # pred_bt: [B,T] bool
+        if k <= 1: 
+            return pred_bt
+        x = tf.cast(pred_bt, tf.float32)[..., None]      # [B,T,1]
+        filt = tf.ones((k, 1, 1), x.dtype)               # [k,1,1]
+        runsum = tf.nn.conv1d(x, filt, stride=1, padding="SAME")
+        return runsum[..., 0] >= float(k)                # [B,T] bool
+
     def update_state(self, y_true, y_pred, **_):
-        # Inside LatencyScore.update_state (replace the inner part)
-        yt = _yt_bt(y_true)                     # [B,T]
-        yp = _yp_bt(y_pred, self.model)         # [B,T]
+        yt = y_true[..., 0]                                        # [B,T]
+        yp = y_pred[..., getattr(self.model, "_cls_prob_index", 1)]# [B,T]
         yt_bin = yt >= 0.5
 
-        # onset per window
-        onset_idx, has_ev = self._first_true_idx(yt_bin)    # [B], [B]
+        onset_idx, has_ev = self._first_true_idx(yt_bin)           # [B], [B]
+        pred_kbt = yp[None, ...] >= self.tau_grid[:, None, None]   # [K,B,T]
 
-        pred_kbt = yp[None, ...] >= self.tau_grid[:, None, None]  # [K,B,T]
+        def one_k(pred_bt):                                        # pred_bt: [B,T]
+            if self.min_run > 1:
+                pred_bt = self._enforce_min_run(pred_bt, self.min_run)
+            det_idx, has_det = self._first_true_idx(pred_bt)       # first anywhere
+            valid = has_ev & has_det                               # only windows with event & a detection
+            lat = tf.cast(det_idx - onset_idx, tf.float32)         # can be negative (early)
+            lat_pos = tf.nn.relu(lat)                              # early -> 0 penalty
+            score = tf.exp(-lat_pos / self.tau)                    # [B]
+            score = tf.where(valid, score, 0.0)
+            return tf.reduce_sum(score), tf.reduce_sum(tf.cast(valid, tf.float32))
 
-        # --- gate detections to AFTER onset (allow small tolerance if desired) ---
-        T  = tf.shape(yt)[1]
-        t  = tf.range(T)[None, :]                               # [1,T]
-        # early_tolerance = 0  # or a few samples if you want to allow slight early fire
-        mask_after = t[None, :, :] >= onset_idx[None, :, None]  # [1,B,T] -> broadcast to [K,B,T]
-        pred_after = tf.logical_and(pred_kbt, mask_after)
-
-        def one_k(pred_bt):
-            det_idx, has_det = self._first_true_idx(pred_bt)    # [B],[B]
-            lat = tf.cast(det_idx - onset_idx, tf.float32)      # guaranteed >= 0 now
-            valid = has_ev & has_det
-            score = tf.exp(-lat / self.tau)                     # same scoring
-            return tf.reduce_sum(tf.where(valid, score, 0.0)), tf.reduce_sum(tf.cast(valid, tf.float32))
-
-        sums, cnts = tf.map_fn(one_k, pred_after,
-                            fn_output_signature=(tf.float32, tf.float32))
+        sums, cnts = tf.map_fn(one_k, pred_kbt, fn_output_signature=(tf.float32, tf.float32))
         self.sum_score.assign_add(sums)
         self.count.assign_add(cnts)
 
