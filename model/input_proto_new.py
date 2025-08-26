@@ -535,12 +535,8 @@ class TripletSequence(tf.keras.utils.Sequence):
 
         # augment A/P only
         if self.p['TYPE_ARCH'].find('Aug')>-1 and self.p['mode']=='train':
-            print('Applying augmentations to A/P')
-            # print('Applying augmentations to A/P')
             Ad = augment_window(Ad, self.rng, self.p)
             Pd = augment_window(Pd, self.rng, self.p)
-        else:
-            print('No augmentations applied')
 
         return (Ad, Al[:, None].astype(np.float32)), \
                (Pd, Pl[:, None].astype(np.float32)), \

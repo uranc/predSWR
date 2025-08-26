@@ -10,7 +10,10 @@ import time
 # tag = 'tripletOnlyMixedGP2500'
 # tag = 'tripletOnlyGPSeq2500'
 # tag = 'tripletOnlyGPOpt2500'
-tag = 'tripletOnlyAug2500'
+# tag = 'tripletOnlyAug2500'
+# tag = 'tripletOnlyAttAug2500'
+tag = 'tripletOnlyTrip2500'
+
 
 # Rest of script remains unchanged
 ijob = -1
@@ -34,9 +37,9 @@ for model_name in range(24):
         subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
-    else:
-        # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
-        subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
-        # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
+    # else:
+    #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
+    #     subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
+    #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
     
 
