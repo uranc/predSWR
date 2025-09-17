@@ -1,24 +1,21 @@
 import tensorflow as tf
-from tensorflow.keras.layers import Conv1D, Conv2D, ELU, Input, LSTM, Dense, Dropout, Layer, MultiHeadAttention, LayerNormalization, Normalization
+from tensorflow.keras.layers import Conv1D, Conv2D, ELU, Input, LSTM, Dense, Dropout, Layer, MultiHeadAttention, LayerNormalization, Normalization, SeparableConv1D
 from tensorflow.keras.layers import BatchNormalization, Activation, Flatten, Concatenate, Lambda, RepeatVector, Multiply
 from tensorflow.keras.layers import (Input, Lambda, Concatenate, Multiply, Activation,
     Conv1D, Dense, Add, LayerNormalization, DepthwiseConv1D)
 from tensorflow.keras.layers import MultiHeadAttention
-from tensorflow.keras.initializers import GlorotUniform, Orthogonal
+from tensorflow.keras.initializers import GlorotUniform, Orthogonal, Constant
 from tensorflow_addons.layers import WeightNormalization
 from tensorflow_addons.activations import gelu
-# from tensorflow_addons.losses import SigmoidFocalCrossEntropy, LiftedStructLoss, TripletSemiHardLoss, TripletHardLoss, ContrastiveLoss
-from tensorflow.keras.initializers import Constant
 from tensorflow.keras.regularizers import l1, l2
 from tensorflow.keras import backend as K
 from tensorflow.keras import layers
 from tensorflow.keras.models import Model
 from tensorflow.keras import applications
 from model.patchAD.patch_ad import PatchAD
-# from .patchAD.loss import tf_anomaly_score # Import the missing function
-# from .patchAD.patch_ad import PatchAD # Use relative import
 from tensorflow.keras.layers import Layer, Input, Flatten, Dense, Dropout, RepeatVector, Concatenate
 from tensorflow.keras.models import Model
+from tensorflow_addons.activations import gelu
 from tensorflow_addons.losses import SigmoidFocalCrossEntropy
 import pdb, math
 
@@ -697,97 +694,193 @@ def build_DBI_TCN_CorizonMixer(input_timepoints, input_chans=8, params=None):
 
     return model
 
-class CausalMHA1D(tf.keras.layers.Layer):
-    def __init__(self, num_heads, key_dim, use_rope=False, alibi_slope=0.0,
-                 dropout=0.0, name=None):
-        super().__init__(name=name)
-        self.num_heads = num_heads
-        self.key_dim   = key_dim
-        self.use_rope  = use_rope
-        self.alibi_slope = alibi_slope
-        self.dropout   = tf.keras.layers.Dropout(dropout)
-        self.scale     = tf.constant(key_dim ** -0.5, tf.float32)
+class WarmStableCool(tf.keras.optimizers.schedules.LearningRateSchedule):
+    """
+    Piecewise schedule on *steps*:
+      - warmup:   linear 0 -> base_lr over warmup_ratio of total_steps
+      - stable:   constant base_lr until cool phase starts
+      - cooldown: cosine from base_lr -> base_lr*final_scale over cool_ratio of total_steps
+    """
+    def __init__(self, base_lr, total_steps, warmup_ratio=0.02, cool_ratio=0.80, final_scale=0.10):
+        self.base_lr = tf.convert_to_tensor(base_lr, tf.float32)
+        self.total_steps = tf.cast(total_steps, tf.float32)
+        self.warmup_steps = tf.cast(tf.round(self.total_steps * warmup_ratio), tf.float32)
+        self.cool_steps   = tf.cast(tf.round(self.total_steps * cool_ratio),  tf.float32)
+        self.final_scale  = tf.convert_to_tensor(final_scale, tf.float32)
+
+        # phase boundaries
+        self.warm_end = self.warmup_steps                     # [0, warm_end)
+        self.cool_start = self.total_steps - self.cool_steps  # [cool_start, total_steps]
+
+    def __call__(self, step):
+        step = tf.cast(step, tf.float32)
+
+        # warmup: linear 0 -> base_lr
+        warm_lr = self.base_lr * (step / tf.maximum(1.0, self.warmup_steps))
+
+        # stable: constant base_lr
+        stable_lr = self.base_lr
+
+        # cooldown: cosine to base_lr*final_scale
+        t = (step - self.cool_start) / tf.maximum(1.0, self.cool_steps)
+        t = tf.clip_by_value(t, 0.0, 1.0)
+        cool_lr = (self.base_lr * self.final_scale) + (self.base_lr - self.base_lr * self.final_scale) * 0.5 * (1.0 + tf.cos(tf.constant(math.pi) * t))
+
+        # piecewise select
+        lr = tf.where(step < self.warm_end, warm_lr,
+             tf.where(step < self.cool_start, stable_lr, cool_lr))
+        return lr
+
+    def get_config(self):
+        return {
+            "base_lr": float(self.base_lr.numpy()),
+            "total_steps": int(self.total_steps.numpy()),
+            "warmup_ratio": float((self.warmup_steps / self.total_steps).numpy()),
+            "cool_ratio": float((self.cool_steps / self.total_steps).numpy()),
+            "final_scale": float(self.final_scale.numpy())
+        }
+
+
+
+class MultiScaleCausalGate(Layer):
+    """
+    Multi-scale, channel-agnostic, causal layer without SeparableConv1D.
+
+    For each (k, d) scale:
+      depthwise: Conv1D(filters=C, kernel_size=k, dilation=d, groups=C, padding='causal')
+      pointwise: Conv1D(filters=C, kernel_size=1, groups=groups, activation=mix_activation)
+
+    Then:
+      ms = concat([per-scale features and simple contrasts])
+      h  = 1x1 mix to C (groups=groups)
+      gate = sigmoid(1x1 logits)  →  y = x * gate
+      optional residual GLU: y += tanh(alpha) * GLU(ms)
+    """
+    def __init__(self,
+                 scales=((7,1),(7,2),(11,4)),
+                 groups=1,
+                 gate_bias=-2.5,
+                 l1_gate=0.0,
+                 use_residual_mix=True,
+                 mix_activation='gelu',
+                 name="ms_causal_gate",
+                 **kw):
+        super().__init__(name=name, **kw)
+        self.scales = list(scales)
+        self.groups = int(groups)
+        self.gate_bias = float(gate_bias)
+        self.l1_gate = float(l1_gate)
+        self.use_residual_mix = bool(use_residual_mix)
+        self.mix_activation = mix_activation
+
+        self._dw_blocks, self._pw_blocks = [], []
+        self._mix_pw = None
+        self._gate_logits = None
+        self._res_scale = None
+        self._res_glu = None
 
     def build(self, input_shape):
-        d_model = int(input_shape[-1])
-        if self.use_rope and (self.key_dim % 2 != 0):
-            raise ValueError(f"RoPE requires even key_dim, got {self.key_dim}")        
-        self.q_proj = tf.keras.layers.Dense(self.num_heads * self.key_dim, use_bias=False, name=f"{self.name}_q")
-        self.k_proj = tf.keras.layers.Dense(self.num_heads * self.key_dim, use_bias=False, name=f"{self.name}_k")
-        self.v_proj = tf.keras.layers.Dense(self.num_heads * self.key_dim, use_bias=False, name=f"{self.name}_v")
-        self.o_proj = tf.keras.layers.Dense(d_model, use_bias=False, name=f"{self.name}_o")
+        assert len(input_shape) == 3, "expect [B,T,C]"
+        C = int(input_shape[-1])
 
-    @staticmethod
-    def _rope(q, k):
-        # q,k: [B,H,T,D]
-        B,H,T,D = tf.shape(q)[0], tf.shape(q)[1], tf.shape(q)[2], tf.shape(q)[3]
-        half = D // 2
-        q1, q2 = q[...,:half], q[...,half:]
-        k1, k2 = k[...,:half], k[...,half:]
+        # Per-scale: depthwise (groups=C) + pointwise 1x1 (groups=self.groups)
+        for (k, d) in self.scales:
+            # depthwise (no cuDNN dependency)
+            self._dw_blocks.append(
+                Conv1D(filters=C, kernel_size=k, dilation_rate=d,
+                       padding="causal", use_bias=False,
+                       kernel_initializer="he_normal",
+                       groups=C,
+                       name=f"{self.name}_dw_k{k}_d{d}")
+            )
+            # pointwise/mixing per scale
+            self._pw_blocks.append(
+                Conv1D(filters=C, kernel_size=1, activation=self.mix_activation,
+                       kernel_initializer="glorot_uniform", groups=self.groups,
+                       name=f"{self.name}_pw_k{k}_d{d}")
+            )
 
-        pos = tf.cast(tf.range(T)[None, None, :, None], tf.float32)
-        i   = tf.cast(tf.range(half)[None, None, None, :], tf.float32)
-        freq = tf.pow(10000.0, -2.0 * i / tf.cast(D, tf.float32))
-        ang  = pos * freq
-        sin, cos = tf.sin(ang), tf.cos(ang)
+        # Cross-scale mix back to C
+        self._mix_pw = Conv1D(filters=C, kernel_size=1, activation=self.mix_activation,
+                              kernel_initializer="glorot_uniform", groups=self.groups,
+                              name=f"{self.name}_mix_pw")
 
-        def rot(x1, x2):
-            return tf.concat([x1*cos - x2*sin, x1*sin + x2*cos], axis=-1)
-        return rot(q1, q2), rot(k1, k2)
+        # Gate logits per channel
+        reg = l1(self.l1_gate) if self.l1_gate > 0 else None
+        self._gate_logits = Conv1D(filters=C, kernel_size=1, activation=None,
+                                   kernel_initializer="glorot_uniform",
+                                   bias_initializer=Constant(self.gate_bias),
+                                   kernel_regularizer=reg, groups=self.groups,
+                                   name=f"{self.name}_gate_logits")
 
-    @staticmethod
-    def _causal_mask(T):
-        i = tf.range(T)[:, None]
-        j = tf.range(T)[None, :]
-        return i >= j  # [T,T] bool
+        # Optional residual GLU (+ learnable scaler starting at 0)
+        if self.use_residual_mix:
+            self._res_scale = self.add_weight(name=f"{self.name}_res_scale",
+                                              shape=(), initializer=Constant(0.0),
+                                              trainable=True)
+            self._res_glu = Conv1D(filters=2*C, kernel_size=1, activation=None,
+                                   kernel_initializer="glorot_uniform",
+                                   groups=self.groups, name=f"{self.name}_res_glu")
 
-    def _alibi(self, T):
-        if self.alibi_slope == 0.0:
-            return None
-        i = tf.range(T)[:, None]
-        j = tf.range(T)[None, :]
-        dist = tf.cast(i - j, tf.float32)       # >=0 on/under diag
-        bias = -self.alibi_slope * tf.maximum(dist, 0.0)  # [T,T]
-        # expand to heads: [1,H,T,T]
-        return tf.expand_dims(tf.expand_dims(bias, 0), 0)
+        super().build(input_shape)
 
-    @tf.function
-    def call(self, x, training=False):
-        # x: [B,T,C]
-        B = tf.shape(x)[0]; T = tf.shape(x)[1]
-        H = self.num_heads; D = self.key_dim
+    def call(self, x):
+        # Per-scale features
+        feats = []
+        for dw, pw in zip(self._dw_blocks, self._pw_blocks):
+            z = pw(dw(x))                            # [B,T,C]
+            feats.append(z)
 
-        q = self.q_proj(x); k = self.k_proj(x); v = self.v_proj(x)       # [B,T,H*D]
-        q = tf.reshape(q, [B, T, H, D]); k = tf.reshape(k, [B, T, H, D]); v = tf.reshape(v, [B, T, H, D])
-        q = tf.transpose(q, [0,2,1,3]); k = tf.transpose(k, [0,2,1,3]); v = tf.transpose(v, [0,2,1,3])  # [B,H,T,D]
+        # Lightweight contrasts/ratios to aid SNR-like behavior
+        concat_list = list(feats)
+        if len(feats) >= 3:
+            s, m, l = feats[0], feats[1], feats[2]
+            concat_list += [s - m, m - l, s - l, s / (tf.abs(l) + 1e-3)]
 
-        if self.use_rope:
-            q, k = self._rope(q, k)
+        ms = Concatenate(axis=-1)(concat_list)       # [B,T, C * (#terms)]
 
-        # scaled dot-product
-        logits = tf.matmul(q, k, transpose_b=True) * self.scale  # [B,H,T,T]
+        h = self._mix_pw(ms)                         # [B,T,C]
+        gate = tf.nn.sigmoid(self._gate_logits(h))   # [B,T,C]
+        y = x * gate
 
-        # add ALiBi (per-head shared slope here; can be per-head if desired)
-        if self.alibi_slope != 0.0:
-            logits = logits + self._alibi(T)  # broadcast [1,H,T,T]
+        if self.use_residual_mix:
+            ab = self._res_glu(ms)                   # [B,T,2C]
+            a, b = tf.split(ab, 2, axis=-1)
+            glu = a * tf.nn.sigmoid(b)               # [B,T,C]
+            y = y + tf.tanh(self._res_scale) * glu
 
-        # causal mask
-        cmask = self._causal_mask(T)  # [T,T]
-        neg_inf = tf.constant(-1e9, tf.float32)
-        logits = tf.where(cmask[None,None,:,:], logits, neg_inf)
+        return y
 
-        attn = tf.nn.softmax(logits, axis=-1)
-        attn = self.dropout(attn, training=training)
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update(dict(scales=self.scales, groups=self.groups, gate_bias=self.gate_bias,
+                        l1_gate=self.l1_gate, use_residual_mix=self.use_residual_mix,
+                        mix_activation=self.mix_activation, name=self.name))
+        return cfg
 
-        out = tf.matmul(attn, v)                      # [B,H,T,D]
-        out = tf.transpose(out, [0,2,1,3])           # [B,T,H,D]
-        out = tf.reshape(out, [B, T, H*D])           # [B,T,H*D]
-        return self.o_proj(out)                      # [B,T,C]
     
 def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
     # logit or sigmoid
     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
     print('Using Sigmoid:', flag_sigmoid)
+
+    # # LR schedure 
+    # def make_lr_schedule(base_lr, total_steps, warmup_ratio=0.05, min_lr_ratio=0.05):
+    #     warmup_steps = int(total_steps * warmup_ratio)
+    #     min_lr = base_lr * min_lr_ratio
+
+    #     def lr_fn(step):
+    #         step = tf.cast(step, tf.float32)
+    #         # linear warmup
+    #         lr = base_lr * step / tf.maximum(1.0, tf.cast(warmup_steps, tf.float32))
+    #         # cosine decay after warmup
+    #         progress = (step - warmup_steps) / tf.maximum(1.0, float(total_steps - warmup_steps))
+    #         progress = tf.clip_by_value(progress, 0.0, 1.0)
+    #         cosine = 0.5 * (1 + tf.cos(tf.constant(3.14159265359) * progress))
+    #         lr = tf.where(step < warmup_steps, lr, min_lr + (base_lr - min_lr) * cosine)
+    #         return lr
+
+    #     return tf.keras.optimizers.schedules.LearningRateSchedule(lr_fn)    
 
     # params
     use_batch_norm = params['TYPE_REG'].find('BN')>-1
@@ -813,10 +906,29 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         this_regularizer = tf.keras.regularizers.L2(reg_weight)
     else:
         this_regularizer = None
+
     # optimizer
     if params['TYPE_REG'].find('AdamW')>-1:
-        initial_lr = params['LEARNING_RATE'] * 2.0
-        this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, clipnorm=1.0)
+
+        # --- derive total steps from dataset config ---
+        steps_per_epoch = int(params.get('ESTIMATED_STEPS_PER_EPOCH', params.get('steps_per_epoch', 1000)))
+        epochs = 100#int(params.get('NO_EPOCHS', 100))
+        total_steps = max(1, steps_per_epoch * epochs)
+
+        lr_schedule = WarmStableCool(
+            base_lr=params['LEARNING_RATE'],
+            total_steps=total_steps,
+            warmup_ratio=params.get('LR_WARMUP_RATIO', 0.04),
+            cool_ratio=params.get('LR_COOL_RATIO', 0.60),
+            final_scale=params.get('LR_FINAL_SCALE', 0.06),
+        )
+        this_optimizer = tf.keras.optimizers.AdamW(
+            learning_rate=(lr_schedule if params.get('USE_LR_SCHEDULE', True) else params['LEARNING_RATE']),
+            weight_decay=params.get('WEIGHT_DECAY', 1e-4),
+            clipnorm=float(params.get('CLIP_NORM', 1.5)),
+            epsilon=1e-8
+        )
+               
     elif params['TYPE_REG'].find('Adam')>-1:
         this_optimizer = tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE'])
     elif params['TYPE_REG'].find('SGD')>-1:
@@ -863,10 +975,16 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             inputs_nets = signal_input
 
         if params['TYPE_ARCH'].find('Att')>-1:
-            attn_pre = CausalMHA1D(num_heads=2, key_dim=4, use_rope=False, alibi_slope=0.25, name='mhsa_pre')(inputs_nets)
-            gate = Conv1D(1, 1, activation='sigmoid', kernel_initializer='glorot_uniform',
-                        bias_initializer=tf.keras.initializers.Constant(-2.0), name='input_gate')(attn_pre)   # [B,T,1]
-            inputs_nets = Multiply(name='apply_input_gate')([inputs_nets, gate])     # [B,T,C]
+            # Multi-scale causal, channel-agnostic input layer (learns SNR-like gates + patterns)
+            groups = 2 if input_chans in (16, 24, 32) else 1   # e.g., (low,high) pairs per sensor
+            inputs_nets = MultiScaleCausalGate(
+                scales=((7,1),(7,2),(11,4)),                   # RFs: 7, 13, 41 (all ≤ 43)
+                groups=groups,
+                gate_bias=(-3.0 if params['mode']=="train" else -2.0),  # tighter in pretrain
+                l1_gate=1e-5,                                   # mild sparsity on gate logits (reduces FP)
+                use_residual_mix=True,
+                name="ms_causal_gate"
+            )(inputs_nets)            
 
         # Apply TCN
         if model_type=='Base':
@@ -916,21 +1034,23 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             nets = Concatenate(axis=-1)(single_outputs)
             feats = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='Slice_Output')(nets)
 
-        if params['TYPE_ARCH'].find('Att')>-1:
-            y     = LayerNormalization(name='ln_mhsa_post')(feats)
-            y     = CausalMHA1D(num_heads=4, key_dim=8, use_rope=True, alibi_slope=0.15,name='mhsa_post')(y)
-            feats = Add(name='res_mhsa_post')([feats, y])
-            y     = LayerNormalization(name='ln_local')(feats)
-            y = tf.keras.layers.SeparableConv1D(
-                    filters=feats.shape[-1], kernel_size=7, padding='causal',
-                    depth_multiplier=1, pointwise_initializer='he_normal',
-                    name='sep_dwconv7_causal')(y)
-            y     = Activation('gelu', name='gelu_local')(y)
-            tgate = Conv1D(1, 1, activation='sigmoid',
-                        kernel_initializer='glorot_uniform',
-                        bias_initializer=tf.keras.initializers.Constant(-2.0),
-                        name='time_gate')(y)
-            feats = Multiply(name='apply_time_gate')([feats, tgate])
+        # if params['TYPE_ARCH'].find('Att')>-1:
+        #     y     = LayerNormalization(name='ln_mhsa_post')(feats)
+        #     y     = CausalMHA1D(num_heads=4, key_dim=4, use_rope=True, alibi_slope=0.15,name='mhsa_post')(y)
+        #     alpha = tf.Variable(0.0, trainable=True, name='res_scaler')  # start at 0
+        #     scaled_y = Multiply(name='scaled_y')(tf.tanh(alpha), y)
+        #     feats = Add(name='res_mhsa_post')([feats, scaled_y])
+        #     y     = LayerNormalization(name='ln_local')(feats)
+        #     y = tf.keras.layers.SeparableConv1D(
+        #             filters=feats.shape[-1], kernel_size=7, padding='causal',
+        #             depth_multiplier=1, pointwise_initializer='he_normal',
+        #             name='sep_dwconv7_causal')(y)
+        #     y     = Activation('gelu', name='gelu_local')(y)
+        #     tgate = Conv1D(1, 1, activation='sigmoid',
+        #                 kernel_initializer='glorot_uniform',
+        #                 bias_initializer=tf.keras.initializers.Constant(-2.0),
+        #                 name='time_gate')(y)
+        #     feats = Multiply(name='apply_time_gate')([feats, tgate])
 
 
         # ---- Classification head ----
@@ -1115,7 +1235,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         if params['mode']=='embedding':
             all_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(anchor_output)
         elif params['mode']=='predict':
-            all_outputs = Lambda(lambda tt: tt[:, -1:, 0], name='Last_Output')(anchor_output)
+            all_outputs = Lambda(lambda tt: tt[:, -1:, 1], name='Last_Output')(anchor_output)
 
         # all_outputs = Concatenate(axis=0)([anchor_output, positive_output, negative_output])
         # Create the training model with dictionary inputs and outputs
@@ -1159,8 +1279,18 @@ def build_DBI_Patch(params):
     # optimizer
     if params['TYPE_REG'].find('AdamW')>-1:
         # Increase initial learning rate for better exploration
-        initial_lr = params['LEARNING_RATE'] * 2.0
-        this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, clipnorm=1.0)
+        initial_lr = params['LEARNING_RATE']
+        this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, weight_decay=1e-4, clipnorm=1.0)
+        # Optional schedule (else keep constant LR)
+        if params.get("USE_LR_SCHEDULE", False):
+            sched = WarmStableCool(
+                base_lr=params["LEARNING_RATE"],
+                warmup_steps=int(0.02 * T_steps),
+                cool_start=int(0.80 * T_steps),
+                total_steps=T_steps,
+                final_scale=0.1
+            )
+            this_optimizer.learning_rate = sched
     elif params['TYPE_REG'].find('Adam')>-1:
         this_optimizer = tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE'])
     elif params['TYPE_REG'].find('SGD')>-1:
@@ -2521,7 +2651,7 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         delay = tf.cast(delay, tf.float32)
         dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
-        return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
+        return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)  # 0→1
 
     def tv_on_logits(z):  # z: [B,T]
         return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
@@ -2588,23 +2718,32 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         p_lab = tf.cast(p_true[..., 0], tf.float32)
         n_lab = tf.cast(n_true[..., 0], tf.float32)
 
-        # --------- ramped weights ----------
+        # --------- ramps (READ-ONLY) ----------
         it = tf.cast(model.optimizer.iterations, tf.float32)
 
-        ramp_delay   = tf.cast(params.get('RAMP_DELAY', 0), tf.float32)        # steps
-        ramp_steps   = tf.cast(params.get('RAMP_STEPS', 5000), tf.float32)     # steps
-        neg_min      = tf.cast(params.get('LOSS_NEGATIVES_MIN', 1.0), tf.float32)
+        total_steps = 100*1000
+        # Metric ramps
+        ramp_delay = tf.cast(params.get('RAMP_DELAY', int(0.01*total_steps)), tf.float32)
+        ramp_steps = tf.cast(params.get('RAMP_STEPS', int(0.3 * total_steps)), tf.float32)
 
-        w_sup_tgt = tf.cast(params.get('LOSS_SupCon', 0.0), tf.float32)        # can be 0
-        w_mpn_tgt = tf.cast(params.get('LOSS_TupMPN', 0.0), tf.float32)        # can be 0
-        w_neg_tgt = tf.cast(params.get('LOSS_NEGATIVES', 10.0), tf.float32)    # can be 1
 
-        r = _ramp(it, ramp_delay, ramp_steps)          # 0 → 1
+        w_sup_tgt = tf.cast(params.get('LOSS_SupCon', 1.0), tf.float32)
+        w_mpn_tgt = tf.cast(params.get('LOSS_TupMPN', 1.0), tf.float32)
+        w_neg_tgt = tf.cast(params.get('LOSS_NEGATIVES', 2.0), tf.float32)
+        
+        r = _ramp(it, ramp_delay, ramp_steps)  # 0→1 after delay
         w_supcon = r * w_sup_tgt
         w_tupMPN = r * w_mpn_tgt
 
-        # negatives ramp from 1 (or LOSS_NEGATIVES_MIN) up to target
-        r_neg = _ramp(it, 0.0, tf.maximum(ramp_steps*0.5, 1.0))
+        # Negatives ramp (MIN → target)
+        # Negatives ramp: gentle 25–40% of run
+        neg_min = params.setdefault('LOSS_NEGATIVES_MIN', 4.0)  # softer start to reduce FP early
+        neg_delay = params.setdefault('NEG_RAMP_DELAY', int(0.05* total_steps))
+        neg_steps = params.setdefault('NEG_RAMP_STEPS', int(0.45 * total_steps))
+        neg_steps = tf.cast(neg_steps if neg_steps is not None else params.get('RAMP_STEPS', 1), tf.float32)
+        neg_steps = tf.maximum(neg_steps, 1.0)
+
+        r_neg = _ramp(it, neg_delay, neg_steps)
         loss_fp_weight = neg_min + r_neg * tf.maximum(0.0, w_neg_tgt - neg_min)
 
         # --------- metric learning ----------
@@ -2613,27 +2752,31 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         metric_loss = w_tupMPN * L_mpn_raw + w_supcon * L_sup_raw
 
         # --------- BCE on logits ----------
-        def bce_logits(y, z): return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
+        def bce_logits(y, z):
+            return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
+
         cls_a = bce_logits(a_lab, a_logit)
         cls_p = bce_logits(p_lab, p_logit)
         cls_n = bce_logits(n_lab, n_logit)
 
-        alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 0.5), tf.float32)  # mild down-weight of P
+        alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 0.5), tf.float32)
         classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
 
-        # --------- logit-TV smoothing (small, constant) ----------
-        lam_tv = tf.cast(params.get('LOSS_TV', 0.01), tf.float32)
+        # --------- logit-TV smoothing ----------
+        lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
         tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
         classification_loss = classification_loss + lam_tv * tv_term
 
-        # --------- balance metric vs cls (your ratio trick) ----------
-        # ratio = tf.stop_gradient(tf.reduce_mean(metric_loss) / (tf.reduce_mean(classification_loss) + 1e-6))
-        ratio = tf.stop_gradient((tf.reduce_mean(L_mpn_raw + L_sup_raw))/(tf.reduce_mean(classification_loss) + 1e-6))
+        # --------- re-scaling (ratio trick) ----------
+        ratio = tf.stop_gradient(
+            (tf.reduce_mean(L_mpn_raw + L_sup_raw)) /
+            (tf.reduce_mean(classification_loss) + 1e-6)
+        )
         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
-        total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
-        # total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
 
-        # (Optional) keep your entropy term off by default
+        total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
+
+        # Optional entropy term
         if ('Entropy' in params.get('TYPE_LOSS','')) and ('HYPER_ENTROPY' in params):
             eps = tf.constant(1e-8, tf.float32)
             ent_w = tf.cast(params['HYPER_ENTROPY'], tf.float32)
@@ -2642,7 +2785,6 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
             entropy = -y_prob_all*tf.math.log(y_prob_all+eps) -(1. - y_prob_all)*tf.math.log(1.-y_prob_all+eps)
             conf = tf.abs(y_true_all - y_prob_all) + 0.1
             total += ent_w * tf.reduce_mean(entropy * conf)
-
         return total
     return loss_fn
 

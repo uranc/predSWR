@@ -46,7 +46,7 @@ def objective_triplet(trial):
             }
 
     # Dynamic learning rate range
-    learning_rate = trial.suggest_float('learning_rate', 1e-4, 1e-2, log=True)
+    learning_rate = trial.suggest_float('learning_rate', 2.5e-3, 1.2e-2, log=True)
     # learning_rate = 3e-3
     params['LEARNING_RATE'] = learning_rate
 
@@ -57,6 +57,7 @@ def objective_triplet(trial):
     # ...rest of existing objective function code...
 
     # Base parameters
+    params['TOTAL_STEPS'] = 50 * 1000  # Assuming 1000 steps per epoch for 300 epochs
     params['SRATE'] = 2500
     params['NO_EPOCHS'] = 500
     params['TYPE_MODEL'] = 'Base'
@@ -124,9 +125,9 @@ def objective_triplet(trial):
     # # params['LOSS_WEIGHT'] = 7.5e-4
 
     params['LOSS_WEIGHT'] = 1.0
-    params['LOSS_SupCon']    = trial.suggest_float("LOSS_SupCon",    1.0, 1000.0, log=True)
-    params['LOSS_TupMPN']    = trial.suggest_float("LOSS_TupMPN",    1.0, 1000.0, log=True)
-    params['LOSS_NEGATIVES'] = trial.suggest_float("LOSS_NEGATIVES", 1.0, 1000.0, log=True)
+    params['LOSS_SupCon']    = trial.suggest_float("LOSS_SupCon",    2.0, 50.0, log=True)
+    params['LOSS_TupMPN']    = trial.suggest_float("LOSS_TupMPN",    10.0, 120.0, log=True)
+    params['LOSS_NEGATIVES'] = trial.suggest_float("LOSS_NEGATIVES", 12.0, 30.0, log=True)
 
 
     ax = 25#trial.suggest_int('AX', 25, 85, step=20)
@@ -179,17 +180,17 @@ def objective_triplet(trial):
     # par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
     par_init = 'He'
     # norm_lib = ['LN','BN','GN','WN']
-    # norm_lib = ['LN', 'WN']
+    norm_lib = ['LN', 'WN']
+    par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
     # par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
-    # par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
-    par_norm = 'LN'
+    # par_norm = 'LN'
 
     # act_lib = ['ELU', 'GELU'] # 'RELU',
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
     par_act = 'ELU'
 
     # opt_lib = ['Adam', 'AdamW', 'SGD']
-    par_opt = 'Adam'
+    par_opt = 'AdamWA'
     # par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
 
     reg_lib = ['LOne',  'None'] #'LTwo',
@@ -220,17 +221,17 @@ def objective_triplet(trial):
         params['TYPE_ARCH'] += 'Aug'
 
 
-    # params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
-    # if params['USE_StopGrad']:
-    #     print('Using Stop Gradient for Class. Branch')
-    #     params['TYPE_ARCH'] += 'StopGrad'
+    params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
+    if params['USE_StopGrad']:
+        print('Using Stop Gradient for Class. Branch')
+        params['TYPE_ARCH'] += 'StopGrad'
     # params['TYPE_ARCH'] += 'StopGrad'
 
-    # params['USE_Attention'] = trial.suggest_categorical('USE_Attention', [True, False])
-    # if params['USE_Attention']:
-    #     print('Using Attention')
-    #     params['TYPE_ARCH'] += 'Att'
-    params['TYPE_ARCH'] += 'Att'
+    params['USE_Attention'] = trial.suggest_categorical('USE_Attention', [True, False])
+    if params['USE_Attention']:
+        print('Using Attention')
+        params['TYPE_ARCH'] += 'Att'
+    # params['TYPE_ARCH'] += 'Att'
         
     # params['USE_Attention'] = trial.suggest_categorical('USE_Online', [True, False])
     # if params['USE_Attention']:
@@ -314,12 +315,12 @@ def objective_triplet(trial):
         cb.TensorBoard(log_dir=f"{study_dir}/", write_graph=True, write_images=True, update_freq='epoch'),
 
         # Early-stop on the most stable maximization metric
-        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=30, mode='max',
+        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=60, mode='max',
                         verbose=1, restore_best_weights=True),
 
         # Save best by F1 (max)
         cb.ModelCheckpoint(f"{study_dir}/mcc.weights.h5", monitor="val_sample_max_mcc",
-                        mode="max", save_best_only=True, save_weights_only=True),
+                        mode="max", save_best_only=True, save_weights_only=True, verbose=1),
         
         # Save best by F1 (max)
         cb.ModelCheckpoint(f"{study_dir}/max.weights.h5", monitor='val_sample_max_f1',
@@ -386,7 +387,7 @@ def objective_triplet(trial):
     # val_accuracy = (val_accuracy + val_accuracy_mean)/2
     # val_latency = np.mean(history.history['val_event_fp_rate'])
     # Log results
-    logger.info(f"Trial {trial.number} finished with val_accuracy: {val_accuracy:.4f}, val_fprate: {val_latency:.4f}")
+    # logger.info(f"Trial {trial.number} finished with val_accuracy: {val_accuracy:.4f}, val_fprate: {val_latency:.4f}")
 
     # Save trial information
     trial_info = {
@@ -758,6 +759,7 @@ elif mode == 'predict':
         tag = args.tag[0]
         param_dir = f"params_{tag}"
         study_dirs = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/study_{study_num}_*')
+        base_dir = f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/'
         # study_dirs = glob.glob(f'studies_CHECK_SIGNALS/{param_dir}/study_{study_num}_*')
         if not study_dirs:
             raise ValueError(f"No study directory found for study number {study_num}")
@@ -801,7 +803,8 @@ elif mode == 'predict':
         elif 'TripletOnly' in params['TYPE_ARCH']:
             # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
             import importlib.util
-            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
             model_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
@@ -827,11 +830,13 @@ elif mode == 'predict':
             # Check which weight file is most recent
             event_weights = f"{pretrained_dir}/event.weights.h5"
             max_weights = f"{pretrained_dir}/max.weights.h5"
+            mcc_weights = f"{pretrained_dir}/mcc.weights.h5"
 
             if os.path.exists(event_weights) and os.path.exists(max_weights):
                 # Both files exist, select the most recently modified one
                 event_mtime = os.path.getmtime(event_weights)
                 max_mtime = os.path.getmtime(max_weights)
+                mcc_mtime = os.path.getmtime(mcc_weights)
 
                 if event_mtime > max_mtime:
                     weight_file = event_weights
@@ -871,6 +876,7 @@ elif mode == 'predict':
         # Check which weight file is most recent
         event_weights = f"{study_dir}/event.weights.h5"
         max_weights = f"{study_dir}/max.weights.h5"
+        mcc_weights = f"{study_dir}/mcc.weights.h5"
         # event_weights = f"{study_dir}/event.tuned.weights.h5"
         # max_weights = f"{study_dir}/max.tuned.weights.h5"
         # event_weights = f"{study_dir}/event.mpntuned.weights.h5"
@@ -881,13 +887,29 @@ elif mode == 'predict':
             # Both files exist, select the most recently modified one
             event_mtime = os.path.getmtime(event_weights)
             max_mtime = os.path.getmtime(max_weights)
-
-            if event_mtime > max_mtime:
-                weight_file = event_weights
-                print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
+            
+            if os.path.exists(mcc_weights):
+                print('MCC weights also found')
+                mcc_mtime = os.path.getmtime(mcc_weights)
+                if (mcc_mtime > event_mtime) and (mcc_mtime > max_mtime):
+                    weight_file = mcc_weights
+                    tag += 'MCC'
+                    print(f"Using mcc.weights.h5 (more recent, modified at {time.ctime(mcc_mtime)})")
+                elif event_mtime > max_mtime:
+                    weight_file = event_weights
+                    tag += 'EvF1'
+                    print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
+                else:
+                    weight_file = max_weights
+                    tag += 'MaxF1'
+                    print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
             else:
-                weight_file = max_weights
-                print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
+                if event_mtime > max_mtime:
+                    weight_file = event_weights
+                    print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
+                else:
+                    weight_file = max_weights
+                    print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
         elif os.path.exists(event_weights):
             weight_file = event_weights
             tag += 'EvF1'
@@ -3840,3 +3862,460 @@ elif mode == 'tune_viz_multi_v4':
     except Exception as err:
         print("Error generating advanced visualizations:", err)
 
+elif mode == 'tune_viz_multi_v5':
+    import os, sys, json, math, warnings
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import optuna
+    import glob
+
+    # Optional: Plotly
+    try:
+        import plotly.express as px
+        HAVE_PLOTLY = True
+    except Exception:
+        HAVE_PLOTLY = False
+
+    # ---------- CONFIG ----------
+    tag = args.tag[0]
+    param_dir = f'params_{tag}'
+    storage_url = f"sqlite:///studies/{param_dir}/{param_dir}.db"
+    viz_dir = f"studies/{param_dir}/visualizations_v5"
+    param_impact_dir = os.path.join(viz_dir, "param_impact")
+    os.makedirs(viz_dir, exist_ok=True)
+    os.makedirs(param_impact_dir, exist_ok=True)
+
+    # Default mapping (objective_triplet returns [PR-AUC (max), FP/min (min), LatencyScore (max)])
+    OBJECTIVE_INDEX = dict(pr_auc=0, fp_per_min=1, latency=2)
+
+    print(f"Loading study '{param_dir}' from {storage_url}")
+    try:
+        study = optuna.load_study(study_name=param_dir, storage=storage_url)
+    except Exception as e:
+        print(f"Error loading study: {e}")
+        sys.exit(1)
+
+    # ---------- COLLECT COMPLETED TRIALS ----------
+    trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
+    if not trials:
+        print("No completed trials; nothing to visualize.")
+        sys.exit(0)
+
+    # Detect dimensionality
+    nvals = max((len(t.values) if t.values else 0) for t in trials)
+    if nvals < 3:
+        print(f"Trials have only {nvals} objectives; need at least 3 (PR-AUC, FP/min, LatencyScore).")
+        sys.exit(0)
+    if nvals > 3:
+        print(f"Detected {nvals} objectives; using OBJECTIVE_INDEX mapping {OBJECTIVE_INDEX}. Adjust if needed.")
+
+    # Constraint feasibility check for hypervolume plotting
+    def _get_constraints(tr):
+        return tr.system_attrs.get("constraints") or tr.user_attrs.get("constraints")
+    has_constraints = any(_get_constraints(t) is not None for t in trials)
+    feasible_trials = [
+        t for t in trials
+        if (_get_constraints(t) is None) or all((c is not None) and (c <= 0) for c in _get_constraints(t))
+    ]
+    DO_HV = not (has_constraints and len(feasible_trials) == 0)
+    if has_constraints and not DO_HV:
+        print("No feasible trials under constraints; skipping hypervolume plot.")
+
+    # Collect rows from trials
+    rows = []
+    for t in trials:
+        if not t.values:
+            continue
+        try:
+            pr = float(t.values[OBJECTIVE_INDEX['pr_auc']])
+            fp = float(t.values[OBJECTIVE_INDEX['fp_per_min']])
+            la = float(t.values[OBJECTIVE_INDEX['latency']])
+        except Exception:
+            continue
+        bad = lambda x: (x is None) or (isinstance(x, float) and (math.isnan(x) or math.isinf(x)))
+        if any(bad(x) for x in [pr, fp, la]):
+            continue
+        rec = {"trial_number": t.number,
+               "val_sample_pr_auc": pr,
+               "val_latency_score": la,
+               "val_fp_per_min": fp}
+        rec.update(t.params)
+        rows.append(rec)
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        print("No valid completed trials with 3 objectives.")
+        sys.exit(0)
+
+    # Auto-detect and correct swapped LatencyScore ↔ FP/min (LatencyScore must be in [0,1])
+    mapping_notice = ""
+    try:
+        q95_lat = float(np.nanquantile(df["val_latency_score"], 0.95)) if not df["val_latency_score"].isnull().all() else np.nan
+        q95_fp  = float(np.nanquantile(df["val_fp_per_min"], 0.95)) if not df["val_fp_per_min"].isnull().all() else np.nan
+        if (not math.isnan(q95_lat) and q95_lat > 1.05) and (not math.isnan(q95_fp) and q95_fp <= 1.05):
+            tmp = df["val_latency_score"].copy()
+            df["val_latency_score"] = df["val_fp_per_min"]
+            df["val_fp_per_min"] = tmp
+            mapping_notice = "Auto-corrected objective labels: swapped FP/min and LatencyScore based on value ranges (LatencyScore must be in [0,1])."
+            print(mapping_notice)
+    except Exception as e:
+        print(f"Objective range check warning: {e}")
+
+    # Save all trials CSV
+    all_csv = os.path.join(viz_dir, "all_completed_trials.csv")
+    df.to_csv(all_csv, index=False)
+    print(f"Saved {len(df)} trials → {all_csv}")
+
+    # ---------- STANDARD OPTUNA VISUALS ----------
+    print("Generating Optuna standard plots...")
+    try:
+        # History per objective
+        fig_hist_pr = optuna.visualization.plot_optimization_history(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'),
+            target_name="Sample PR-AUC")
+        fig_hist_pr.write_html(os.path.join(viz_dir, "history_pr_auc.html"))
+
+        fig_hist_fp = optuna.visualization.plot_optimization_history(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['fp_per_min']] if t.values else float('nan'),
+            target_name="FP/min")
+        fig_hist_fp.write_html(os.path.join(viz_dir, "history_fp_per_min.html"))
+
+        fig_hist_lat = optuna.visualization.plot_optimization_history(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['latency']] if t.values else float('nan'),
+            target_name="LatencyScore")
+        fig_hist_lat.write_html(os.path.join(viz_dir, "history_latency.html"))
+
+        # Param importances per objective
+        fig_imp_pr = optuna.visualization.plot_param_importances(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'),
+            target_name="Sample PR-AUC")
+        fig_imp_pr.write_html(os.path.join(viz_dir, "param_importances_pr_auc.html"))
+
+        fig_imp_fp = optuna.visualization.plot_param_importances(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['fp_per_min']] if t.values else float('nan'),
+            target_name="FP/min")
+        fig_imp_fp.write_html(os.path.join(viz_dir, "param_importances_fp_per_min.html"))
+
+        fig_imp_lat = optuna.visualization.plot_param_importances(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['latency']] if t.values else float('nan'),
+            target_name="LatencyScore")
+        fig_imp_lat.write_html(os.path.join(viz_dir, "param_importances_latency.html"))
+
+        # Pareto front — target_names must match study value order
+        names_by_index = [""] * nvals
+        names_by_index[OBJECTIVE_INDEX['pr_auc']] = "Sample PR-AUC"
+        names_by_index[OBJECTIVE_INDEX['fp_per_min']] = "FP/min"
+        names_by_index[OBJECTIVE_INDEX['latency']] = "LatencyScore"
+        fig_pareto = optuna.visualization.plot_pareto_front(study, target_names=names_by_index)
+        fig_pareto.write_html(os.path.join(viz_dir, "pareto_front_3obj.html"))
+    except Exception as e:
+        print(f"Standard plot warning: {e}")
+
+    # ---------- EDFs ----------
+    try:
+        fig_edf_pr = optuna.visualization.plot_edf(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'),
+            target_name="Sample PR-AUC (↑)")
+        fig_edf_pr.write_html(os.path.join(viz_dir, "edf_pr_auc.html"))
+
+        fig_edf_fp = optuna.visualization.plot_edf(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['fp_per_min']] if t.values else float('nan'),
+            target_name="FP/min (↓)")
+        fig_edf_fp.write_html(os.path.join(viz_dir, "edf_fp_per_min.html"))
+
+        fig_edf_lat = optuna.visualization.plot_edf(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['latency']] if t.values else float('nan'),
+            target_name="LatencyScore (↑)")
+        fig_edf_lat.write_html(os.path.join(viz_dir, "edf_latency.html"))
+    except Exception as e:
+        print(f"EDF plot warning: {e}")
+
+    # ---------- PARETO SET & CSV/HTML ----------
+    pareto_trials = study.best_trials
+    pareto_nums = [t.number for t in pareto_trials]
+    pareto_df = df[df.trial_number.isin(pareto_nums)].copy()
+    pareto_csv = os.path.join(viz_dir, "pareto_trials.csv")
+    pareto_df.to_csv(pareto_csv, index=False)
+    print(f"Pareto set size: {len(pareto_df)} → {pareto_csv}")
+
+    pareto_snapshot_html = ""
+
+    def _trial_link(trial_no: int) -> str:
+        base = os.path.join("studies", param_dir)
+        matches = glob.glob(os.path.join(base, f"study_{trial_no}_*"))
+        if matches:
+            rel = os.path.relpath(matches[0], viz_dir)
+            return f'<a href="{rel}">study_{trial_no}</a>'
+        return ""
+
+    if not pareto_df.empty:
+        pareto_view = pareto_df.copy()
+        pareto_view["study_dir"] = pareto_view["trial_number"].apply(_trial_link)
+        lead_cols = ["trial_number", "val_sample_pr_auc", "val_latency_score", "val_fp_per_min", "study_dir"]
+        remaining = [c for c in pareto_view.columns if c not in lead_cols]
+        pareto_html = pareto_view[lead_cols + remaining].to_html(escape=False, index=False)
+        with open(os.path.join(viz_dir, "pareto_trials.html"), "w") as fh:
+            fh.write(f"""<html><head><meta charset="utf-8"><title>Pareto Trials — {study.study_name}</title>
+<style>body{{font-family:Arial;margin:20px}} table{{border-collapse:collapse}} th,td{{border:1px solid #ddd;padding:6px}} th{{background:#f5f5f5}}</style>
+</head><body><h2>Pareto Trials</h2>
+<p>Higher is better: PR-AUC, LatencyScore. Lower is better: FP/min.</p>
+{pareto_html}
+</body></html>""")
+        # Snapshot: top 15 by PR-AUC
+        snapshot = pareto_view.sort_values("val_sample_pr_auc", ascending=False)[lead_cols].head(15)
+        pareto_snapshot_html = snapshot.to_html(escape=False, index=False)
+
+    # ---------- HYPERVOLUME HISTORY ----------
+    try:
+        if DO_HV:
+            ref_point = [0.0] * nvals
+            ref_point[OBJECTIVE_INDEX['pr_auc']] = float(df["val_sample_pr_auc"].min() - 1e-3)  # smaller worse
+            ref_point[OBJECTIVE_INDEX['fp_per_min']] = float(df["val_fp_per_min"].max() + 1e-3) # larger worse
+            ref_point[OBJECTIVE_INDEX['latency']] = float(df["val_latency_score"].min() - 1e-3) # smaller worse
+            fig_hv = optuna.visualization.plot_hypervolume_history(study, reference_point=ref_point)
+            fig_hv.write_html(os.path.join(viz_dir, "hypervolume_history.html"))
+        else:
+            print("Hypervolume plot skipped due to infeasible trials under constraints.")
+    except Exception as e:
+        print(f"Hypervolume plot skipped: {e}")
+
+    # ---------- 3D PROJECTION ----------
+    try:
+        if HAVE_PLOTLY:
+            fig3d = px.scatter_3d(
+                df,
+                x="val_sample_pr_auc", y="val_latency_score", z="val_fp_per_min",
+                color=np.where(df.trial_number.isin(pareto_nums), "Pareto", "Other"),
+                hover_name="trial_number", opacity=0.85
+            )
+            # Clamp axes for clarity
+            x_range = [0, 1]
+            y_range = [0, 1]
+            z_min, z_max = float(df["val_fp_per_min"].min()), float(df["val_fp_per_min"].max())
+            fig3d.update_layout(
+                scene=dict(
+                    xaxis_title="PR-AUC (↑)",
+                    yaxis_title="LatencyScore (↑)",
+                    zaxis_title="FP/min (↓)",
+                    xaxis=dict(range=x_range),
+                    yaxis=dict(range=y_range),
+                    zaxis=dict(range=[z_min, z_max])
+                ),
+                legend_title_text="Trials"
+            )
+            fig3d.write_html(os.path.join(viz_dir, "scatter3d_all.html"))
+    except Exception as e:
+        print(f"Projection plot warning: {e}")
+
+    # ---------- PARAMETER IMPACT (per-param quick plots) ----------
+    def qylim(series, lo=0.05, hi=0.95, pad=0.05, clamp=None):
+        if series.isnull().all():
+            return (0, 1)
+        qlo, qhi = np.nanquantile(series, [lo, hi])
+        span = max(1e-9, qhi - qlo)
+        lo_v = qlo - pad * span
+        hi_v = qhi + pad * span
+        if clamp:
+            lo_v = max(clamp[0], lo_v); hi_v = min(clamp[1], hi_v)
+            if lo_v >= hi_v: lo_v, hi_v = clamp[0], clamp[1]
+        return (lo_v, hi_v)
+
+    pr_ylim  = qylim(df["val_sample_pr_auc"], clamp=(0,1))
+    lat_ylim = qylim(df["val_latency_score"], clamp=(0,1))
+    fp_ylim  = qylim(df["val_fp_per_min"], clamp=None)
+
+    hyperparams = [c for c in df.columns if c not in
+                   ["trial_number","val_sample_pr_auc","val_latency_score","val_fp_per_min"]]
+
+    for p in hyperparams:
+        if df[p].isnull().all() or df[p].nunique() <= 1:
+            continue
+        is_num = pd.api.types.is_numeric_dtype(df[p])
+        fig, axes = plt.subplots(2, 1, figsize=(10, 8), sharex=True,
+                                 gridspec_kw={"height_ratios":[2,1]})
+        ax_top, ax_bot = axes
+
+        # Top: PR-AUC and LatencyScore on twin axes
+        if is_num:
+            sns.scatterplot(data=df, x=p, y="val_sample_pr_auc", ax=ax_top, color="tab:blue", s=18, alpha=0.5, label="PR-AUC")
+        else:
+            sns.stripplot(data=df, x=p, y="val_sample_pr_auc", ax=ax_top, color="tab:blue", size=4, alpha=0.7, jitter=True)
+        ax_top.set_ylabel("PR-AUC (↑)", color="tab:blue"); ax_top.tick_params(axis='y', labelcolor="tab:blue"); ax_top.set_ylim(pr_ylim)
+
+        ax2 = ax_top.twinx()
+        if is_num:
+            sns.scatterplot(data=df, x=p, y="val_latency_score", ax=ax2, color="tab:green", s=18, alpha=0.5, label="LatencyScore")
+        else:
+            sns.stripplot(data=df, x=p, y="val_latency_score", ax=ax2, color="tab:green", size=4, alpha=0.7, jitter=True)
+        ax2.set_ylabel("LatencyScore (↑)", color="tab:green"); ax2.tick_params(axis='y', labelcolor="tab:green"); ax2.set_ylim(lat_ylim)
+
+        # Bottom: FP/min
+        if is_num:
+            sns.scatterplot(data=df, x=p, y="val_fp_per_min", ax=ax_bot, color="tab:red", s=18, alpha=0.5)
+        else:
+            sns.stripplot(data=df, x=p, y="val_fp_per_min", ax=ax_bot, color="tab:red", size=4, alpha=0.7, jitter=True)
+        ax_bot.set_ylabel("FP/min (↓)", color="tab:red"); ax_bot.tick_params(axis='y', labelcolor="tab:red"); ax_bot.set_ylim(fp_ylim)
+
+        if not is_num:
+            for ax in (ax_top, ax_bot):
+                plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+        ax_bot.set_xlabel(p)
+        fig.tight_layout()
+        outp = os.path.join(param_impact_dir, f"{p}_impact.png")
+        fig.savefig(outp, dpi=130)
+        plt.close(fig)
+
+    # ---------- CORRELATIONS ----------
+    # Spearman correlation: numeric hypers vs objectives
+    num_cols = [c for c in hyperparams if pd.api.types.is_numeric_dtype(df[c])]
+    heatmap_fp = None
+    if num_cols:
+        try:
+            corr_df = df[num_cols + ["val_sample_pr_auc","val_latency_score","val_fp_per_min"]].corr(method='spearman')
+            plt.figure(figsize=(max(8, 0.6*len(corr_df.columns)), max(6, 0.5*len(corr_df))))
+            sns.heatmap(corr_df, annot=True, fmt=".2f", cmap="coolwarm", cbar=True, square=False)
+            plt.title("Spearman correlation: numeric hyperparameters vs objectives")
+            plt.tight_layout()
+            heatmap_fp = os.path.join(viz_dir, "correlations_spearman.png")
+            plt.savefig(heatmap_fp, dpi=130); plt.close()
+        except Exception as e:
+            print(f"Correlation heatmap warning: {e}")
+            plt.close()
+
+    obj_corr_fp = None
+    try:
+        obj_corr = df[["val_sample_pr_auc","val_latency_score","val_fp_per_min"]].corr(method='spearman')
+        plt.figure(figsize=(4.8,4))
+        sns.heatmap(obj_corr, annot=True, fmt=".2f", cmap="vlag", cbar=False,
+                    xticklabels=["PR-AUC (↑)","LatencyScore (↑)","FP/min (↓)"],
+                    yticklabels=["PR-AUC (↑)","LatencyScore (↑)","FP/min (↓)"])
+        plt.tight_layout()
+        obj_corr_fp = os.path.join(viz_dir, "objective_correlations.png")
+        plt.savefig(obj_corr_fp, dpi=140); plt.close()
+    except Exception as e:
+        print(f"Objective correlation warning: {e}")
+        plt.close()
+
+    # ---------- SIMPLE COMBINED RANK (top-k) ----------
+    def robust_minmax(x):
+        q05, q95 = np.nanquantile(x, [0.05, 0.95])
+        d = max(1e-9, q95 - q05); z = (x - q05) / d
+        return np.clip(z, 0, 1)
+
+    df["score_pr"] = df["val_sample_pr_auc"]          # higher better
+    df["score_lat"] = df["val_latency_score"]         # higher better
+    df["score_fp"] = 1 - robust_minmax(df["val_fp_per_min"])  # lower fp → higher score
+    df["combined_avg"] = (df["score_pr"] + df["score_lat"] + df["score_fp"]) / 3.0
+    top_combined = df.sort_values("combined_avg", ascending=False).head(25)
+    top_combined.to_csv(os.path.join(viz_dir, "top25_combined_avg.csv"), index=False)
+
+    # Top-by-objective HTML tables with links
+    def _trial_link(trial_no: int) -> str:
+        base = os.path.join("studies", param_dir)
+        matches = glob.glob(os.path.join(base, f"study_{trial_no}_*"))
+        if matches:
+            rel = os.path.relpath(matches[0], viz_dir)
+            return f'<a href="{rel}">study_{trial_no}</a>'
+        return ""
+
+    try:
+        top_k = 25
+        best_pr  = df.sort_values("val_sample_pr_auc", ascending=False).head(top_k).copy()
+        best_lat = df.sort_values("val_latency_score", ascending=False).head(top_k).copy()
+        best_fp  = df.sort_values("val_fp_per_min", ascending=True ).head(top_k).copy()
+        for fname, d in [("top_by_pr_auc.html", best_pr),
+                         ("top_by_latency.html", best_lat),
+                         ("top_by_fpmin.html", best_fp),
+                         ("top_by_combined.html", top_combined)]:
+            dd = d.copy()
+            dd["study_dir"] = dd["trial_number"].apply(_trial_link)
+            lead = ["trial_number","val_sample_pr_auc","val_latency_score","val_fp_per_min","combined_avg","study_dir"]
+            keep = [c for c in lead if c in dd.columns] + [c for c in dd.columns if c not in lead]
+            html_tbl = dd[keep].to_html(escape=False, index=False)
+            with open(os.path.join(viz_dir, fname), "w") as fh:
+                fh.write(f"<html><head><meta charset='utf-8'><style>body{{font-family:Arial;margin:20px}} table{{border-collapse:collapse}} th,td{{border:1px solid #ddd;padding:6px}} th{{background:#f5f5f5}}</style></head><body>{html_tbl}</body></html>")
+    except Exception as e:
+        print(f"Top-k HTML warning: {e}")
+
+    # ---------- HTML REPORT ----------
+    html = []
+    html.append(f"""<!doctype html><html><head><meta charset="utf-8">
+    <title>Study Visualization (3-obj): {study.study_name}</title>
+    <style>
+    body{{font-family:Arial,Helvetica,sans-serif;margin:20px;}} h2{{margin-top:28px}}
+    a{{color:#007bff;text-decoration:none}} a:hover{{text-decoration:underline}}
+    .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}}
+    .card{{border:1px solid #ddd;border-radius:8px;padding:12px;background:#fafafa}}
+    img{{max-width:100%}}
+    .notice{{padding:10px;border:1px solid #ffc107;background:#fff3cd;border-radius:6px}}
+    </style></head><body>
+    <h1>Visualization — {study.study_name}</h1>
+    <p>Objectives: <b>maximize</b> PR-AUC, <b>minimize</b> FP/min, <b>maximize</b> LatencyScore.</p>
+    <p><b>Trials:</b> {len(df)} | <b>Pareto set:</b> {len(pareto_df)}</p>""")
+    if mapping_notice:
+        html.append(f'<p class="notice">{mapping_notice}</p>')
+    if has_constraints and not DO_HV:
+        html.append('<p class="notice">Note: No feasible trials under constraints; hypervolume history omitted.</p>')
+    html.append(f"""
+    <ul>
+      <li><a href="all_completed_trials.csv">all_completed_trials.csv</a></li>
+      <li><a href="pareto_trials.csv">pareto_trials.csv</a> &nbsp;|&nbsp; <a href="pareto_trials.html">Pareto table (HTML)</a></li>
+      <li><a href="top25_combined_avg.csv">top25_combined_avg.csv</a></li>
+      <li>Top-K (HTML): <a href="top_by_pr_auc.html">PR-AUC</a> · <a href="top_by_fpmin.html">FP/min</a> · <a href="top_by_latency.html">LatencyScore</a> · <a href="top_by_combined.html">Combined</a></li>
+      <li>Objective EDFs: <a href="edf_pr_auc.html">PR-AUC</a> · <a href="edf_fp_per_min.html">FP/min</a> · <a href="edf_latency.html">LatencyScore</a></li>
+    </ul>""")
+    if pareto_snapshot_html:
+        html.append("<h2>Pareto snapshot (top 15 by PR-AUC)</h2>")
+        html.append(pareto_snapshot_html)
+    html.append("""
+    <h2>Standard Optuna Plots</h2>
+    <div class="grid">
+      <div class="card"><a href="history_pr_auc.html">Optimization History — PR-AUC</a></div>
+      <div class="card"><a href="history_fp_per_min.html">Optimization History — FP/min</a></div>
+      <div class="card"><a href="history_latency.html">Optimization History — LatencyScore</a></div>
+      <div class="card"><a href="param_importances_pr_auc.html">Param Importances — PR-AUC</a></div>
+      <div class="card"><a href="param_importances_fp_per_min.html">Param Importances — FP/min</a></div>
+      <div class="card"><a href="param_importances_latency.html">Param Importances — LatencyScore</a></div>
+      <div class="card"><a href="pareto_front_3obj.html">Pareto Front (interactive)</a></div>
+      <div class="card"><a href="hypervolume_history.html">Hypervolume History</a></div>
+    </div>
+    <h2>Objective Projections</h2>
+    <div class="grid">""")
+    if HAVE_PLOTLY and os.path.exists(os.path.join(viz_dir, "scatter3d_all.html")):
+        html.append('<div class="card"><a href="scatter3d_all.html">3D Scatter (All trials, Pareto highlighted)</a></div>')
+    html.append("</div>")
+
+    if heatmap_fp or obj_corr_fp:
+        html.append("<h2>Correlations</h2><div class='grid'>")
+        if heatmap_fp:
+            html.append(f'<div class="card"><img src="correlations_spearman.png" alt="Hyperparameter correlations"></div>')
+        if obj_corr_fp and os.path.exists(obj_corr_fp):
+            html.append(f'<div class="card"><img src="objective_correlations.png" alt="Objective correlations"></div>')
+        html.append("</div>")
+
+    html.append("<h2>Per-Parameter Impact</h2><div class='grid'>")
+    for p in hyperparams:
+        imgp = os.path.join("param_impact", f"{p}_impact.png")
+        if os.path.exists(os.path.join(viz_dir, imgp)):
+            html.append(f'<div class="card"><h3>{p}</h3><img src="{imgp}"></div>')
+    html.append("</div></body></html>")
+
+    with open(os.path.join(viz_dir, "index.html"), "w") as f:
+        f.write("\n".join(html))
+
+    # ---------- SUMMARY ----------
+    stats = {
+        "study_name": study.study_name,
+        "n_completed_trials": int(len(df)),
+        "n_pareto_trials": int(len(pareto_df)),
+        "has_constraints": bool(has_constraints),
+        "n_feasible_trials": int(len(feasible_trials)),
+        "objectives": ["val_sample_pr_auc (max)", "val_fp_per_min (min)", "val_latency_score (max)"],
+        "objective_index_map": OBJECTIVE_INDEX,
+        "auto_swap_applied": bool(mapping_notice != "")
+    }
+    with open(os.path.join(viz_dir, "study_stats.json"), "w") as f:
+        json.dump(stats, f, indent=2)
+    print(f"Visualization complete → {viz_dir}")
