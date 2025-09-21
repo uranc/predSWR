@@ -28,9 +28,11 @@ import sys
 import glob
 import importlib
 from tensorflow.keras import callbacks as cb
+import ctypes
 
 
 def objective_triplet(trial):
+    ctypes.CDLL("libcuda.so.1")
     """Objective function for Optuna optimization"""
     tf.compat.v1.reset_default_graph()
     if tf.config.list_physical_devices('GPU'):
@@ -128,8 +130,8 @@ def objective_triplet(trial):
     params['LOSS_SupCon']    = trial.suggest_float("LOSS_SupCon",    2.0, 50.0, log=True)
     params['LOSS_TupMPN']    = trial.suggest_float("LOSS_TupMPN",    10.0, 120.0, log=True)
     params['LOSS_NEGATIVES'] = trial.suggest_float("LOSS_NEGATIVES", 12.0, 30.0, log=True)
-
-
+    params['LOSS_TV'] = trial.suggest_float("LOSS_TV", 1e-3, 1e-1, log=True)
+    
     ax = 25#trial.suggest_int('AX', 25, 85, step=20)
     gx = 200#350#trial.suggest_int('GX', 150, 400, step=100)
 
@@ -180,10 +182,10 @@ def objective_triplet(trial):
     # par_init = init_lib[trial.suggest_int('IND_INIT', 0, len(init_lib)-1)]
     par_init = 'He'
     # norm_lib = ['LN','BN','GN','WN']
-    norm_lib = ['LN', 'WN']
-    par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
+    # norm_lib = ['LN', 'WN']
     # par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
-    # par_norm = 'LN'
+    # par_norm = norm_lib[trial.suggest_int('IND_NORM', 0, len(norm_lib)-1)]
+    par_norm = 'LN'
 
     # act_lib = ['ELU', 'GELU'] # 'RELU',
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
@@ -751,7 +753,7 @@ elif mode == 'predict':
         # Extract study number from model name (e.g., 'Tune_45_' -> '45')
         study_num = model_name.split('_')[1]
         print(f"Loading tuned model from study {study_num}")
-
+        # pdb.set_trace()
         # params['SRATE'] = 2500
         # Find the study directory
         import glob
@@ -764,12 +766,12 @@ elif mode == 'predict':
         if not study_dirs:
             raise ValueError(f"No study directory found for study number {study_num}")
         study_dir = study_dirs[0]  # Take the first matching directory
-
+        # pdb.set_trace()
         # Load trial info to get parameters
         with open(f"{study_dir}/trial_info.json", 'r') as f:
             trial_info = json.load(f)
             params.update(trial_info['parameters'])
-
+        # pdb.set_trace()
         params['mode'] = 'predict'
         # Import required modules
         if 'MixerOnly' in params['TYPE_ARCH']:
@@ -801,7 +803,9 @@ elif mode == 'predict':
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
         elif 'TripletOnly' in params['TYPE_ARCH']:
+            # pdb.set_trace()
             # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            # # pdb.set_trace()
             import importlib.util
             # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
             spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
@@ -868,7 +872,7 @@ elif mode == 'predict':
             pretrained_tcn.compile(optimizer='adam', loss='mse')
             from model.model_fn import build_DBI_TCN_CADMixerOnly as build_DBI_TCN
 
-
+        # pdb.set_trace()
         from model.model_fn import CSDLayer
         from tcn import TCN
         from tensorflow.keras.models import load_model
@@ -929,6 +933,7 @@ elif mode == 'predict':
             model = build_DBI_TCN(params=params) # Pass only the params dictionary
         else:
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+
         model.load_weights(weight_file)
     elif model_name == 'RippleNet':
         import sys, pickle, keras, h5py
@@ -4167,6 +4172,106 @@ elif mode == 'tune_viz_multi_v5':
         fig.savefig(outp, dpi=130)
         plt.close(fig)
 
+    # ---------- QUANTILE TREND PLOTS (StopGrad split on the same axes) ----------
+    qt_dir = os.path.join(viz_dir, "quantile_trends_stopgrad")
+    os.makedirs(qt_dir, exist_ok=True)
+
+    def _infer_stopgrad_column(df_in: pd.DataFrame) -> pd.Series:
+        if "USE_StopGrad" in df_in.columns:
+            col = df_in["USE_StopGrad"]
+            if pd.api.types.is_bool_dtype(col):
+                return np.where(col, "SG=True", "SG=False")
+            try:
+                val = pd.to_numeric(col, errors="coerce")
+                return np.where(val == 1, "SG=True",
+                                np.where(val == 0, "SG=False", "SG=unknown"))
+            except Exception:
+                s = col.astype(str).str.lower()
+                return np.where(s.isin(["1","true","yes","y"]), "SG=True",
+                                np.where(s.isin(["0","false","no","n"]), "SG=False", "SG=unknown"))
+        elif "TYPE_ARCH" in df_in.columns:
+            s = df_in["TYPE_ARCH"].astype(str)
+            return np.where(s.str.contains("StopGrad", case=False, na=False),
+                            "SG=True", "SG=False")
+        return ["SG=unknown"] * len(df_in)
+
+    df["COHORT_StopGrad"] = _infer_stopgrad_column(df)
+
+    def _quantile_bins(x: pd.Series, nbins=12):
+        x = x.astype(float)
+        x = x.dropna()
+        if x.empty: 
+            return None
+        qs = np.linspace(0, 1, nbins + 1)
+        edges = np.unique(np.nanquantile(x, qs))
+        if len(edges) < 4:
+            lo, hi = np.nanmin(x), np.nanmax(x)
+            edges = np.linspace(lo, hi, 4)
+        eps = 1e-12 * (edges[-1] - edges[0] + 1.0)
+        edges[0] -= eps; edges[-1] += eps
+        return edges
+
+    def _trend_by_bins(dfin: pd.DataFrame, param: str, nbins=12):
+        dfin = dfin.dropna(subset=[param])  # fix length mismatch
+        edges = _quantile_bins(dfin[param], nbins=nbins)
+        if edges is None:
+            return pd.DataFrame()
+        b = pd.cut(dfin[param].astype(float), bins=edges, include_lowest=True)
+        mids = b.apply(lambda iv: np.mean([iv.left, iv.right]) if pd.notnull(iv) else np.nan)
+        tmp = dfin.copy()
+        tmp["_bin"] = b
+        tmp["_mid"] = mids
+        long = tmp.melt(
+            id_vars=["_bin","_mid","COHORT_StopGrad"],
+            value_vars=["val_sample_pr_auc","val_latency_score","val_fp_per_min"],
+            var_name="metric", value_name="val"
+        )
+        agg = (long.dropna(subset=["_bin","_mid","val"])
+                    .groupby(["_bin","_mid","COHORT_StopGrad","metric"], observed=True)
+                    .agg(q10=("val", lambda s: np.nanquantile(s,0.10)),
+                        median=("val","median"),
+                        q90=("val", lambda s: np.nanquantile(s,0.90)),
+                        count=("val","size"))
+                    .reset_index())
+        agg.rename(columns={"_mid":"bin_mid"}, inplace=True)
+        return agg
+
+    def _plot_trend_overlay(agg: pd.DataFrame, p: str, out_png: str):
+        order = ["val_sample_pr_auc","val_latency_score","val_fp_per_min"]
+        titles = {"val_sample_pr_auc":"PR-AUC (↑)",
+                "val_latency_score":"LatencyScore (↑)",
+                "val_fp_per_min":"FP/min (↓)"}
+        colors = {"SG=False":"tab:blue","SG=True":"tab:orange","SG=unknown":"tab:gray"}
+        fig, axes = plt.subplots(3,1,figsize=(9,10),sharex=True)
+        for ax, m in zip(axes, order):
+            d = agg[agg["metric"] == m]
+            for g, dd in d.groupby("COHORT_StopGrad"):
+                dd = dd.sort_values("bin_mid")
+                c = colors.get(g,"tab:gray")
+                ax.plot(dd["bin_mid"], dd["median"], label=g, color=c, lw=2)
+                ax.fill_between(dd["bin_mid"], dd["q10"], dd["q90"], alpha=0.15, color=c)
+            ax.set_ylabel(titles[m]); ax.grid(alpha=0.3)
+        axes[0].legend(title="StopGrad")
+        axes[-1].set_xlabel(p)
+        fig.suptitle(f"Quantile trend (StopGrad overlay): {p}")
+        fig.tight_layout(rect=[0,0,1,0.96])
+        fig.savefig(out_png, dpi=140); plt.close(fig)
+
+    num_params = [c for c in df.columns
+                if c not in ["trial_number","val_sample_pr_auc","val_latency_score","val_fp_per_min","COHORT_StopGrad"]
+                and pd.api.types.is_numeric_dtype(df[c])
+                and df[c].nunique() > 8]
+
+    for p in num_params:
+        try:
+            sub = df[["val_sample_pr_auc","val_latency_score","val_fp_per_min","COHORT_StopGrad",p]]
+            agg = _trend_by_bins(sub, p, nbins=12)
+            if not agg.empty and agg["bin_mid"].nunique() >= 3:
+                outp = os.path.join(qt_dir, f"{p}_trend_stopgrad.png")
+                _plot_trend_overlay(agg, p, outp)
+        except Exception as e:
+            print(f"[trend] Skipped {p}: {e}")
+
     # ---------- CORRELATIONS ----------
     # Spearman correlation: numeric hypers vs objectives
     num_cols = [c for c in hyperparams if pd.api.types.is_numeric_dtype(df[c])]
@@ -4319,3 +4424,258 @@ elif mode == 'tune_viz_multi_v5':
     with open(os.path.join(viz_dir, "study_stats.json"), "w") as f:
         json.dump(stats, f, indent=2)
     print(f"Visualization complete → {viz_dir}")
+
+    # =========================
+    # EXTRA ANALYSIS ADD-ONS (robust)
+    # =========================
+
+    # integrate into HTML report
+    html.append("<h2>Quantile Trends (StopGrad overlay)</h2><div class='grid'>")
+    for p in num_params:
+        imgp = os.path.join("quantile_trends_stopgrad", f"{p}_trend_stopgrad.png")
+        if os.path.exists(os.path.join(viz_dir, imgp)):
+            html.append(f'<div class="card"><h3>{p}</h3><img src="{imgp}"></div>')
+    html.append("</div>")
+    
+    # Output folders
+    extras_dir   = os.path.join(viz_dir, "extras");            os.makedirs(extras_dir, exist_ok=True)
+    qplots_dir   = os.path.join(extras_dir, "quantile_trends"); os.makedirs(qplots_dir, exist_ok=True)
+    heat2d_dir   = os.path.join(extras_dir, "heatmaps_2d");     os.makedirs(heat2d_dir, exist_ok=True)
+    cohort_dir   = os.path.join(extras_dir, "cohorts");         os.makedirs(cohort_dir, exist_ok=True)
+    recommend_dir= os.path.join(extras_dir, "range_recommendations"); os.makedirs(recommend_dir, exist_ok=True)
+    recon_dir    = os.path.join(extras_dir, "importance_reconciliation"); os.makedirs(recon_dir, exist_ok=True)
+
+    # Columns
+    objective_cols = ["val_sample_pr_auc","val_latency_score","val_fp_per_min"]
+    param_cols = [c for c in df.columns if c not in ["trial_number", *objective_cols,
+                                                     "score_pr","score_lat","score_fp","combined_avg"]]
+    num_params = [p for p in param_cols if pd.api.types.is_numeric_dtype(df[p])]
+    cat_params = [p for p in param_cols if p not in num_params]
+
+    # -------- StopGrad robust detector
+    def _detect_stopgrad_series(dfx: pd.DataFrame) -> pd.Series:
+        # Priority 1: explicit boolean/0-1 param
+        if "USE_StopGrad" in dfx.columns:
+            s = dfx["USE_StopGrad"]
+            # Normalize to bool safely
+            if s.dtype == bool:
+                return s
+            # Map strings/numbers to bool; NaNs -> False
+            return s.map(lambda v: bool(v) if pd.notna(v) else False)
+        # Priority 2: implied by TYPE_ARCH substring
+        if "TYPE_ARCH" in dfx.columns:
+            return dfx["TYPE_ARCH"].astype(str).str.lower().str.contains("stopgrad", na=False)
+        return None  # not available
+
+    stopgrad_series = _detect_stopgrad_series(df)
+
+    # -------- Helpers
+    def _safe_corr_heatmap(data: pd.DataFrame, name: str, out_png: str):
+        try:
+            cols = [*num_params, *objective_cols]
+            cols = [c for c in cols if c in data.columns]
+            if len(cols) < 3: return
+            corr_df = data[cols].corr(method="spearman")
+            plt.figure(figsize=(max(8, 0.6*len(corr_df.columns)), max(6, 0.5*len(corr_df))))
+            sns.heatmap(corr_df, annot=True, fmt=".2f", cmap="coolwarm")
+            plt.title(f"Spearman (numeric) — {name}")
+            plt.tight_layout()
+            plt.savefig(out_png, dpi=130); plt.close()
+        except Exception:
+            plt.close()
+
+    def _param_summary_scatter(data: pd.DataFrame, name: str):
+        # Per-objective, per-param quick summaries (robust to dtype/NaN)
+        for obj, ylabel in [("val_sample_pr_auc","PR-AUC (↑)"),
+                            ("val_latency_score","LatencyScore (↑)"),
+                            ("val_fp_per_min","FP/min (↓)")]:
+            if obj not in data.columns: continue
+            plt.figure(figsize=(max(8, 0.4*len(param_cols)), 4))
+            ax = plt.gca()
+            x_idx, x_labs = [], []
+            for i, p in enumerate(param_cols):
+                if p not in data.columns or data[p].nunique(dropna=True) <= 1:
+                    continue
+                # Numeric → quantile means, Categorical → category means
+                if pd.api.types.is_numeric_dtype(data[p]):
+                    valid = data[[p, obj]].dropna()
+                    if valid[p].nunique() < 3 or len(valid) < 8: 
+                        continue
+                    qbins = pd.qcut(valid[p], q=min(10, max(3, valid[p].nunique())),
+                                    duplicates="drop")
+                    means = valid.groupby(qbins, observed=True)[obj].mean().values
+                    ax.scatter(np.full_like(means, len(x_idx)), means, s=26, alpha=0.7)
+                else:
+                    g = data.groupby(p, observed=True)[obj].mean().sort_values(ascending=False)
+                    ax.scatter(np.full_like(g.values, len(x_idx)), g.values, s=26, alpha=0.7)
+                x_idx.append(len(x_idx)); x_labs.append(p)
+            ax.set_xticks(range(len(x_labs))); ax.set_xticklabels(x_labs, rotation=28, ha="right")
+            ax.set_ylabel(ylabel); ax.set_title(f"{ylabel} vs params — {name}")
+            plt.tight_layout()
+            plt.savefig(os.path.join(cohort_dir, f"{obj}_vs_params_{name}.png"), dpi=120); plt.close()
+
+    # -------- Cohort analysis (StopGrad ON/OFF)
+    if isinstance(stopgrad_series, pd.Series):
+        sg_mask = stopgrad_series.fillna(False)  # NaN → False
+        d0 = df[~sg_mask].copy()  # StopGrad OFF
+        d1 = df[ sg_mask].copy()  # StopGrad ON
+
+        if len(d0) >= 30:
+            _safe_corr_heatmap(d0, "StopGrad_OFF", os.path.join(cohort_dir, "corr_spearman_StopGrad_OFF.png"))
+            _param_summary_scatter(d0, "StopGrad_OFF")
+        if len(d1) >= 30:
+            _safe_corr_heatmap(d1, "StopGrad_ON",  os.path.join(cohort_dir, "corr_spearman_StopGrad_ON.png"))
+            _param_summary_scatter(d1, "StopGrad_ON")
+
+    # -------- Quantile trend curves (robust)
+    def quantile_trend(x: pd.Series, y: pd.Series, q=12):
+        valid = x.notna() & y.notna()
+        xv, yv = x[valid], y[valid]
+        if len(xv) < 10 or xv.nunique() < 3: 
+            return None
+        bins = pd.qcut(xv, q=min(q, max(3, xv.nunique())), duplicates="drop")
+        grp  = pd.DataFrame({"y": yv, "bin": bins, "x": xv}).groupby("bin", observed=True)
+        mu = grp["y"].mean().values
+        sd = grp["y"].std().values
+        n  = grp["y"].size().values.astype(float)
+        se = np.where(n>1, sd/np.sqrt(n), np.nan)
+        xc = grp["x"].mean().values
+        return xc, mu, se
+
+    for p in num_params:
+        fig, axs = plt.subplots(3,1,figsize=(8,9), sharex=True)
+        ok = False
+        for ax, obj, lab in zip(axs,
+                                ["val_sample_pr_auc","val_latency_score","val_fp_per_min"],
+                                ["PR-AUC (↑)", "LatencyScore (↑)","FP/min (↓)"]):
+            if obj not in df.columns: 
+                ax.set_ylabel(lab); continue
+            out = quantile_trend(df[p], df[obj], q=12)
+            if out is None:
+                ax.set_ylabel(lab); continue
+            x, mu, se = out
+            ax.plot(x, mu, marker="o", linewidth=1.5)
+            if np.isfinite(se).any():
+                ax.fill_between(x, mu - 1.96*np.nan_to_num(se), mu + 1.96*np.nan_to_num(se), alpha=0.2)
+            ax.set_ylabel(lab); ok = True
+        axs[-1].set_xlabel(p)
+        if ok:
+            fig.suptitle(f"Quantile trend — {p}")
+            fig.tight_layout(rect=[0,0,1,0.97])
+            fig.savefig(os.path.join(qplots_dir, f"{p}_quantile_trends.png"), dpi=130)
+        plt.close(fig)
+
+    # -------- 2D interaction heatmaps (only if both axes exist and are informative)
+    def heat2d(x: pd.Series, y: pd.Series, z: pd.Series, xq=12, yq=12):
+        valid = x.notna() & y.notna() & z.notna()
+        xv, yv, zv = x[valid], y[valid], z[valid]
+        if xv.nunique() < 4 or yv.nunique() < 4 or len(zv) < 25:
+            return None
+        xb = pd.qcut(xv, q=min(xq, max(4, xv.nunique())), duplicates="drop")
+        yb = pd.qcut(yv, q=min(yq, max(4, yv.nunique())), duplicates="drop")
+        grid = pd.DataFrame({"xb": xb, "yb": yb, "z": zv}).groupby(["xb","yb"], observed=True)["z"].mean().unstack()
+        return grid
+
+    def _maybe_heatmap(xname, yname):
+        if xname not in df.columns or yname not in df.columns: 
+            return
+        for obj, lab in [("val_sample_pr_auc","PR-AUC (↑)"),
+                         ("val_latency_score","LatencyScore (↑)"),
+                         ("val_fp_per_min","FP/min (↓)")]:
+            if obj not in df.columns: continue
+            H = heat2d(df[xname], df[yname], df[obj])
+            if H is None: 
+                continue
+            plt.figure(figsize=(6.8,5.2))
+            sns.heatmap(H, cmap="viridis", annot=False)
+            plt.title(f"{lab} mean — {xname} × {yname}")
+            plt.tight_layout()
+            plt.savefig(os.path.join(heat2d_dir, f"{obj}_{xname}_x_{yname}.png"), dpi=140)
+            plt.close()
+
+    if "LOSS_SupCon" in df.columns and "LOSS_TupMPN" in df.columns:
+        _maybe_heatmap("LOSS_SupCon", "LOSS_TupMPN")
+    if "learning_rate" in df.columns and "LOSS_NEGATIVES" in df.columns:
+        _maybe_heatmap("learning_rate", "LOSS_NEGATIVES")
+    if "LOSS_TV" in df.columns and "LOSS_TupMPN" in df.columns:
+        _maybe_heatmap("LOSS_TV", "LOSS_TupMPN")
+
+    # -------- Range recommendations: top-quartile trial bands per objective
+    def recommend_ranges(data: pd.DataFrame, name: str, top_frac=0.25):
+        recs = {}
+        for obj, asc, nice in [("val_sample_pr_auc", False, "PR-AUC (↑)"),
+                               ("val_latency_score", False, "LatencyScore (↑)"),
+                               ("val_fp_per_min", True,  "FP/min (↓)")]:
+            if obj not in data.columns or data[obj].isnull().all():
+                continue
+            dsort = data.sort_values(obj, ascending=asc)
+            top_n = max(20, int(len(dsort)*top_frac))
+            top   = dsort.head(top_n)
+            # numeric 20–80%
+            rng = {}
+            for p in num_params:
+                if p not in top.columns: continue
+                col = top[p].dropna()
+                if col.nunique() < 2: 
+                    continue
+                try:
+                    rng[p] = (float(np.nanquantile(col, 0.20)), float(np.nanquantile(col, 0.80)))
+                except Exception:
+                    pass
+            # categorical modes
+            cat = {}
+            for p in cat_params:
+                if p not in top.columns: continue
+                vc = top[p].value_counts(normalize=True, dropna=False)
+                if len(vc):
+                    cat[p] = vc.head(3).to_dict()
+            recs[nice] = {"num_quantile_20_80": rng, "cat_top3_props": cat, "n_top": int(len(top))}
+        # write
+        with open(os.path.join(recommend_dir, f"ranges_{name}.json"), "w") as fh:
+            json.dump(recs, fh, indent=2)
+        rows = []
+        for obj, payload in recs.items():
+            for p,(lo,hi) in payload["num_quantile_20_80"].items():
+                rows.append({"objective": obj, "param": p, "q20": lo, "q80": hi})
+        if rows:
+            pd.DataFrame(rows).to_csv(os.path.join(recommend_dir, f"ranges_numeric_{name}.csv"), index=False)
+
+    recommend_ranges(df, "ALL")
+    if isinstance(stopgrad_series, pd.Series):
+        sg_mask = stopgrad_series.fillna(False)
+        if df[~sg_mask].shape[0] >= 40: recommend_ranges(df[~sg_mask], "StopGrad_OFF")
+        if df[ sg_mask].shape[0] >= 40: recommend_ranges(df[ sg_mask], "StopGrad_ON")
+
+    # -------- Importance reconciliation: absolute Spearman vs PR-AUC (global/cohort)
+    imp_rows = []
+    # Global
+    for p in num_params:
+        try:
+            r = df[[p,"val_sample_pr_auc"]].dropna().corr(method="spearman").iloc[0,1]
+            if pd.notna(r):
+                imp_rows.append({"param": p, "source": "Spearman|rho| (global)", "value": abs(float(r))})
+        except Exception:
+            pass
+    # Cohorts
+    if isinstance(stopgrad_series, pd.Series):
+        sg_mask = stopgrad_series.fillna(False)
+        for name, dsub in [("StopGrad_OFF", df[~sg_mask]), ("StopGrad_ON", df[sg_mask])]:
+            if len(dsub) < 30: 
+                continue
+            for p in num_params:
+                try:
+                    rr = dsub[[p,"val_sample_pr_auc"]].dropna().corr(method="spearman").iloc[0,1]
+                    if pd.notna(rr):
+                        imp_rows.append({"param": p, "source": f"Spearman|rho| ({name})", "value": abs(float(rr))})
+                except Exception:
+                    pass
+    if imp_rows:
+        imp_df = pd.DataFrame(imp_rows)
+        piv = imp_df.pivot_table(index="param", columns="source", values="value", aggfunc="max").fillna(0.0)
+        piv = piv.sort_values(by=list(piv.columns)[0], ascending=False)
+        plt.figure(figsize=(max(8, 0.5*len(piv)), 5))
+        piv.plot(kind="bar", figsize=(max(8, 0.55*len(piv)),5))
+        plt.ylabel("|Spearman| vs PR-AUC"); plt.title("Correlation-based importances (compare with Optuna fANOVA)")
+        plt.tight_layout()
+        plt.savefig(os.path.join(recon_dir, "spearman_vs_pr_auc.png"), dpi=130)
+        plt.close()

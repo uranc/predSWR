@@ -1,6 +1,6 @@
 import tensorflow as tf
 from tensorflow.keras.layers import Dense, Dropout, LayerNormalization, Layer, Activation
-from tensorflow_addons.activations import gelu # Assuming gelu is used
+from tensorflow.keras.activations import gelu 
 from tensorflow.keras.initializers import GlorotUniform
 
 

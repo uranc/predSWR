@@ -6,7 +6,7 @@ from tensorflow.keras.layers import (Input, Lambda, Concatenate, Multiply, Activ
 from tensorflow.keras.layers import MultiHeadAttention
 from tensorflow.keras.initializers import GlorotUniform, Orthogonal, Constant
 from tensorflow_addons.layers import WeightNormalization
-from tensorflow_addons.activations import gelu
+# from tensorflow_addons.activations import gelu
 from tensorflow.keras.regularizers import l1, l2
 from tensorflow.keras import backend as K
 from tensorflow.keras import layers
@@ -15,10 +15,10 @@ from tensorflow.keras import applications
 from model.patchAD.patch_ad import PatchAD
 from tensorflow.keras.layers import Layer, Input, Flatten, Dense, Dropout, RepeatVector, Concatenate
 from tensorflow.keras.models import Model
-from tensorflow_addons.activations import gelu
-from tensorflow_addons.losses import SigmoidFocalCrossEntropy
+from tensorflow.keras.activations import gelu 
+# from tensorflow_addons.losses import SigmoidFocalCrossEntropy
 import pdb, math
-
+# pdb.set_trace()
 def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
 
     # logit oer sigmoid
@@ -863,7 +863,6 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
     # logit or sigmoid
     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
     print('Using Sigmoid:', flag_sigmoid)
-
     # # LR schedure 
     # def make_lr_schedule(base_lr, total_steps, warmup_ratio=0.05, min_lr_ratio=0.05):
     #     warmup_steps = int(total_steps * warmup_ratio)
@@ -1054,7 +1053,15 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
 
         # ---- Classification head ----
-        cls_in = tf.stop_gradient(feats) if 'StopGrad' in params['TYPE_ARCH'] else feats
+        h = tf.stop_gradient(feats) if 'StopGrad' in params['TYPE_ARCH'] else feats
+        h = LayerNormalization()(h)
+        h = Conv1D(64, 
+                    1, 
+                    kernel_initializer='glorot_uniform', 
+                    kernel_regularizer=tf.keras.regularizers.L1(1e-4), 
+                    name="cls_pw1")(h)
+        h = Activation('gelu')(h)
+        cls_in = Dropout(0.1)(h)
         cls_logits = Conv1D(1, 1,
                         kernel_initializer='glorot_uniform',
                         kernel_regularizer=tf.keras.regularizers.L1(1e-4),
@@ -2724,7 +2731,7 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         total_steps = 100*1000
         # Metric ramps
         ramp_delay = tf.cast(params.get('RAMP_DELAY', int(0.01*total_steps)), tf.float32)
-        ramp_steps = tf.cast(params.get('RAMP_STEPS', int(0.3 * total_steps)), tf.float32)
+        ramp_steps = tf.cast(params.get('RAMP_STEPS', int(0.25*total_steps)), tf.float32)
 
 
         w_sup_tgt = tf.cast(params.get('LOSS_SupCon', 1.0), tf.float32)
@@ -2759,11 +2766,12 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         cls_p = bce_logits(p_lab, p_logit)
         cls_n = bce_logits(n_lab, n_logit)
 
-        alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 0.5), tf.float32)
+        alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
         classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
 
         # --------- logit-TV smoothing ----------
         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
+        print(f"TV weight: {lam_tv}")
         tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
         classification_loss = classification_loss + lam_tv * tv_term
 

@@ -3,7 +3,7 @@ from tensorflow.keras.layers import (Dense, Dropout, Layer, LayerNormalization,
                                    Reshape, Permute, Softmax, Activation)
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.initializers import GlorotUniform
-from tensorflow_addons.activations import gelu
+from tensorflow.keras.activations import gelu 
 from .modules import PatchMixerLayer, MLPBlock, EncoderEnsemble, ProjectHead
 import numpy as np
 import pdb
