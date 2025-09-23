@@ -2683,7 +2683,6 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         d_ap = tf.reduce_sum(tf.square(z_a[:,None,:] - z_p[None,:,:]), axis=2) + 1e-8
         d_ap = _mask_self(d_ap)
         L_weak = tf.reduce_mean(tf.nn.relu(margin_weak + d_pair[:,None] - d_ap))
-
         d_an = tf.reduce_sum(tf.square(z_a[:,None,:] - z_n[None,:,:]), axis=2) + 1e-8
         d_an = _mask_self(d_an)
         lifted = tf.reduce_logsumexp(margin_hard - d_an, axis=1)
@@ -2732,7 +2731,6 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         # Metric ramps
         ramp_delay = tf.cast(params.get('RAMP_DELAY', int(0.01*total_steps)), tf.float32)
         ramp_steps = tf.cast(params.get('RAMP_STEPS', int(0.25*total_steps)), tf.float32)
-
 
         w_sup_tgt = tf.cast(params.get('LOSS_SupCon', 1.0), tf.float32)
         w_mpn_tgt = tf.cast(params.get('LOSS_TupMPN', 1.0), tf.float32)
