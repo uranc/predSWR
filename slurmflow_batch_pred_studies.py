@@ -7,7 +7,7 @@ import time
 import copy
 
 
-tag = 'tripletOnlyLatentsTuned2500' # FiltL, FiltH, FiltM, SingleCh
+tag = 'tripletOnlyClean2500' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'tripletOnlyLatents2500' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'mixerOnly' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'mixerHori' # FiltL, FiltH, FiltM, SingleCh
@@ -27,7 +27,7 @@ tag = 'tripletOnlyLatentsTuned2500' # FiltL, FiltH, FiltM, SingleCh
 
 # model_lib = [1022, 426,717,829,867,1033, 623, 946, 554, 1194] # latents
 # model_lib = [926, 398, 597, 377, 438] # latentsTuned
-model_lib = [1181, 1237, 1347, 1409]
+model_lib = [1383,1392,1417,1440,1450,1530,1550,1559,1594,1601,1624,1633,1723]
 n=0
 for im, model in enumerate(model_lib):
     # subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model])

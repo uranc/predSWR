@@ -318,6 +318,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
     )
 
     test_ds = tf.data.Dataset.zip((test_x, test_y))
+    # pdb.set_trace()
     test_ds = test_ds.batch(params['BATCH_SIZE'] * 6, drop_remainder=True).prefetch(tf.data.AUTOTUNE)
 
     total_windows = (len(te_x) - sample_length) // stride_step + 1

@@ -48,7 +48,7 @@ def objective_triplet(trial):
             }
 
     # Dynamic learning rate range
-    learning_rate = trial.suggest_float('learning_rate', 2.5e-3, 1.2e-2, log=True)
+    learning_rate = trial.suggest_float('learning_rate', 6e-3, 1.5e-2, log=True)
     # learning_rate = 3e-3
     params['LEARNING_RATE'] = learning_rate
 
@@ -127,10 +127,20 @@ def objective_triplet(trial):
     # # params['LOSS_WEIGHT'] = 7.5e-4
 
     params['LOSS_WEIGHT'] = 1.0
-    params['LOSS_SupCon']    = trial.suggest_float("LOSS_SupCon",    2.0, 50.0, log=True)
-    params['LOSS_TupMPN']    = trial.suggest_float("LOSS_TupMPN",    10.0, 120.0, log=True)
-    params['LOSS_NEGATIVES'] = trial.suggest_float("LOSS_NEGATIVES", 12.0, 30.0, log=True)
-    params['LOSS_TV'] = trial.suggest_float("LOSS_TV", 1e-3, 1e-1, log=True)
+    params['LOSS_SupCon']    = 1.0#trial.suggest_float("LOSS_SupCon",    2.0, 40.0, log=True)
+    # params['LOSS_TupMPN']    = trial.suggest_float("LOSS_TupMPN",    10.0, 80.0, log=True)
+
+    # params['SG_START_RATIO'] = 0.00
+    # params['SG_END_RATIO']   = 0.35
+    # Circle loss knobs
+    params['CIRCLE_m']     = trial.suggest_float('CIRCLE_m',     0.20, 0.45)
+    params['CIRCLE_gamma'] = trial.suggest_float('CIRCLE_gamma',  8.0, 64.0, log=True)
+
+    # Circle loss global weight (keep your old name for continuity if you want)
+    params['LOSS_TupMPN']  = trial.suggest_float("LOSS_TupMPN", 10.0, 300.0, log=True)
+    params['LOSS_Circle']  = params['LOSS_TupMPN']  # alias, circle-only study    
+    params['LOSS_NEGATIVES'] = trial.suggest_float("LOSS_NEGATIVES", 20.0, 30.0, log=True)
+    params['LOSS_TV'] = trial.suggest_float("LOSS_TV", 1e-3, 8e-1, log=True)
     
     ax = 25#trial.suggest_int('AX', 25, 85, step=20)
     gx = 200#350#trial.suggest_int('GX', 150, 400, step=100)
@@ -189,7 +199,7 @@ def objective_triplet(trial):
 
     # act_lib = ['ELU', 'GELU'] # 'RELU',
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    par_act = 'ELU'
+    par_act = 'GELU'
 
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'AdamWA'
@@ -221,6 +231,7 @@ def objective_triplet(trial):
     params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
     if params['USE_Aug']:
         params['TYPE_ARCH'] += 'Aug'
+    # params['TYPE_ARCH'] += 'Aug'
 
 
     params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
@@ -312,7 +323,7 @@ def objective_triplet(trial):
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     # Early stopping with tunable patience
     model.summary()
-
+    # pdb.set_trace()
     callbacks = [
         cb.TensorBoard(log_dir=f"{study_dir}/", write_graph=True, write_images=True, update_freq='epoch'),
 
@@ -322,7 +333,7 @@ def objective_triplet(trial):
 
         # Save best by F1 (max)
         cb.ModelCheckpoint(f"{study_dir}/mcc.weights.h5", monitor="val_sample_max_mcc",
-                        mode="max", save_best_only=True, save_weights_only=True, verbose=1),
+                        mode="max", save_best_only=True, save_weights_only=False, verbose=1),
         
         # Save best by F1 (max)
         cb.ModelCheckpoint(f"{study_dir}/max.weights.h5", monitor='val_sample_max_f1',
@@ -774,6 +785,26 @@ elif mode == 'predict':
             params.update(trial_info['parameters'])
         # pdb.set_trace()
         params['mode'] = 'predict'
+
+        # pdb.set_trace()
+        # from tensorflow.keras.models import load_model
+        # from tcn import TCN
+        # from tensorflow.keras.regularizers import L1
+        # from model.model_fn import WarmStableCool, mixed_latent_loss, MultiScaleCausalGate
+        # from model.model_fn import SampleMaxF1, SampleMaxMCC, SamplePRAUC, LatencyScore, FPperMinMetric
+        # with tf.keras.utils.custom_object_scope({'TCN': TCN, 
+        #                                         'L1': L1,
+        #                                         'WarmStableCool': WarmStableCool,
+        #                                         'loss_fn': 'mse',
+        #                                         'SampleMaxF1': SampleMaxF1,
+        #                                         'SampleMaxMCC': SampleMaxMCC, 
+        #                                         'SamplePRAUC': SamplePRAUC,
+        #                                         'LatencyScore': LatencyScore,
+        #                                         'FPperMinMetric': FPperMinMetric,
+        #                                         'MultiScaleCausalGate': MultiScaleCausalGate
+        #                                         }):
+        #     trained_model = load_model('/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/params_tripletOnlyRemake2500/study_911_20251013_024414/mcc.weights.h5')
+        # pdb.set_trace()
         # Import required modules
         if 'MixerOnly' in params['TYPE_ARCH']:
             from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
@@ -805,14 +836,16 @@ elif mode == 'predict':
             build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
         elif 'TripletOnly' in params['TYPE_ARCH']:
             # pdb.set_trace()
-            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
-            # # pdb.set_trace()
-            import importlib.util
-            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
-            spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
-            model_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(model_module)
-            build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+            from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            # pdb.set_trace()
+            # import importlib.util
+            # # spec = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/study_{2211}_*')[0]
+            # # spec = importlib.util.spec_from_file_location("model_fn", f"{tmp_dir}/model/model_fn.py")
+            # spec = importlib.util.spec_f  rom_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            # spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
+            # model_module = importlib.util.module_from_spec(spec)
+            # spec.loader.exec_module(model_module)
+            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
         elif 'Patch' in params['TYPE_ARCH']:
             tf.config.run_functions_eagerly(True)
             from model.input_augment_weighted import rippleAI_load_dataset
@@ -935,7 +968,262 @@ elif mode == 'predict':
         else:
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
 
-        model.load_weights(weight_file)
+        # ================== H5 INSPECT + SMART MAPPED LOADER ==================        
+        import h5py, numpy as np, tensorflow as tf
+
+        _PREF_ORDER = ("kernel","depthwise_kernel","pointwise_kernel",
+                    "recurrent_kernel","gamma","beta","moving_mean",
+                    "moving_variance","bias")
+
+        def _ordered_pairs(group):
+            items = [(k, v) for k, v in group.items() if isinstance(v, h5py.Dataset)]
+            items.sort(key=lambda kv: (_PREF_ORDER.index(kv[0].split(":")[0])
+                                    if kv[0].split(":")[0] in _PREF_ORDER else 999, kv[0]))
+            return [(k, d[()]) for k, d in items]
+
+        def _collect_vars(h5_path):
+            """Return dict: layer_key -> list[(wname, np.array)] for every .../vars leaf."""
+            out = {}
+            with h5py.File(h5_path, "r") as f:
+                root = f.get("model_weights") or f
+                def walk(g, path=""):
+                    for name, obj in g.items():
+                        p = f"{path}/{name}" if path else name
+                        if isinstance(obj, h5py.Group):
+                            if name == "vars" or p.endswith("/vars"):
+                                parent = path  # path before /vars
+                                out[parent] = out.get(parent, []) + _ordered_pairs(obj)
+                            else:
+                                walk(obj, p)
+                walk(root)
+            return out
+
+        def _set_weights(layer, pairs):
+            if not pairs:
+                return
+            arrays = [arr for _, arr in pairs]
+            # DepthwiseConv2D dm=1 3D→4D fix
+            if isinstance(layer, tf.keras.layers.DepthwiseConv2D):
+                W = layer.get_weights()
+                if W and arrays and arrays[0].ndim == 3:
+                    want = W[0].shape  # (kh, kw, in_c, dm)
+                    if want[-1] == 1 and arrays[0].shape == want[:3]:
+                        arrays[0] = np.expand_dims(arrays[0], -1)
+            try:
+                layer.set_weights(arrays)
+            except Exception:
+                # fallback: align by base names
+                byname = {k.split(":")[0]: v for k, v in pairs}
+                W = []
+                for w in layer.weights:
+                    base = w.name.split("/")[-1].split(":")[0]
+                    W.append(byname.get(base, w.numpy()))
+                layer.set_weights(W)
+
+        def load_head_by_shape(model, h5_path, ch=32):
+            """
+            Load the head (Conv1D/Dense/LN) by matching kernel/beta/gamma shapes, independent of names/prefixes.
+            - cls_pw1:   Conv1D (1, ch, 2*ch)
+            - cls_logits:Conv1D (1, 2*ch, 1)
+            - emb_p1:    Dense  (ch, 2*ch)
+            - emb_p2:    Dense  (2*ch, ch)
+            - layer_normalization, emb_ln: two LN (gamma=beta=(ch,))
+            """
+            if not model.built:
+                raise RuntimeError("Build/call the model once before loading.")
+
+            # index model layers by name
+            name2layer = {}
+            for L in model.layers:
+                name2layer[L.name] = L
+                if hasattr(L, "layers") and L.layers:
+                    for sub in L.layers:
+                        name2layer[sub.name] = sub
+
+            # locate your target layers
+            cls_pw1   = name2layer.get("cls_pw1")
+            cls_logits= name2layer.get("cls_logits")
+            emb_p1    = name2layer.get("emb_p1")
+            emb_p2    = name2layer.get("emb_p2")
+            ln0       = name2layer.get("layer_normalization")
+            ln1       = name2layer.get("emb_ln")
+
+            src = _collect_vars(h5_path)
+
+            # helpers to test shapes of first two pairs
+            def is_conv_1_cC(pairs):  # (1, ch, 2ch) + (2ch,)
+                try:
+                    k, b = pairs[0][1].shape, pairs[1][1].shape
+                    return (len(k)==3 and k==(1, ch, 2*ch)) and (len(b)==1 and b==(2*ch,))
+                except Exception:
+                    return False
+
+            def is_conv_1_C1(pairs):  # (1, 2ch, 1) + (1,)
+                try:
+                    k, b = pairs[0][1].shape, pairs[1][1].shape
+                    return (len(k)==3 and k==(1, 2*ch, 1)) and (len(b)==1 and b==(1,))
+                except Exception:
+                    return False
+
+            def is_dense_cC(pairs):   # (ch, 2ch) + (2ch,)
+                try:
+                    k, b = pairs[0][1].shape, pairs[1][1].shape
+                    return (len(k)==2 and k==(ch, 2*ch)) and (len(b)==1 and b==(2*ch,))
+                except Exception:
+                    return False
+
+            def is_dense_Cc(pairs):   # (2ch, ch) + (ch,)
+                try:
+                    k, b = pairs[0][1].shape, pairs[1][1].shape
+                    return (len(k)==2 and k==(2*ch, ch)) and (len(b)==1 and b==(ch,))
+                except Exception:
+                    return False
+
+            def is_ln_c(pairs):       # gamma (ch,), beta (ch,)
+                try:
+                    g, bt = pairs[0][1].shape, pairs[1][1].shape
+                    return (len(g)==1 and g==(ch,)) and (len(bt)==1 and bt==(ch,))
+                except Exception:
+                    return False
+
+            conv_cC_key = conv_C1_key = dense_cC_key = dense_Cc_key = None
+            ln_keys = []
+
+            # scan all leaves
+            for key, pairs in src.items():
+                if len(pairs) < 2: 
+                    continue
+                if is_conv_1_cC(pairs) and conv_cC_key is None:
+                    conv_cC_key = key
+                elif is_conv_1_C1(pairs) and conv_C1_key is None:
+                    conv_C1_key = key
+                elif is_dense_cC(pairs) and dense_cC_key is None:
+                    dense_cC_key = key
+                elif is_dense_Cc(pairs) and dense_Cc_key is None:
+                    dense_Cc_key = key
+                elif is_ln_c(pairs):
+                    ln_keys.append(key)
+
+            loaded, skipped = [], []
+
+            # set Conv1D
+            if conv_cC_key and cls_pw1 is not None:
+                _set_weights(cls_pw1, src[conv_cC_key]); loaded.append(f"{conv_cC_key} -> cls_pw1")
+            else:
+                skipped.append(("cls_pw1", f"not found (expect kernel (1,{ch},{2*ch}))"))
+
+            if conv_C1_key and cls_logits is not None:
+                _set_weights(cls_logits, src[conv_C1_key]); loaded.append(f"{conv_C1_key} -> cls_logits")
+            else:
+                skipped.append(("cls_logits", f"not found (expect kernel (1,{2*ch},1))"))
+
+            # set Dense
+            if dense_cC_key and emb_p1 is not None:
+                _set_weights(emb_p1, src[dense_cC_key]); loaded.append(f"{dense_cC_key} -> emb_p1")
+            else:
+                skipped.append(("emb_p1", f"not found (expect kernel ({ch},{2*ch}))"))
+
+            if dense_Cc_key and emb_p2 is not None:
+                _set_weights(emb_p2, src[dense_Cc_key]); loaded.append(f"{dense_Cc_key} -> emb_p2")
+            else:
+                skipped.append(("emb_p2", f"not found (expect kernel ({2*ch},{ch}))"))
+
+            # set LayerNorms (take two distinct LN keys, consistent order)
+            ln_keys = sorted(set(ln_keys))
+            if ln0 is not None:
+                if len(ln_keys) >= 1:
+                    _set_weights(ln0, src[ln_keys[0]]); loaded.append(f"{ln_keys[0]} -> layer_normalization")
+                else:
+                    skipped.append(("layer_normalization", "no LN (gamma/beta) found"))
+            if ln1 is not None:
+                if len(ln_keys) >= 2:
+                    _set_weights(ln1, src[ln_keys[1]]); loaded.append(f"{ln_keys[1]} -> emb_ln")
+                elif len(ln_keys) == 1:
+                    # if only one LN set exists, copy it to emb_ln as a fallback
+                    _set_weights(ln1, src[ln_keys[0]]); loaded.append(f"{ln_keys[0]} -> emb_ln (copied)")
+                else:
+                    # init defaults
+                    gamma = np.ones((ch,), np.float32); beta = np.zeros((ch,), np.float32)
+                    try: ln1.set_weights([gamma, beta]); loaded.append("emb_ln <- defaults (gamma=1,beta=0)")
+                    except Exception as e: skipped.append(("emb_ln", f"default init failed: {e}"))
+
+            print("[loaded]", len(loaded));  [print("  ", x) for x in loaded]
+            if skipped:
+                print("[skipped]", len(skipped)); [print("  ", k, ":", why) for (k, why) in skipped]
+
+        # --- usage ---
+        # make sure model is built; your summary shows C=8, ch=32, so:
+        # pdb.set_trace()
+        # _ = model(tf.zeros((1, 10, 8)))
+        # load_head_by_shape(model, weight_file, ch=32)
+        # pdb.set_trace()
+
+        try:
+            
+            # pdb.set_trace()
+            model.load_weights(weight_file)
+            # pdb.set_trace()
+            # def patch_depthwise_kernels(model, h5_path):
+            #     with h5py.File(h5_path, "r") as f:
+            #         root = f.get("model_weights") or f
+            #         name2layer = {l.name: l for l in model.layers}
+            #         for lname, layer in name2layer.items():
+            #             if not isinstance(layer, tf.keras.layers.DepthwiseConv2D):
+            #                 continue
+            #             if lname not in root:
+            #                 continue
+            #             grp = root[lname]
+            #             # find dataset
+            #             ds_name = None
+            #             for k in grp.keys():
+            #                 if "depthwise_kernel" in k:
+            #                     ds_name = k; break
+            #             if ds_name is None:
+            #                 continue
+
+            #             saved = grp[ds_name][()]  # numpy array from file
+            #             W = layer.get_weights()
+            #             if not W:
+            #                 continue
+            #             want = W[0].shape  # (kh, kw, in_c, dm)
+
+            #             # If file is 3D and model expects 4D with dm==1, expand last axis
+            #             if saved.ndim == 3 and want[-1] == 1 and saved.shape == want[:3]:
+            #                 saved = np.expand_dims(saved, -1)
+            #                 W[0] = saved
+            #                 # try to copy bias if present
+            #                 if len(W) == 2:
+            #                     bkey = "bias:0" if "bias:0" in grp else ("bias" if "bias" in grp else None)
+            #                     if bkey is not None:
+            #                         W[1] = grp[bkey][()]
+            #                 layer.set_weights(W)
+
+            # # Use it after the initial load
+            # patch_depthwise_kernels(model, weight_file)            
+            # pdb.set_trace()
+        except:
+            try:
+                _ = model(tf.zeros((1, 10, 8)))
+                load_head_by_shape(model, weight_file, ch=32)
+            except:
+                from tcn import TCN
+                from tensorflow.keras.regularizers import L1
+                from model.model_fn import WarmStableCool, mixed_latent_loss, MultiScaleCausalGate
+                from model.model_fn import SampleMaxF1, SampleMaxMCC, SamplePRAUC, LatencyScore, FPperMinMetric
+                with tf.keras.utils.custom_object_scope({'TCN': TCN, 
+                                                        'L1': L1,
+                                                        'WarmStableCool': WarmStableCool,
+                                                        'loss_fn': 'mse',
+                                                        'SampleMaxF1': SampleMaxF1,
+                                                        'SampleMaxMCC': SampleMaxMCC, 
+                                                        'SamplePRAUC': SamplePRAUC,
+                                                        'LatencyScore': LatencyScore,
+                                                        'FPperMinMetric': FPperMinMetric,
+                                                        'MultiScaleCausalGate': MultiScaleCausalGate
+                                                        }):
+                    trained_model = load_model(weight_file, compile=False)
+                    trained_model.save_weights(weight_file[:-2]+'weightsOnly.h5')
+                    model.load_weights(weight_file[:-2]+'weightsOnly.h5')
     elif model_name == 'RippleNet':
         import sys, pickle, keras, h5py
         # load info on best model (path, threhsold settings)
@@ -1035,7 +1323,7 @@ elif mode == 'predict':
 
     # inference parameters
     squence_stride = 1
-    # params['BATCH_SIZE'] =1# 512*4*3
+    # params['BATCH_SIZE'] = 512*4*3
     params['NO_TIMEPOINTS'] = 44
     params["BATCH_SIZE"] = 1024*4
     # pdb.set_trace()
@@ -1140,7 +1428,7 @@ elif mode == 'predict':
         elif flag_numpy:
             print('Using numpy')
             sample_length = params['NO_TIMEPOINTS']
-            squence_stride = 10
+            squence_stride = 1
             # pdb.set_trace()
         train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=squence_stride, batch_size=params["BATCH_SIZE"])
         windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
@@ -1829,12 +2117,12 @@ elif mode=='export':
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
         elif 'TripletOnly' in params['TYPE_ARCH']:
-            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
-            model_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(model_module)
-            build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+            from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            # import importlib.util
+            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            # model_module = importlib.util.module_from_spec(spec)
+            # spec.loader.exec_module(model_module)
+            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
         elif 'CADOnly' in params['TYPE_ARCH']:
             pretrain_tag = 'params_mixerOnlyEvents2500'
             pretrain_num = 1414#958
@@ -2391,6 +2679,9 @@ elif mode == 'tune_server':
 
     if not os.path.exists(f'studies/{param_dir}'):
         os.makedirs(f'studies/{param_dir}')
+    else:
+        print(f"Directory studies/{param_dir} already exists. Using existing directory.")
+        pdb.set_trace()
 
     # Copy base model code to study directory for reproducibility
     model_dir = f"studies/{param_dir}/base_model"

@@ -2,11 +2,10 @@ import tensorflow as tf
 from tensorflow.keras.layers import Conv1D, Conv2D, ELU, Input, LSTM, Dense, Dropout, Layer, MultiHeadAttention, LayerNormalization, Normalization, SeparableConv1D
 from tensorflow.keras.layers import BatchNormalization, Activation, Flatten, Concatenate, Lambda, RepeatVector, Multiply
 from tensorflow.keras.layers import (Input, Lambda, Concatenate, Multiply, Activation,
-    Conv1D, Dense, Add, LayerNormalization, DepthwiseConv1D)
+    Conv1D, Dense, Add, LayerNormalization, DepthwiseConv1D, DepthwiseConv2D, ZeroPadding2D)
 from tensorflow.keras.layers import MultiHeadAttention
 from tensorflow.keras.initializers import GlorotUniform, Orthogonal, Constant
 from tensorflow_addons.layers import WeightNormalization
-# from tensorflow_addons.activations import gelu
 from tensorflow.keras.regularizers import l1, l2
 from tensorflow.keras import backend as K
 from tensorflow.keras import layers
@@ -16,9 +15,9 @@ from model.patchAD.patch_ad import PatchAD
 from tensorflow.keras.layers import Layer, Input, Flatten, Dense, Dropout, RepeatVector, Concatenate
 from tensorflow.keras.models import Model
 from tensorflow.keras.activations import gelu 
-# from tensorflow_addons.losses import SigmoidFocalCrossEntropy
 import pdb, math
-# pdb.set_trace()
+
+
 def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
 
     # logit oer sigmoid
@@ -740,95 +739,121 @@ class WarmStableCool(tf.keras.optimizers.schedules.LearningRateSchedule):
             "final_scale": float(self.final_scale.numpy())
         }
 
-
-
 class MultiScaleCausalGate(Layer):
     """
-    Multi-scale, channel-agnostic, causal layer without SeparableConv1D.
-
-    For each (k, d) scale:
-      depthwise: Conv1D(filters=C, kernel_size=k, dilation=d, groups=C, padding='causal')
-      pointwise: Conv1D(filters=C, kernel_size=1, groups=groups, activation=mix_activation)
-
-    Then:
-      ms = concat([per-scale features and simple contrasts])
-      h  = 1x1 mix to C (groups=groups)
-      gate = sigmoid(1x1 logits)  →  y = x * gate
-      optional residual GLU: y += tanh(alpha) * GLU(ms)
+    Multi-scale, channel-agnostic, causal gating without grouped Conv1D.
+    Depthwise path uses DepthwiseConv2D on [B,T,1,C] with explicit left (causal) padding.
+    Pointwise/mix/gate/GLU are 1x1 Conv1D (no groups → ONNX-friendly).
+    Accepts `groups` for API compatibility, but ignores it internally.
     """
     def __init__(self,
                  scales=((7,1),(7,2),(11,4)),
-                 groups=1,
+                 groups=1,                 # <- accepted for compatibility
                  gate_bias=-2.5,
                  l1_gate=0.0,
                  use_residual_mix=True,
                  mix_activation='gelu',
                  name="ms_causal_gate",
                  **kw):
+        # IMPORTANT: do NOT forward unknown kwargs like `groups` to super().__init__
         super().__init__(name=name, **kw)
         self.scales = list(scales)
-        self.groups = int(groups)
+        self.groups = int(groups)          # stored but not used (keeps call sites working)
         self.gate_bias = float(gate_bias)
         self.l1_gate = float(l1_gate)
         self.use_residual_mix = bool(use_residual_mix)
         self.mix_activation = mix_activation
 
-        self._dw_blocks, self._pw_blocks = [], []
-        self._mix_pw = None
+        # will be built in build()
+        self._dw_blocks = []   # list of (pad2d, depthwise2d)
+        self._pw_blocks = []   # per-scale pointwise Conv1D
+        self._mix_pw    = None # cross-scale 1x1 Conv1D
         self._gate_logits = None
-        self._res_scale = None
-        self._res_glu = None
+        self._res_scale  = None
+        self._res_glu    = None
+
+    def _causal_depthwise_1d(self, x, pad2d, dw2d):
+        """
+        x: [B,T,C] -> pad causally on time, view as [B,T,1,C],
+        depthwise conv2d with kernel=(k,1), dilation=(d,1), then squeeze back.
+        """
+        x2 = tf.expand_dims(x, axis=2)              # [B,T,1,C]
+        x2 = pad2d(x2)                               # ZeroPadding2D((pad_left,0),(0,0))
+        y2 = dw2d(x2)                                # [B,T,1,C]
+        return tf.squeeze(y2, axis=2)                # [B,T,C]
 
     def build(self, input_shape):
-        assert len(input_shape) == 3, "expect [B,T,C]"
+        assert len(input_shape) == 3, "Expected [B, T, C]"
         C = int(input_shape[-1])
 
-        # Per-scale: depthwise (groups=C) + pointwise 1x1 (groups=self.groups)
+        # Per-scale: causal pad + depthwise2D + pointwise1D
         for (k, d) in self.scales:
-            # depthwise (no cuDNN dependency)
-            self._dw_blocks.append(
-                Conv1D(filters=C, kernel_size=k, dilation_rate=d,
-                       padding="causal", use_bias=False,
-                       kernel_initializer="he_normal",
-                       groups=C,
-                       name=f"{self.name}_dw_k{k}_d{d}")
+            k = int(k); d = int(d)
+            pad_left = d * (k - 1)
+            pad2d = ZeroPadding2D(
+                padding=((pad_left, 0), (0, 0)),
+                name=f"{self.name}_pad_k{k}_d{d}"
             )
-            # pointwise/mixing per scale
-            self._pw_blocks.append(
-                Conv1D(filters=C, kernel_size=1, activation=self.mix_activation,
-                       kernel_initializer="glorot_uniform", groups=self.groups,
-                       name=f"{self.name}_pw_k{k}_d{d}")
+            dw2d = DepthwiseConv2D(
+                kernel_size=(k, 1),
+                dilation_rate=(d, 1),
+                padding="valid",              # causal via explicit left pad
+                depth_multiplier=1,
+                use_bias=False,
+                kernel_initializer="he_normal",
+                name=f"{self.name}_dw2d_k{k}_d{d}"
             )
+            self._dw_blocks.append((pad2d, dw2d))
 
-        # Cross-scale mix back to C
-        self._mix_pw = Conv1D(filters=C, kernel_size=1, activation=self.mix_activation,
-                              kernel_initializer="glorot_uniform", groups=self.groups,
-                              name=f"{self.name}_mix_pw")
+            pw1d = Conv1D(
+                filters=C,
+                kernel_size=1,
+                activation=self.mix_activation,
+                kernel_initializer="glorot_uniform",
+                name=f"{self.name}_pw1d_k{k}_d{d}"
+            )
+            self._pw_blocks.append(pw1d)
 
-        # Gate logits per channel
+        # Cross-scale mix back to C (1x1 Conv1D)
+        self._mix_pw = Conv1D(
+            filters=C, kernel_size=1,
+            activation=self.mix_activation,
+            kernel_initializer="glorot_uniform",
+            name=f"{self.name}_mix_pw"
+        )
+
+        # Gate logits per channel (1x1 Conv1D)
         reg = l1(self.l1_gate) if self.l1_gate > 0 else None
-        self._gate_logits = Conv1D(filters=C, kernel_size=1, activation=None,
-                                   kernel_initializer="glorot_uniform",
-                                   bias_initializer=Constant(self.gate_bias),
-                                   kernel_regularizer=reg, groups=self.groups,
-                                   name=f"{self.name}_gate_logits")
+        self._gate_logits = Conv1D(
+            filters=C, kernel_size=1, activation=None,
+            kernel_initializer="glorot_uniform",
+            bias_initializer=Constant(self.gate_bias),
+            kernel_regularizer=reg,
+            name=f"{self.name}_gate_logits"
+        )
 
         # Optional residual GLU (+ learnable scaler starting at 0)
         if self.use_residual_mix:
-            self._res_scale = self.add_weight(name=f"{self.name}_res_scale",
-                                              shape=(), initializer=Constant(0.0),
-                                              trainable=True)
-            self._res_glu = Conv1D(filters=2*C, kernel_size=1, activation=None,
-                                   kernel_initializer="glorot_uniform",
-                                   groups=self.groups, name=f"{self.name}_res_glu")
+            self._res_scale = self.add_weight(
+                name=f"{self.name}_res_scale",
+                shape=(),
+                initializer=Constant(0.0),
+                trainable=True
+            )
+            self._res_glu = Conv1D(
+                filters=2*C, kernel_size=1, activation=None,
+                kernel_initializer="glorot_uniform",
+                name=f"{self.name}_res_glu"
+            )
 
         super().build(input_shape)
 
     def call(self, x):
         # Per-scale features
         feats = []
-        for dw, pw in zip(self._dw_blocks, self._pw_blocks):
-            z = pw(dw(x))                            # [B,T,C]
+        for (pad2d, dw2d), pw1d in zip(self._dw_blocks, self._pw_blocks):
+            z = self._causal_depthwise_1d(x, pad2d, dw2d)  # [B,T,C]
+            z = pw1d(z)                                    # [B,T,C]
             feats.append(z)
 
         # Lightweight contrasts/ratios to aid SNR-like behavior
@@ -837,27 +862,32 @@ class MultiScaleCausalGate(Layer):
             s, m, l = feats[0], feats[1], feats[2]
             concat_list += [s - m, m - l, s - l, s / (tf.abs(l) + 1e-3)]
 
-        ms = Concatenate(axis=-1)(concat_list)       # [B,T, C * (#terms)]
+        ms = tf.concat(concat_list, axis=-1)               # [B,T, C*(#terms)]
 
-        h = self._mix_pw(ms)                         # [B,T,C]
-        gate = tf.nn.sigmoid(self._gate_logits(h))   # [B,T,C]
-        y = x * gate
+        h    = self._mix_pw(ms)                            # [B,T,C]
+        gate = tf.nn.sigmoid(self._gate_logits(h))         # [B,T,C]
+        y    = x * gate
 
         if self.use_residual_mix:
-            ab = self._res_glu(ms)                   # [B,T,2C]
+            ab  = self._res_glu(ms)                        # [B,T,2C]
             a, b = tf.split(ab, 2, axis=-1)
-            glu = a * tf.nn.sigmoid(b)               # [B,T,C]
-            y = y + tf.tanh(self._res_scale) * glu
+            glu = a * tf.nn.sigmoid(b)                     # [B,T,C]
+            y   = y + tf.tanh(self._res_scale) * glu
 
         return y
 
     def get_config(self):
         cfg = super().get_config()
-        cfg.update(dict(scales=self.scales, groups=self.groups, gate_bias=self.gate_bias,
-                        l1_gate=self.l1_gate, use_residual_mix=self.use_residual_mix,
-                        mix_activation=self.mix_activation, name=self.name))
+        cfg.update(dict(
+            scales=self.scales,
+            groups=self.groups,               # preserved in config for symmetry
+            gate_bias=self.gate_bias,
+            l1_gate=self.l1_gate,
+            use_residual_mix=self.use_residual_mix,
+            mix_activation=self.mix_activation,
+            name=self.name
+        ))
         return cfg
-
     
 def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
     # logit or sigmoid
@@ -1062,6 +1092,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
                     name="cls_pw1")(h)
         h = Activation('gelu')(h)
         cls_in = Dropout(0.1)(h)
+        # cls_in = h
         cls_logits = Conv1D(1, 1,
                         kernel_initializer='glorot_uniform',
                         kernel_regularizer=tf.keras.regularizers.L1(1e-4),
@@ -1085,7 +1116,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         tcn_mod._cls_logit_index  = 0   # channel of logits
         tcn_mod._cls_prob_index   = 1   # channel of probabilities
         tcn_mod._emb_start_index  = 2   # start of embedding slice
-        tcn_mod.trainable = True
+        # tcn_mod.trainable = True
         tcn_mod._is_classification_only = True
 
         return tcn_mod
@@ -1144,9 +1175,9 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             SamplePRAUC(model=model),                  # timepoint PR-AUC
             SampleMaxMCC(model=model),                 # timepoint max MCC
             SampleMaxF1(model=model),                  # timepoint max F1
-            LatencyScore(thresholds=tf.linspace(0.01, 0.99, 21), min_run = 5, tau=16.0, model=model),    
+            LatencyScore(thresholds=tf.linspace(0.5, 0.99, 6), min_run = 5, tau=16.0, model=model),    
             FPperMinMetric(
-                thresh=0.5,
+                thresh=0.3,
                 win_sec=params['NO_STRIDES']/params['SRATE'],  # <- stride/fs (NOT window)
                 mode="consec", consec_k=3,
                 model=model
@@ -2648,150 +2679,312 @@ def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None
         return total_loss
     return loss_fn
 
-def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
-    # ----- helpers -----
-    def _mean_pool(x): return tf.reduce_mean(x, axis=1)
+# def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+#     # ----- helpers -----
+#     def _mean_pool(x): return tf.reduce_mean(x, axis=1)
 
-    # cosine ramp in [0,1]
-    def _ramp(step, delay, dur):
-        step  = tf.cast(step, tf.float32)
+#     # cosine ramp in [0,1]
+#     def _ramp(step, delay, dur):
+#         step  = tf.cast(step, tf.float32)
+#         delay = tf.cast(delay, tf.float32)
+#         dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+#         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
+#         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)  # 0→1
+
+#     def tv_on_logits(z):  # z: [B,T]
+#         return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
+
+#     # ----- metric losses (unchanged math) -----
+#     def mpn_tuple_loss(z_a_raw, z_p_raw, z_n_raw, *, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1, exclude_self=True):
+#         z_a = tf.reduce_mean(tf.cast(z_a_raw, tf.float32), axis=1)
+#         z_p = tf.reduce_mean(tf.cast(z_p_raw, tf.float32), axis=1)
+#         z_n = tf.reduce_mean(tf.cast(z_n_raw, tf.float32), axis=1)
+#         B   = tf.shape(z_a)[0]
+
+#         # pull
+#         d_pair = tf.reduce_sum(tf.square(z_a - z_p), axis=1) + 1e-8
+#         L_pull = lambda_pull * d_pair
+
+#         def _mask_self(mat):
+#             if exclude_self:
+#                 mask = tf.eye(B, dtype=tf.bool)
+#                 return tf.where(mask, tf.fill(tf.shape(mat), tf.constant(1e9, tf.float32)), mat)
+#             return mat
+
+#         d_ap = tf.reduce_sum(tf.square(z_a[:,None,:] - z_p[None,:,:]), axis=2) + 1e-8
+#         d_ap = _mask_self(d_ap)
+#         L_weak = tf.reduce_mean(tf.nn.relu(margin_weak + d_pair[:,None] - d_ap))
+#         d_an = tf.reduce_sum(tf.square(z_a[:,None,:] - z_n[None,:,:]), axis=2) + 1e-8
+#         d_an = _mask_self(d_an)
+#         lifted = tf.reduce_logsumexp(margin_hard - d_an, axis=1)
+#         L_hard = tf.nn.relu(d_pair + lifted)
+
+#         return tf.reduce_mean(L_pull + L_weak + L_hard)
+
+#     def supcon_ripple(z_a_raw, z_p_raw, z_n_raw, *, temperature=0.1):
+#         z_a = _mean_pool(z_a_raw); z_p = _mean_pool(z_p_raw); z_n = _mean_pool(z_n_raw)
+#         z_all = tf.math.l2_normalize(tf.concat([z_a, z_p, z_n], axis=0), axis=1)
+#         M = tf.shape(z_all)[0]
+#         sim = tf.matmul(z_all, z_all, transpose_b=True) / temperature
+
+#         B = tf.shape(z_a)[0]
+#         labels = tf.concat([tf.ones(2*B, tf.int32), tf.zeros(B, tf.int32)], axis=0)
+#         pos = tf.cast(tf.equal(labels[:,None], labels[None,:]), tf.float32) - tf.eye(M, dtype=tf.float32)
+
+#         logits = sim - 1e9 * tf.eye(M)
+#         log_prob = logits - tf.reduce_logsumexp(logits, axis=1, keepdims=True)
+
+#         pos_cnt = tf.reduce_sum(pos, axis=1)
+#         loss_vec = -tf.reduce_sum(pos * log_prob, axis=1) / (pos_cnt + 1e-8)
+#         return tf.reduce_mean(loss_vec)
+
+#     @tf.function
+#     def loss_fn(y_true, y_pred):
+#         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
+#         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+
+#         logit_idx = getattr(model, '_cls_logit_index', 0)
+#         prob_idx  = getattr(model, '_cls_prob_index',  1)
+#         emb_start = getattr(model, '_emb_start_index', 2)
+
+#         a_logit = a_out[..., logit_idx];  p_logit = p_out[..., logit_idx];  n_logit = n_out[..., logit_idx]
+#         a_prob  = a_out[..., prob_idx];   p_prob  = p_out[..., prob_idx];   n_prob  = n_out[..., prob_idx]
+#         a_emb   = a_out[..., emb_start:]; p_emb   = p_out[..., emb_start:]; n_emb   = n_out[..., emb_start:]
+
+#         a_lab = tf.cast(a_true[..., 0], tf.float32)
+#         p_lab = tf.cast(p_true[..., 0], tf.float32)
+#         n_lab = tf.cast(n_true[..., 0], tf.float32)
+
+#         # --------- ramps (READ-ONLY) ----------
+#         it = tf.cast(model.optimizer.iterations, tf.float32)
+
+#         total_steps = 100*1000
+#         # Metric ramps
+#         ramp_delay = tf.cast(params.get('RAMP_DELAY', int(0.01*total_steps)), tf.float32)
+#         ramp_steps = tf.cast(params.get('RAMP_STEPS', int(0.25*total_steps)), tf.float32)
+
+#         w_sup_tgt = tf.cast(params.get('LOSS_SupCon', 1.0), tf.float32)
+#         w_mpn_tgt = tf.cast(params.get('LOSS_TupMPN', 1.0), tf.float32)
+#         w_neg_tgt = tf.cast(params.get('LOSS_NEGATIVES', 2.0), tf.float32)
+        
+#         r = _ramp(it, ramp_delay, ramp_steps)  # 0→1 after delay
+#         w_supcon = r * w_sup_tgt
+#         w_tupMPN = r * w_mpn_tgt
+
+#         # Negatives ramp (MIN → target)
+#         # Negatives ramp: gentle 25–40% of run
+#         neg_min = params.setdefault('LOSS_NEGATIVES_MIN', 4.0)  # softer start to reduce FP early
+#         neg_delay = params.setdefault('NEG_RAMP_DELAY', int(0.05* total_steps))
+#         neg_steps = params.setdefault('NEG_RAMP_STEPS', int(0.45 * total_steps))
+#         neg_steps = tf.cast(neg_steps if neg_steps is not None else params.get('RAMP_STEPS', 1), tf.float32)
+#         neg_steps = tf.maximum(neg_steps, 1.0)
+
+#         r_neg = _ramp(it, neg_delay, neg_steps)
+#         loss_fp_weight = neg_min + r_neg * tf.maximum(0.0, w_neg_tgt - neg_min)
+
+#         # --------- metric learning ----------
+#         L_mpn_raw = mpn_tuple_loss(a_emb, p_emb, n_emb, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1)
+#         L_sup_raw = supcon_ripple(a_emb, p_emb, n_emb, temperature=0.1)
+#         metric_loss = w_tupMPN * L_mpn_raw + w_supcon * L_sup_raw
+
+#         # --------- BCE on logits ----------
+#         def bce_logits(y, z):
+#             return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
+
+#         cls_a = bce_logits(a_lab, a_logit)
+#         cls_p = bce_logits(p_lab, p_logit)
+#         cls_n = bce_logits(n_lab, n_logit)
+
+#         alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
+#         classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
+
+#         # --------- logit-TV smoothing ----------
+#         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
+#         print(f"TV weight: {lam_tv}")
+#         tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
+#         classification_loss = classification_loss + lam_tv * tv_term
+
+#         # --------- re-scaling (ratio trick) ----------
+#         ratio = tf.stop_gradient(
+#             (tf.reduce_mean(L_mpn_raw + L_sup_raw)) /
+#             (tf.reduce_mean(classification_loss) + 1e-6)
+#         )
+#         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
+
+#         total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
+
+#         # Optional entropy term
+#         if ('Entropy' in params.get('TYPE_LOSS','')) and ('HYPER_ENTROPY' in params):
+#             eps = tf.constant(1e-8, tf.float32)
+#             ent_w = tf.cast(params['HYPER_ENTROPY'], tf.float32)
+#             y_prob_all = tf.concat([a_prob, p_prob, n_prob], axis=0)
+#             y_true_all = tf.concat([a_lab,  p_lab,  n_lab],  axis=0)
+#             entropy = -y_prob_all*tf.math.log(y_prob_all+eps) -(1. - y_prob_all)*tf.math.log(1.-y_prob_all+eps)
+#             conf = tf.abs(y_true_all - y_prob_all) + 0.1
+#             total += ent_w * tf.reduce_mean(entropy * conf)
+#         return total
+#     return loss_fn
+
+def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+    import math
+    import tensorflow as tf
+
+    # ---------- helpers ----------
+    def _mean_pool_bt(x):               # [B,T,D] -> [B,D]
+        return tf.reduce_mean(tf.cast(x, tf.float32), axis=1)
+
+    def _ramp(step, delay, dur):        # cosine 0→1
+        step  = tf.cast(step,  tf.float32)
         delay = tf.cast(delay, tf.float32)
         dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
-        return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)  # 0→1
+        return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
 
-    def tv_on_logits(z):  # z: [B,T]
-        return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
+    def tv_on_logits(z_bt):             # z: [B,T]
+        return tf.reduce_mean(tf.abs(z_bt[:, 1:] - z_bt[:, :-1]))
 
-    # ----- metric losses (unchanged math) -----
-    def mpn_tuple_loss(z_a_raw, z_p_raw, z_n_raw, *, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1, exclude_self=True):
-        z_a = tf.reduce_mean(tf.cast(z_a_raw, tf.float32), axis=1)
-        z_p = tf.reduce_mean(tf.cast(z_p_raw, tf.float32), axis=1)
-        z_n = tf.reduce_mean(tf.cast(z_n_raw, tf.float32), axis=1)
-        B   = tf.shape(z_a)[0]
+    # --- post-onset mask for A/P (fixes dtype mismatch robustly) ---
+    def post_onset_mask(y_bt):
+        """
+        y_bt: [B,T] float in {0,1}
+        returns: [B,T] float mask in {0,1}
+        - For windows with any positive (>=0.5): mask=1 from onset onward, else 0 before.
+        - For windows with no positive: return all ones (do NOT drop them).
+        """
+        yb = y_bt >= 0.5                        # bool [B,T]
+        # First positive index and has-event flag
+        idx = tf.argmax(tf.cast(yb, tf.int32), axis=1, output_type=tf.int32)   # [B] int32
+        has = tf.reduce_any(yb, axis=1)                                        # [B] bool
 
-        # pull
-        d_pair = tf.reduce_sum(tf.square(z_a - z_p), axis=1) + 1e-8
-        L_pull = lambda_pull * d_pair
+        B = tf.shape(y_bt)[0]
+        T = tf.shape(y_bt)[1]
+        rng = tf.range(T, dtype=tf.int32)[None, :]                              # [1,T] int32
+        mpos = tf.cast(rng >= idx[:, None], tf.float32)                         # [B,T] 1 from onset onward
 
-        def _mask_self(mat):
-            if exclude_self:
-                mask = tf.eye(B, dtype=tf.bool)
-                return tf.where(mask, tf.fill(tf.shape(mat), tf.constant(1e9, tf.float32)), mat)
-            return mat
+        # no-onset windows -> keep whole window (all ones)
+        return tf.where(has[:, None], mpos, tf.ones((B, T), tf.float32))
 
-        d_ap = tf.reduce_sum(tf.square(z_a[:,None,:] - z_p[None,:,:]), axis=2) + 1e-8
-        d_ap = _mask_self(d_ap)
-        L_weak = tf.reduce_mean(tf.nn.relu(margin_weak + d_pair[:,None] - d_ap))
-        d_an = tf.reduce_sum(tf.square(z_a[:,None,:] - z_n[None,:,:]), axis=2) + 1e-8
-        d_an = _mask_self(d_an)
-        lifted = tf.reduce_logsumexp(margin_hard - d_an, axis=1)
-        L_hard = tf.nn.relu(d_pair + lifted)
+    # --- weighted BCE (time-masked), safe reduction ---
+    def bce_logits_weighted(y_bt, logit_bt, w_bt):
+        # per-timepoint BCE
+        bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_bt, logits=logit_bt)  # [B,T]
+        w   = tf.cast(w_bt, tf.float32)
+        num = tf.reduce_sum(bce * w)
+        den = tf.reduce_sum(w) + tf.keras.backend.epsilon()
+        return num / den
 
-        return tf.reduce_mean(L_pull + L_weak + L_hard)
+    # --- Circle loss (pooled, cosine sim, all negatives per anchor) ---
+    def circle_loss(z_a_bt, z_p_bt, z_n_bt, m=0.25, gamma=32.0):
+        """
+        z_*_bt: [B,T,D] -> pooled to [B,D]
+        Standard Circle loss (Sun et al., CVPR 2020):
+          L_a = softplus( logsumexp(gamma * alpha_n * (s_an - m)) + gamma * alpha_p * (s_ap - (1-m)) )
+          (and symmetric p-branch), averaged over batch and branches.
+        """
+        za = tf.math.l2_normalize(_mean_pool_bt(z_a_bt), axis=1)  # [B,D]
+        zp = tf.math.l2_normalize(_mean_pool_bt(z_p_bt), axis=1)  # [B,D]
+        zn = tf.math.l2_normalize(_mean_pool_bt(z_n_bt), axis=1)  # [B,D]
 
-    def supcon_ripple(z_a_raw, z_p_raw, z_n_raw, *, temperature=0.1):
-        z_a = _mean_pool(z_a_raw); z_p = _mean_pool(z_p_raw); z_n = _mean_pool(z_n_raw)
-        z_all = tf.math.l2_normalize(tf.concat([z_a, z_p, z_n], axis=0), axis=1)
-        M = tf.shape(z_all)[0]
-        sim = tf.matmul(z_all, z_all, transpose_b=True) / temperature
+        # Similarities
+        s_ap = tf.reduce_sum(za * zp, axis=1)                     # [B]
+        s_an = tf.matmul(za, zn, transpose_b=True)                # [B,B]
+        s_pn = tf.matmul(zp, zn, transpose_b=True)                # [B,B]
 
-        B = tf.shape(z_a)[0]
-        labels = tf.concat([tf.ones(2*B, tf.int32), tf.zeros(B, tf.int32)], axis=0)
-        pos = tf.cast(tf.equal(labels[:,None], labels[None,:]), tf.float32) - tf.eye(M, dtype=tf.float32)
+        # Circle weights
+        ap = tf.nn.relu(m + s_ap)                                 # [B]
+        an = tf.nn.relu(s_an + m)                                 # [B,B]
+        pn = tf.nn.relu(s_pn + m)                                 # [B,B]
+        delta_p = 1.0 - m
 
-        logits = sim - 1e9 * tf.eye(M)
-        log_prob = logits - tf.reduce_logsumexp(logits, axis=1, keepdims=True)
+        # Anchor branch
+        neg_part_a = tf.reduce_logsumexp(gamma * an * (s_an - m), axis=1)      # [B]
+        pos_part_a = gamma * ap * (s_ap - delta_p)                              # [B]
+        L_a = tf.nn.softplus(neg_part_a + pos_part_a)                           # [B]
 
-        pos_cnt = tf.reduce_sum(pos, axis=1)
-        loss_vec = -tf.reduce_sum(pos * log_prob, axis=1) / (pos_cnt + 1e-8)
-        return tf.reduce_mean(loss_vec)
+        # Positive-as-anchor branch (symmetry)
+        neg_part_p = tf.reduce_logsumexp(gamma * pn * (s_pn - m), axis=1)      # [B]
+        pos_part_p = gamma * ap * (s_ap - delta_p)                              # [B] (same s_ap)
+        L_p = tf.nn.softplus(neg_part_p + pos_part_p)
+
+        return tf.reduce_mean(0.5 * (L_a + L_p))
 
     @tf.function
     def loss_fn(y_true, y_pred):
+        # ---- split triplet on batch axis ----
         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
 
+        # ---- head indices from model ----
         logit_idx = getattr(model, '_cls_logit_index', 0)
-        prob_idx  = getattr(model, '_cls_prob_index',  1)
         emb_start = getattr(model, '_emb_start_index', 2)
 
-        a_logit = a_out[..., logit_idx];  p_logit = p_out[..., logit_idx];  n_logit = n_out[..., logit_idx]
-        a_prob  = a_out[..., prob_idx];   p_prob  = p_out[..., prob_idx];   n_prob  = n_out[..., prob_idx]
-        a_emb   = a_out[..., emb_start:]; p_emb   = p_out[..., emb_start:]; n_emb   = n_out[..., emb_start:]
+        # ---- slice logits / embeddings ----
+        a_logit = a_out[..., logit_idx]      # [B,T]
+        p_logit = p_out[..., logit_idx]      # [B,T]
+        n_logit = n_out[..., logit_idx]      # [B,T]
+        a_emb   = a_out[..., emb_start:]     # [B,T,D]
+        p_emb   = p_out[..., emb_start:]     # [B,T,D]
+        n_emb   = n_out[..., emb_start:]     # [B,T,D]
 
-        a_lab = tf.cast(a_true[..., 0], tf.float32)
-        p_lab = tf.cast(p_true[..., 0], tf.float32)
-        n_lab = tf.cast(n_true[..., 0], tf.float32)
+        # ---- labels ----
+        a_lab = tf.cast(a_true[..., 0], tf.float32)  # [B,T] (0/1)
+        p_lab = tf.cast(p_true[..., 0], tf.float32)  # [B,T]
+        n_lab = tf.cast(n_true[..., 0], tf.float32)  # [B,T] (all zeros by design)
 
-        # --------- ramps (READ-ONLY) ----------
+        # ---- ramps ----
         it = tf.cast(model.optimizer.iterations, tf.float32)
+        total_steps = float(params.get('TOTAL_STEPS', 100000))
 
-        total_steps = 100*1000
-        # Metric ramps
-        ramp_delay = tf.cast(params.get('RAMP_DELAY', int(0.01*total_steps)), tf.float32)
-        ramp_steps = tf.cast(params.get('RAMP_STEPS', int(0.25*total_steps)), tf.float32)
+        ramp_delay = float(params.get('RAMP_DELAY', 0.01 * total_steps))
+        ramp_steps = float(params.get('RAMP_STEPS', 0.25 * total_steps))
+        r = _ramp(it, ramp_delay, ramp_steps)                       # 0→1
 
-        w_sup_tgt = tf.cast(params.get('LOSS_SupCon', 1.0), tf.float32)
-        w_mpn_tgt = tf.cast(params.get('LOSS_TupMPN', 1.0), tf.float32)
-        w_neg_tgt = tf.cast(params.get('LOSS_NEGATIVES', 2.0), tf.float32)
-        
-        r = _ramp(it, ramp_delay, ramp_steps)  # 0→1 after delay
-        w_supcon = r * w_sup_tgt
-        w_tupMPN = r * w_mpn_tgt
+        # Circle weight (use LOSS_Circle if present; else fall back to your old TupMPN weight)
+        w_circle_tgt = tf.cast(params.get('LOSS_Circle',
+                                   params.get('LOSS_TupMPN', 30.0)), tf.float32)
+        w_circle = r * w_circle_tgt
 
-        # Negatives ramp (MIN → target)
-        # Negatives ramp: gentle 25–40% of run
-        neg_min = params.setdefault('LOSS_NEGATIVES_MIN', 4.0)  # softer start to reduce FP early
-        neg_delay = params.setdefault('NEG_RAMP_DELAY', int(0.05* total_steps))
-        neg_steps = params.setdefault('NEG_RAMP_STEPS', int(0.45 * total_steps))
-        neg_steps = tf.cast(neg_steps if neg_steps is not None else params.get('RAMP_STEPS', 1), tf.float32)
-        neg_steps = tf.maximum(neg_steps, 1.0)
+        # Negatives ramp (controls FP/min pressure)
+        neg_min    = float(params.get('LOSS_NEGATIVES_MIN', 4.0))
+        neg_target = float(params.get('LOSS_NEGATIVES', 20.0))
+        neg_delay  = float(params.get('NEG_RAMP_DELAY', 0.05 * total_steps))
+        neg_steps  = float(params.get('NEG_RAMP_STEPS', 0.45 * total_steps))
+        r_neg = _ramp(it, neg_delay, max(1.0, neg_steps))
+        loss_fp_weight = tf.cast(neg_min + r_neg * max(0.0, neg_target - neg_min), tf.float32)
 
-        r_neg = _ramp(it, neg_delay, neg_steps)
-        loss_fp_weight = neg_min + r_neg * tf.maximum(0.0, w_neg_tgt - neg_min)
+        # ---- Circle metric loss ----
+        m     = float(params.get('CIRCLE_m', 0.25))
+        gamma = float(params.get('CIRCLE_gamma', 32.0))
+        L_circle_raw = circle_loss(a_emb, p_emb, n_emb, m=m, gamma=gamma)
+        metric_loss  = w_circle * L_circle_raw
 
-        # --------- metric learning ----------
-        L_mpn_raw = mpn_tuple_loss(a_emb, p_emb, n_emb, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1)
-        L_sup_raw = supcon_ripple(a_emb, p_emb, n_emb, temperature=0.1)
-        metric_loss = w_tupMPN * L_mpn_raw + w_supcon * L_sup_raw
-
-        # --------- BCE on logits ----------
-        def bce_logits(y, z):
-            return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
-
-        cls_a = bce_logits(a_lab, a_logit)
-        cls_p = bce_logits(p_lab, p_logit)
-        cls_n = bce_logits(n_lab, n_logit)
+        # ---- Classification BCE with post-onset masking ----
+        a_mask = post_onset_mask(a_lab)                 # [B,T]
+        p_mask = post_onset_mask(p_lab)                 # [B,T]
+        n_mask = tf.ones_like(n_lab, tf.float32)        # keep all negatives
 
         alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
+
+        cls_a = bce_logits_weighted(a_lab, a_logit, a_mask)
+        cls_p = bce_logits_weighted(p_lab, p_logit, p_mask)
+        cls_n = bce_logits_weighted(n_lab, n_logit, n_mask)
+
         classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
 
-        # --------- logit-TV smoothing ----------
+        # ---- TV smoothing on logits ----
         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
-        print(f"TV weight: {lam_tv}")
         tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
         classification_loss = classification_loss + lam_tv * tv_term
 
-        # --------- re-scaling (ratio trick) ----------
+        # ---- magnitude balancing (same idea as before) ----
         ratio = tf.stop_gradient(
-            (tf.reduce_mean(L_mpn_raw + L_sup_raw)) /
-            (tf.reduce_mean(classification_loss) + 1e-6)
+            tf.reduce_mean(metric_loss) / (tf.reduce_mean(classification_loss) + 1e-6)
         )
         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
 
         total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
-
-        # Optional entropy term
-        if ('Entropy' in params.get('TYPE_LOSS','')) and ('HYPER_ENTROPY' in params):
-            eps = tf.constant(1e-8, tf.float32)
-            ent_w = tf.cast(params['HYPER_ENTROPY'], tf.float32)
-            y_prob_all = tf.concat([a_prob, p_prob, n_prob], axis=0)
-            y_true_all = tf.concat([a_lab,  p_lab,  n_lab],  axis=0)
-            entropy = -y_prob_all*tf.math.log(y_prob_all+eps) -(1. - y_prob_all)*tf.math.log(1.-y_prob_all+eps)
-            conf = tf.abs(y_true_all - y_prob_all) + 0.1
-            total += ent_w * tf.reduce_mean(entropy * conf)
         return total
+
     return loss_fn
 
 
