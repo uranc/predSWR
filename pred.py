@@ -26,19 +26,21 @@ import gc
 import pandas as pd
 import sys
 import glob
-import importlib
+import importlib, random
 from tensorflow.keras import callbacks as cb
-import ctypes
+import ctypes, h5py
 
 
 def objective_triplet(trial):
     ctypes.CDLL("libcuda.so.1")
     """Objective function for Optuna optimization"""
-    tf.compat.v1.reset_default_graph()
-    if tf.config.list_physical_devices('GPU'):
-        tf.keras.backend.clear_session()
+    # tf.compat.v1.reset_default_graph()
+    # if tf.config.list_physical_devices('GPU'):
+    #     tf.keras.backend.clear_session()
+    tf.keras.backend.clear_session()    
+    gc.collect()
     tf.config.run_functions_eagerly(False)
-
+    tf.random.set_seed(1337); np.random.seed(1337); random.seed(1337)
     # Start with base parameters
     params = {'BATCH_SIZE': 64, 'SHUFFLE_BUFFER_SIZE': 4096*2,
             'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 300,
@@ -762,6 +764,10 @@ elif mode == 'predict':
     import importlib
 
     if model_name.startswith('Tune'):
+        tf.keras.backend.clear_session()    
+        gc.collect()
+        tf.config.run_functions_eagerly(False)
+        tf.random.set_seed(1337); np.random.seed(1337); random.seed(1337)        
         # Extract study number from model name (e.g., 'Tune_45_' -> '45')
         study_num = model_name.split('_')[1]
         print(f"Loading tuned model from study {study_num}")
@@ -960,6 +966,7 @@ elif mode == 'predict':
             raise ValueError(f"Neither event.weights.h5 nor max.weights.h5 found in {study_dir}")
         print(f"Loading weights from: {weight_file}")
 
+        # params["WEIGHT_FILE"] = weight_file
         # load models
         if 'CADOnly' in params['TYPE_ARCH']:
             model = build_DBI_TCN(pretrained_params["NO_TIMEPOINTS"], params=params, pretrained_tcn=pretrained_tcn)
@@ -967,244 +974,27 @@ elif mode == 'predict':
             model = build_DBI_TCN(params=params) # Pass only the params dictionary
         else:
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-
-        # ================== H5 INSPECT + SMART MAPPED LOADER ==================        
-        import h5py, numpy as np, tensorflow as tf
-
-        _PREF_ORDER = ("kernel","depthwise_kernel","pointwise_kernel",
-                    "recurrent_kernel","gamma","beta","moving_mean",
-                    "moving_variance","bias")
-
-        def _ordered_pairs(group):
-            items = [(k, v) for k, v in group.items() if isinstance(v, h5py.Dataset)]
-            items.sort(key=lambda kv: (_PREF_ORDER.index(kv[0].split(":")[0])
-                                    if kv[0].split(":")[0] in _PREF_ORDER else 999, kv[0]))
-            return [(k, d[()]) for k, d in items]
-
-        def _collect_vars(h5_path):
-            """Return dict: layer_key -> list[(wname, np.array)] for every .../vars leaf."""
-            out = {}
-            with h5py.File(h5_path, "r") as f:
-                root = f.get("model_weights") or f
-                def walk(g, path=""):
-                    for name, obj in g.items():
-                        p = f"{path}/{name}" if path else name
-                        if isinstance(obj, h5py.Group):
-                            if name == "vars" or p.endswith("/vars"):
-                                parent = path  # path before /vars
-                                out[parent] = out.get(parent, []) + _ordered_pairs(obj)
-                            else:
-                                walk(obj, p)
-                walk(root)
-            return out
-
-        def _set_weights(layer, pairs):
-            if not pairs:
-                return
-            arrays = [arr for _, arr in pairs]
-            # DepthwiseConv2D dm=1 3D→4D fix
-            if isinstance(layer, tf.keras.layers.DepthwiseConv2D):
-                W = layer.get_weights()
-                if W and arrays and arrays[0].ndim == 3:
-                    want = W[0].shape  # (kh, kw, in_c, dm)
-                    if want[-1] == 1 and arrays[0].shape == want[:3]:
-                        arrays[0] = np.expand_dims(arrays[0], -1)
-            try:
-                layer.set_weights(arrays)
-            except Exception:
-                # fallback: align by base names
-                byname = {k.split(":")[0]: v for k, v in pairs}
-                W = []
-                for w in layer.weights:
-                    base = w.name.split("/")[-1].split(":")[0]
-                    W.append(byname.get(base, w.numpy()))
-                layer.set_weights(W)
-
-        def load_head_by_shape(model, h5_path, ch=32):
-            """
-            Load the head (Conv1D/Dense/LN) by matching kernel/beta/gamma shapes, independent of names/prefixes.
-            - cls_pw1:   Conv1D (1, ch, 2*ch)
-            - cls_logits:Conv1D (1, 2*ch, 1)
-            - emb_p1:    Dense  (ch, 2*ch)
-            - emb_p2:    Dense  (2*ch, ch)
-            - layer_normalization, emb_ln: two LN (gamma=beta=(ch,))
-            """
-            if not model.built:
-                raise RuntimeError("Build/call the model once before loading.")
-
-            # index model layers by name
-            name2layer = {}
-            for L in model.layers:
-                name2layer[L.name] = L
-                if hasattr(L, "layers") and L.layers:
-                    for sub in L.layers:
-                        name2layer[sub.name] = sub
-
-            # locate your target layers
-            cls_pw1   = name2layer.get("cls_pw1")
-            cls_logits= name2layer.get("cls_logits")
-            emb_p1    = name2layer.get("emb_p1")
-            emb_p2    = name2layer.get("emb_p2")
-            ln0       = name2layer.get("layer_normalization")
-            ln1       = name2layer.get("emb_ln")
-
-            src = _collect_vars(h5_path)
-
-            # helpers to test shapes of first two pairs
-            def is_conv_1_cC(pairs):  # (1, ch, 2ch) + (2ch,)
-                try:
-                    k, b = pairs[0][1].shape, pairs[1][1].shape
-                    return (len(k)==3 and k==(1, ch, 2*ch)) and (len(b)==1 and b==(2*ch,))
-                except Exception:
-                    return False
-
-            def is_conv_1_C1(pairs):  # (1, 2ch, 1) + (1,)
-                try:
-                    k, b = pairs[0][1].shape, pairs[1][1].shape
-                    return (len(k)==3 and k==(1, 2*ch, 1)) and (len(b)==1 and b==(1,))
-                except Exception:
-                    return False
-
-            def is_dense_cC(pairs):   # (ch, 2ch) + (2ch,)
-                try:
-                    k, b = pairs[0][1].shape, pairs[1][1].shape
-                    return (len(k)==2 and k==(ch, 2*ch)) and (len(b)==1 and b==(2*ch,))
-                except Exception:
-                    return False
-
-            def is_dense_Cc(pairs):   # (2ch, ch) + (ch,)
-                try:
-                    k, b = pairs[0][1].shape, pairs[1][1].shape
-                    return (len(k)==2 and k==(2*ch, ch)) and (len(b)==1 and b==(ch,))
-                except Exception:
-                    return False
-
-            def is_ln_c(pairs):       # gamma (ch,), beta (ch,)
-                try:
-                    g, bt = pairs[0][1].shape, pairs[1][1].shape
-                    return (len(g)==1 and g==(ch,)) and (len(bt)==1 and bt==(ch,))
-                except Exception:
-                    return False
-
-            conv_cC_key = conv_C1_key = dense_cC_key = dense_Cc_key = None
-            ln_keys = []
-
-            # scan all leaves
-            for key, pairs in src.items():
-                if len(pairs) < 2: 
-                    continue
-                if is_conv_1_cC(pairs) and conv_cC_key is None:
-                    conv_cC_key = key
-                elif is_conv_1_C1(pairs) and conv_C1_key is None:
-                    conv_C1_key = key
-                elif is_dense_cC(pairs) and dense_cC_key is None:
-                    dense_cC_key = key
-                elif is_dense_Cc(pairs) and dense_Cc_key is None:
-                    dense_Cc_key = key
-                elif is_ln_c(pairs):
-                    ln_keys.append(key)
-
-            loaded, skipped = [], []
-
-            # set Conv1D
-            if conv_cC_key and cls_pw1 is not None:
-                _set_weights(cls_pw1, src[conv_cC_key]); loaded.append(f"{conv_cC_key} -> cls_pw1")
-            else:
-                skipped.append(("cls_pw1", f"not found (expect kernel (1,{ch},{2*ch}))"))
-
-            if conv_C1_key and cls_logits is not None:
-                _set_weights(cls_logits, src[conv_C1_key]); loaded.append(f"{conv_C1_key} -> cls_logits")
-            else:
-                skipped.append(("cls_logits", f"not found (expect kernel (1,{2*ch},1))"))
-
-            # set Dense
-            if dense_cC_key and emb_p1 is not None:
-                _set_weights(emb_p1, src[dense_cC_key]); loaded.append(f"{dense_cC_key} -> emb_p1")
-            else:
-                skipped.append(("emb_p1", f"not found (expect kernel ({ch},{2*ch}))"))
-
-            if dense_Cc_key and emb_p2 is not None:
-                _set_weights(emb_p2, src[dense_Cc_key]); loaded.append(f"{dense_Cc_key} -> emb_p2")
-            else:
-                skipped.append(("emb_p2", f"not found (expect kernel ({2*ch},{ch}))"))
-
-            # set LayerNorms (take two distinct LN keys, consistent order)
-            ln_keys = sorted(set(ln_keys))
-            if ln0 is not None:
-                if len(ln_keys) >= 1:
-                    _set_weights(ln0, src[ln_keys[0]]); loaded.append(f"{ln_keys[0]} -> layer_normalization")
-                else:
-                    skipped.append(("layer_normalization", "no LN (gamma/beta) found"))
-            if ln1 is not None:
-                if len(ln_keys) >= 2:
-                    _set_weights(ln1, src[ln_keys[1]]); loaded.append(f"{ln_keys[1]} -> emb_ln")
-                elif len(ln_keys) == 1:
-                    # if only one LN set exists, copy it to emb_ln as a fallback
-                    _set_weights(ln1, src[ln_keys[0]]); loaded.append(f"{ln_keys[0]} -> emb_ln (copied)")
-                else:
-                    # init defaults
-                    gamma = np.ones((ch,), np.float32); beta = np.zeros((ch,), np.float32)
-                    try: ln1.set_weights([gamma, beta]); loaded.append("emb_ln <- defaults (gamma=1,beta=0)")
-                    except Exception as e: skipped.append(("emb_ln", f"default init failed: {e}"))
-
-            print("[loaded]", len(loaded));  [print("  ", x) for x in loaded]
-            if skipped:
-                print("[skipped]", len(skipped)); [print("  ", k, ":", why) for (k, why) in skipped]
-
-        # --- usage ---
-        # make sure model is built; your summary shows C=8, ch=32, so:
-        # pdb.set_trace()
-        # _ = model(tf.zeros((1, 10, 8)))
-        # load_head_by_shape(model, weight_file, ch=32)
-        # pdb.set_trace()
-
         try:
-            
-            # pdb.set_trace()
             model.load_weights(weight_file)
-            # pdb.set_trace()
-            # def patch_depthwise_kernels(model, h5_path):
-            #     with h5py.File(h5_path, "r") as f:
-            #         root = f.get("model_weights") or f
-            #         name2layer = {l.name: l for l in model.layers}
-            #         for lname, layer in name2layer.items():
-            #             if not isinstance(layer, tf.keras.layers.DepthwiseConv2D):
-            #                 continue
-            #             if lname not in root:
-            #                 continue
-            #             grp = root[lname]
-            #             # find dataset
-            #             ds_name = None
-            #             for k in grp.keys():
-            #                 if "depthwise_kernel" in k:
-            #                     ds_name = k; break
-            #             if ds_name is None:
-            #                 continue
-
-            #             saved = grp[ds_name][()]  # numpy array from file
-            #             W = layer.get_weights()
-            #             if not W:
-            #                 continue
-            #             want = W[0].shape  # (kh, kw, in_c, dm)
-
-            #             # If file is 3D and model expects 4D with dm==1, expand last axis
-            #             if saved.ndim == 3 and want[-1] == 1 and saved.shape == want[:3]:
-            #                 saved = np.expand_dims(saved, -1)
-            #                 W[0] = saved
-            #                 # try to copy bias if present
-            #                 if len(W) == 2:
-            #                     bkey = "bias:0" if "bias:0" in grp else ("bias" if "bias" in grp else None)
-            #                     if bkey is not None:
-            #                         W[1] = grp[bkey][()]
-            #                 layer.set_weights(W)
-
-            # # Use it after the initial load
-            # patch_depthwise_kernels(model, weight_file)            
-            # pdb.set_trace()
         except:
             try:
-                _ = model(tf.zeros((1, 10, 8)))
-                load_head_by_shape(model, weight_file, ch=32)
+                print('Load weights failed trying to match')
+                
+                model.load_weights(weight_file, by_name=True, skip_mismatch=True)  # tf.keras 2.x  
+                # 2) force-load the two LNs from the legacy H5
+                aa = h5py.File(weight_file)
+                model.layers[1].get_layer('emb_ln').set_weights([aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['layer_normalization_2']['vars']['0'][:], 
+                                                                aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['layer_normalization_2']['vars']['1'][:]])
+
+                model.layers[1].get_layer('emb_p2').set_weights([aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['dense_2']['vars']['0'][:], 
+                                                                aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['dense_2']['vars']['1'][:]])
+
+                model.layers[1].get_layer('cls_logits').set_weights([aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['conv1d_2']['vars']['0'][:], 
+                                                                aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['conv1d_2']['vars']['1'][:]])                 
+                print(np.mean(model.layers[1].get_layer('emb_ln').weights[1]))
+                print(np.mean(model.layers[1].get_layer('emb_p2').weights[1]))
+                print(np.mean(model.layers[1].get_layer('cls_logits').weights[1]))
+
             except:
                 from tcn import TCN
                 from tensorflow.keras.regularizers import L1

@@ -1084,6 +1084,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
         # ---- Classification head ----
         h = tf.stop_gradient(feats) if 'StopGrad' in params['TYPE_ARCH'] else feats
+        # h = LayerNormalization(name='emb_class')(h
         h = LayerNormalization()(h)
         h = Conv1D(64, 
                     1, 
@@ -1297,7 +1298,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
     if params['WEIGHT_FILE']:
         print('load model')
-        model.load_weights(params['WEIGHT_FILE'])
+        model.load_weights(params['WEIGHT_FILE'])#, skip_mismatch=False, by_name=False)
 
     return model
 

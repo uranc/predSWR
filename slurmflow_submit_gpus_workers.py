@@ -15,7 +15,7 @@ tag = 'tripletOnlyRemake2500'
 
 # Rest of script remains unchanged
 ijob = -1
-for model_name in range(4):
+for model_name in range(2):
     # exp_dir = 'experiments/' + model_name
     # pr = exp_dir + '/model/'
     # if not path.exists(pr):
@@ -35,29 +35,29 @@ for model_name in range(4):
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
     # pdb.set_trace()
-    # if ijob < 6:
+    # if ijob < 7:
     #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
     #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
     #     subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
     #     # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    # elif ijob < 14:
+    # elif ijob < 15:
     #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_power_test.sh', tag])
     #     subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
-    # elif ijob < 18:
+    # elif ijob < 23:
     #     subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    # #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_power_test.sh', tag])
-    # # # elif ijob < 24:
-    # # #     subprocess.call(['sbatch', 'gpu_batch_103_worker_titan.sh', tag])
+    #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_power_test.sh', tag])
+    # # elif ijob < 24:
+    # #     subprocess.call(['sbatch', 'gpu_batch_103_worker_titan.sh', tag])
     # else:
     #     subprocess.call(['sbatch', 'gpu_batch_103_worker_titan.sh', tag])
-    # #     subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    # #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
-    # #     # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    # #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
-    # #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
-    # # # elif ijob < 20:
-    # # #     subprocess.call(['sbatch', 'gpu_batch_103_worker_titan.sh', tag])
-    # # # else:
+    #     subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
+    #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
+    #     # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
+    #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
+    #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
+    # # elif ijob < 20:
+    # #     subprocess.call(['sbatch', 'gpu_batch_103_worker_titan.sh', tag])
+    # # else:
     # # #     subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
     # # # # #    # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
     # # # # #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
