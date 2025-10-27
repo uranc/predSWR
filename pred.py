@@ -61,9 +61,9 @@ def objective_triplet(trial):
     # ...rest of existing objective function code...
 
     # Base parameters
-    params['TOTAL_STEPS'] = 50 * 1000  # Assuming 1000 steps per epoch for 300 epochs
+    params['TOTAL_STEPS'] = 100 * 1000  # Assuming 1000 steps per epoch for 300 epochs
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 250
+    params['NO_EPOCHS'] = 500
     params['TYPE_MODEL'] = 'Base'
 
     arch_lib = ['MixerOnly', 'MixerHori',
@@ -5679,6 +5679,828 @@ elif mode == 'tune_viz_multi_v6':
         "objectives": ["val_sample_pr_auc (max)", "val_fp_per_min (min)", "val_latency_score (max)"],
         "objective_index_map": OBJECTIVE_INDEX,
         "auto_swap_applied": bool(mapping_notice != "")
+    }
+    with open(os.path.join(viz_dir, "study_stats.json"), "w") as f:
+        json.dump(stats, f, indent=2)
+
+    print(f"Visualization complete → {viz_dir}")
+
+elif mode == 'tune_viz_multi_v7':
+    import os, sys, json, math, warnings, glob
+    import numpy as np
+    import pandas as pd
+    import matplotlib.pyplot as plt
+    import seaborn as sns
+    import optuna
+
+    warnings.filterwarnings("ignore", category=UserWarning, module="optuna")
+    warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
+
+    # Optional: Plotly
+    try:
+        import plotly.express as px
+        HAVE_PLOTLY = True
+    except Exception:
+        HAVE_PLOTLY = False
+
+    # ---------- CONFIG ----------
+    tag = args.tag[0]
+    param_dir = f'params_{tag}'
+    storage_url = f"sqlite:///studies/{param_dir}/{param_dir}.db"
+    viz_dir = f"studies/{param_dir}/visualizations_v7"
+    os.makedirs(viz_dir, exist_ok=True)
+
+    print(f"Loading study '{param_dir}' from {storage_url}")
+    try:
+        study = optuna.load_study(study_name=param_dir, storage=storage_url)
+    except Exception as e:
+        print(f"Error loading study: {e}")
+        sys.exit(1)
+
+    # ---------- COLLECT COMPLETED TRIALS ----------
+    trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
+    if not trials:
+        print("No completed trials; nothing to visualize.")
+        sys.exit(0)
+
+    # Expect 2 objectives (PR-AUC, FP/min)
+    nvals = max((len(t.values) if t.values else 0) for t in trials)
+    if nvals < 2:
+        print(f"Trials have only {nvals} objectives; need 2 (PR-AUC, FP/min).")
+        sys.exit(0)
+    OBJECTIVE_INDEX = dict(pr_auc=0, fp_per_min=1)
+    if nvals > 2:
+        print(f"Detected {nvals} objectives; using first two as {OBJECTIVE_INDEX}. Adjust if needed.")
+
+    # Constraints (optional)
+    def _get_constraints(tr):
+        return tr.system_attrs.get("constraints") or tr.user_attrs.get("constraints")
+
+    has_constraints = any(_get_constraints(t) is not None for t in trials)
+    feasible_trials = [
+        t for t in trials
+        if (_get_constraints(t) is None) or all((c is not None) and (c <= 0) for c in _get_constraints(t))
+    ]
+    DO_HV = not (has_constraints and len(feasible_trials) == 0)
+    if has_constraints and not DO_HV:
+        print("No feasible trials under constraints; skipping hypervolume plot.")
+
+    # Collect rows from trials
+    rows = []
+    for t in trials:
+        if not t.values:
+            continue
+        try:
+            pr = float(t.values[OBJECTIVE_INDEX['pr_auc']])
+            fp = float(t.values[OBJECTIVE_INDEX['fp_per_min']])
+        except Exception:
+            continue
+        bad = lambda x: (x is None) or (isinstance(x, float) and (math.isnan(x) or math.isinf(x)))
+        if any(bad(x) for x in [pr, fp]):
+            continue
+        rec = {"trial_number": t.number,
+               "val_sample_pr_auc": pr,
+               "val_fp_per_min": fp}
+        rec.update(t.params)  # include hyperparams
+        rows.append(rec)
+
+    df = pd.DataFrame(rows)
+    if df.empty:
+        print("No valid completed trials with 2 objectives.")
+        sys.exit(0)
+
+    # Optional sanity: PR-AUC should be in [0,1]. If >1 frequently, user probably swapped.
+    if (df["val_sample_pr_auc"] > 1.05).mean() > 0.5:
+        print("Warning: Many PR-AUC values > 1. Did you swap objective order when saving?")
+
+    # Save all trials CSV
+    all_csv = os.path.join(viz_dir, "all_completed_trials.csv")
+    df.to_csv(all_csv, index=False)
+    print(f"Saved {len(df)} trials → {all_csv}")
+
+    # ---------- STANDARD OPTUNA VISUALS ----------
+    print("Generating Optuna standard plots...")
+    try:
+        # History per objective
+        fig_hist_pr = optuna.visualization.plot_optimization_history(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'),
+            target_name="Sample PR-AUC")
+        fig_hist_pr.write_html(os.path.join(viz_dir, "history_pr_auc.html"))
+
+        fig_hist_fp = optuna.visualization.plot_optimization_history(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['fp_per_min']] if t.values else float('nan'),
+            target_name="FP/min")
+        fig_hist_fp.write_html(os.path.join(viz_dir, "history_fp_per_min.html"))
+
+        # Param importances per objective
+        fig_imp_pr = optuna.visualization.plot_param_importances(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'),
+            target_name="Sample PR-AUC")
+        fig_imp_pr.write_html(os.path.join(viz_dir, "param_importances_pr_auc.html"))
+
+        fig_imp_fp = optuna.visualization.plot_param_importances(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['fp_per_min']] if t.values else float('nan'),
+            target_name="FP/min")
+        fig_imp_fp.write_html(os.path.join(viz_dir, "param_importances_fp_per_min.html"))
+
+        # Pareto front (2D)
+        names_by_index = [""] * nvals
+        names_by_index[OBJECTIVE_INDEX['pr_auc']] = "Sample PR-AUC"
+        names_by_index[OBJECTIVE_INDEX['fp_per_min']] = "FP/min"
+        fig_pareto = optuna.visualization.plot_pareto_front(study, target_names=names_by_index)
+        fig_pareto.write_html(os.path.join(viz_dir, "pareto_front_2obj.html"))
+    except Exception as e:
+        print(f"Standard plot warning: {e}")
+
+    # ---------- EDFs ----------
+    try:
+        fig_edf_pr = optuna.visualization.plot_edf(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'),
+            target_name="Sample PR-AUC (↑)")
+        fig_edf_pr.write_html(os.path.join(viz_dir, "edf_pr_auc.html"))
+
+        fig_edf_fp = optuna.visualization.plot_edf(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['fp_per_min']] if t.values else float('nan'),
+            target_name="FP/min (↓)")
+        fig_edf_fp.write_html(os.path.join(viz_dir, "edf_fp_per_min.html"))
+    except Exception as e:
+        print(f"EDF plot warning: {e}")
+
+    # ---------- PARETO SET & CSV/HTML ----------
+    pareto_trials = study.best_trials
+    pareto_nums = [t.number for t in pareto_trials]
+    pareto_df = df[df.trial_number.isin(pareto_nums)].copy()
+    pareto_csv = os.path.join(viz_dir, "pareto_trials.csv")
+    pareto_df.to_csv(pareto_csv, index=False)
+    print(f"Pareto set size: {len(pareto_df)} → {pareto_csv}")
+
+    def _trial_link(trial_no: int) -> str:
+        base = os.path.join("studies", param_dir)
+        matches = glob.glob(os.path.join(base, f"study_{trial_no}_*"))
+        if matches:
+            rel = os.path.relpath(matches[0], viz_dir)
+            return f'<a href="{rel}">study_{trial_no}</a>'
+        return ""
+
+    pareto_snapshot_html = ""
+    if not pareto_df.empty:
+        _pareto_view = pareto_df.copy()
+        _pareto_view["study_dir"] = _pareto_view["trial_number"].apply(_trial_link)
+        lead_cols = ["trial_number", "val_sample_pr_auc", "val_fp_per_min", "study_dir"]
+        remaining = [c for c in _pareto_view.columns if c not in lead_cols]
+        pareto_html = _pareto_view[lead_cols + remaining].to_html(escape=False, index=False)
+        with open(os.path.join(viz_dir, "pareto_trials.html"), "w") as fh:
+            fh.write(f"""<html><head><meta charset="utf-8"><title>Pareto Trials — {study.study_name}</title>
+<style>body{{font-family:Arial;margin:20px}} table{{border-collapse:collapse}} th,td{{border:1px solid #ddd;padding:6px}} th{{background:#f5f5f5}}</style>
+</head><body><h2>Pareto Trials</h2>
+<p>Higher is better: PR-AUC. Lower is better: FP/min.</p>
+{pareto_html}
+</body></html>""")
+        snapshot = _pareto_view.sort_values("val_sample_pr_auc", ascending=False)[lead_cols].head(15)
+        pareto_snapshot_html = snapshot.to_html(escape=False, index=False)
+
+    # ---------- HYPERVOLUME HISTORY ----------
+    try:
+        if DO_HV:
+            ref_point = [0.0] * nvals
+            ref_point[OBJECTIVE_INDEX['pr_auc']] = float(df["val_sample_pr_auc"].min() - 1e-3)   # smaller worse
+            ref_point[OBJECTIVE_INDEX['fp_per_min']] = float(df["val_fp_per_min"].max() + 1e-3)  # larger worse
+            fig_hv = optuna.visualization.plot_hypervolume_history(study, reference_point=ref_point)
+            fig_hv.write_html(os.path.join(viz_dir, "hypervolume_history.html"))
+        else:
+            print("Hypervolume plot skipped due to infeasible trials under constraints.")
+    except Exception as e:
+        print(f"Hypervolume plot skipped: {e}")
+
+    # ---------- 2D PROJECTION (Plotly) ----------
+    try:
+        if HAVE_PLOTLY:
+            fig2d = px.scatter(
+                df,
+                x="val_sample_pr_auc", y="val_fp_per_min",
+                color=np.where(df.trial_number.isin(pareto_nums), "Pareto", "Other"),
+                hover_name="trial_number", opacity=0.9
+            )
+            fig2d.update_layout(
+                xaxis_title="PR-AUC (↑)",
+                yaxis_title="FP/min (↓)",
+                legend_title_text="Trials"
+            )
+            fig2d.write_html(os.path.join(viz_dir, "scatter2d_all.html"))
+    except Exception as e:
+        print(f"Projection plot warning: {e}")
+
+    # ---------- PER-PARAM IMPACT (quick plots) ----------
+    param_impact_dir = os.path.join(viz_dir, "param_impact")
+    os.makedirs(param_impact_dir, exist_ok=True)
+
+    def qylim(series, lo=0.05, hi=0.95, pad=0.05, clamp=None):
+        if series.isnull().all():
+            return (0, 1)
+        qlo, qhi = np.nanquantile(series, [lo, hi])
+        span = max(1e-9, qhi - qlo)
+        lo_v = qlo - pad * span
+        hi_v = qhi + pad * span
+        if clamp:
+            lo_v = max(clamp[0], lo_v); hi_v = min(clamp[1], hi_v)
+            if lo_v >= hi_v: lo_v, hi_v = clamp[0], clamp[1]
+        return (lo_v, hi_v)
+
+    pr_ylim = qylim(df["val_sample_pr_auc"], clamp=(0,1))
+    fp_ylim = qylim(df["val_fp_per_min"], clamp=None)
+
+    hyperparams = [c for c in df.columns if c not in ["trial_number","val_sample_pr_auc","val_fp_per_min"]]
+
+    for p in hyperparams:
+        if df[p].isnull().all() or df[p].nunique(dropna=True) <= 1:
+            continue
+        is_num = pd.api.types.is_numeric_dtype(df[p])
+        fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
+                                 gridspec_kw={"height_ratios":[2,1]})
+        ax_top, ax_bot = axes
+
+        # Top: PR-AUC
+        if is_num:
+            sns.scatterplot(data=df, x=p, y="val_sample_pr_auc", ax=ax_top, color="tab:blue", s=18, alpha=0.5, label="PR-AUC")
+        else:
+            sns.stripplot(data=df, x=p, y="val_sample_pr_auc", ax=ax_top, color="tab:blue", size=4, alpha=0.7, jitter=True)
+        ax_top.set_ylabel("PR-AUC (↑)", color="tab:blue"); ax_top.tick_params(axis='y', labelcolor="tab:blue"); ax_top.set_ylim(pr_ylim)
+
+        # Bottom: FP/min
+        if is_num:
+            sns.scatterplot(data=df, x=p, y="val_fp_per_min", ax=ax_bot, color="tab:red", s=18, alpha=0.5)
+        else:
+            sns.stripplot(data=df, x=p, y="val_fp_per_min", ax=ax_bot, color="tab:red", size=4, alpha=0.7, jitter=True)
+        ax_bot.set_ylabel("FP/min (↓)", color="tab:red"); ax_bot.tick_params(axis='y', labelcolor="tab:red"); ax_bot.set_ylim(fp_ylim)
+
+        if not is_num:
+            for ax in (ax_top, ax_bot):
+                plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
+        ax_bot.set_xlabel(p)
+        fig.tight_layout()
+        outp = os.path.join(param_impact_dir, f"{p}_impact.png")
+        fig.savefig(outp, dpi=130)
+        plt.close(fig)
+
+    # ---------- STOPGRAD QUANTILE TRENDS (overlay + facets) ----------
+    qt_dir = os.path.join(viz_dir, "quantile_trends_stopgrad")
+    os.makedirs(qt_dir, exist_ok=True)
+
+    def _infer_stopgrad_column(df_in: pd.DataFrame) -> pd.Series:
+        if "USE_StopGrad" in df_in.columns:
+            col = df_in["USE_StopGrad"]
+            if pd.api.types.is_bool_dtype(col):
+                return pd.Series(np.where(col, "SG=True", "SG=False"), index=col.index)
+            try:
+                val = pd.to_numeric(col, errors="coerce")
+                return pd.Series(np.where(val == 1, "SG=True",
+                                   np.where(val == 0, "SG=False", "SG=unknown")), index=col.index)
+            except Exception:
+                s = col.astype(str).str.lower()
+                return pd.Series(np.where(s.isin(["1","true","yes","y"]), "SG=True",
+                                   np.where(s.isin(["0","false","no","n"]), "SG=False", "SG=unknown")), index=col.index)
+        if "TYPE_ARCH" in df_in.columns:
+            s = df_in["TYPE_ARCH"].astype(str).str.lower()
+            return pd.Series(np.where(s.str.contains("stopgrad", na=False), "SG=True", "SG=False"), index=df_in.index)
+        return pd.Series(["SG=unknown"] * len(df_in), index=df_in.index)
+
+    df["COHORT_StopGrad"] = _infer_stopgrad_column(df)
+
+    def _quantile_edges(x: pd.Series, nbins=12):
+        x = pd.to_numeric(x, errors="coerce").dropna()
+        if x.nunique() < 3 or len(x) < 12:
+            if len(x) == 0:
+                return None
+            lo, hi = float(x.min()), float(x.max())
+            if not np.isfinite(lo) or not np.isfinite(hi) or lo == hi:
+                return None
+            return np.linspace(lo, hi, 4)
+        qs = np.linspace(0, 1, nbins + 1)
+        edges = np.unique(np.nanquantile(x, qs))
+        if len(edges) < 4:
+            lo, hi = float(x.min()), float(x.max())
+            edges = np.linspace(lo, hi, 4)
+        eps = 1e-12 * (edges[-1] - edges[0] + 1.0)
+        edges[0] -= eps; edges[-1] += eps
+        return edges
+
+    def _trend_by_bins_cohort(dfin: pd.DataFrame, param: str, nbins=12):
+        keep_cols = ["val_sample_pr_auc","val_fp_per_min","COHORT_StopGrad", param]
+        dfin = dfin[keep_cols].copy()
+        dfin[param] = pd.to_numeric(dfin[param], errors="coerce")
+        dfin = dfin.dropna(subset=[param])
+
+        edges = _quantile_edges(dfin[param], nbins=nbins)
+        if edges is None:
+            return pd.DataFrame()
+
+        b = pd.cut(dfin[param], bins=edges, include_lowest=True)
+        mids = b.apply(lambda iv: np.mean([iv.left, iv.right]) if pd.notnull(iv) else np.nan)
+        tmp = dfin.copy()
+        tmp["_bin"] = b
+        tmp["_mid"] = mids
+
+        long = tmp.melt(
+            id_vars=["_bin","_mid","COHORT_StopGrad"],
+            value_vars=["val_sample_pr_auc","val_fp_per_min"],
+            var_name="metric", value_name="val"
+        )
+
+        agg = (long.dropna(subset=["_bin","_mid","val"])
+                    .groupby(["_bin","_mid","COHORT_StopGrad","metric"], observed=True)
+                    .agg(q10=("val", lambda s: np.nanquantile(s, 0.10)),
+                         median=("val", "median"),
+                         q90=("val", lambda s: np.nanquantile(s, 0.90)),
+                         count=("val", "size"))
+                    .reset_index())
+        agg.rename(columns={"_mid": "bin_mid"}, inplace=True)
+        return agg
+
+    def _plot_trend_overlay(agg: pd.DataFrame, p: str, out_png: str):
+        order  = ["val_sample_pr_auc","val_fp_per_min"]
+        titles = {"val_sample_pr_auc": "PR-AUC (↑)",
+                  "val_fp_per_min":    "FP/min (↓)"}
+        colors = {"SG=False":"tab:blue","SG=True":"tab:orange","SG=unknown":"tab:gray"}
+
+        if agg.empty or agg["bin_mid"].nunique() < 3:
+            return False
+
+        fig, axes = plt.subplots(2,1,figsize=(9,7), sharex=True)
+        for ax, m in zip(axes, order):
+            d = agg[agg["metric"] == m]
+            ok_any = False
+            for g, dd in d.groupby("COHORT_StopGrad"):
+                dd = dd.sort_values("bin_mid")
+                if dd["bin_mid"].nunique() < 3:
+                    continue
+                c = colors.get(g, "tab:gray")
+                ax.plot(dd["bin_mid"], dd["median"], label=g, color=c, lw=2)
+                ax.fill_between(dd["bin_mid"], dd["q10"], dd["q90"], alpha=0.18, color=c)
+                for xm, cnt in zip(dd["bin_mid"], dd["count"]):
+                    ax.text(xm, dd["median"].min(), f"n={int(cnt)}", fontsize=7, ha="center", va="top", alpha=0.35)
+                ok_any = True
+            ax.set_ylabel(titles[m]); ax.grid(alpha=0.3)
+            if not ok_any:
+                ax.text(0.5, 0.5, "insufficient data", ha="center", va="center", transform=ax.transAxes, alpha=0.6)
+
+        axes[0].legend(title="StopGrad", ncol=3)
+        axes[-1].set_xlabel(p)
+        fig.suptitle(f"Quantile trend (StopGrad overlay): {p}")
+        fig.tight_layout(rect=[0,0,1,0.96])
+        fig.savefig(out_png, dpi=140); plt.close(fig)
+        return True
+
+    def _plot_trend_facets(agg: pd.DataFrame, p: str, out_png: str):
+        order  = ["val_sample_pr_auc","val_fp_per_min"]
+        titles = {"val_sample_pr_auc": "PR-AUC (↑)",
+                  "val_fp_per_min":    "FP/min (↓)"}
+        cohorts = [c for c in ["SG=False","SG=True","SG=unknown"] if (agg["COHORT_StopGrad"] == c).any()]
+        if agg.empty or len(cohorts) == 0 or agg["bin_mid"].nunique() < 3:
+            return False
+
+        fig, axes = plt.subplots(len(cohorts), 2, figsize=(12, 3.5 * len(cohorts)), sharex=True)
+        if len(cohorts) == 1:
+            axes = np.expand_dims(axes, 0)
+
+        for row, cohort in enumerate(cohorts):
+            for col, m in enumerate(order):
+                ax = axes[row, col]
+                dd = agg[(agg["COHORT_StopGrad"] == cohort) & (agg["metric"] == m)].sort_values("bin_mid")
+                if dd["bin_mid"].nunique() >= 3:
+                    ax.plot(dd["bin_mid"], dd["median"], lw=2)
+                    ax.fill_between(dd["bin_mid"], dd["q10"], dd["q90"], alpha=0.2)
+                    for xm, cnt in zip(dd["bin_mid"], dd["count"]):
+                        ax.text(xm, dd["median"].min(), f"n={int(cnt)}", fontsize=7, ha="center", va="top", alpha=0.35)
+                else:
+                    ax.text(0.5, 0.5, "insufficient data", ha="center", va="center", transform=ax.transAxes, alpha=0.6)
+                if row == 0:
+                    ax.set_title(titles[m])
+                if col == 0:
+                    ax.set_ylabel(cohort)
+                ax.grid(alpha=0.3)
+        axes[-1, -1].set_xlabel(p)
+        fig.suptitle(f"Quantile trend (StopGrad facets): {p}")
+        fig.tight_layout(rect=[0,0,1,0.95])
+        fig.savefig(out_png, dpi=140); plt.close(fig)
+        return True
+
+    trend_params = [c for c in df.columns
+                    if c not in ["trial_number","val_sample_pr_auc","val_fp_per_min","COHORT_StopGrad"]
+                    and pd.api.types.is_numeric_dtype(df[c])
+                    and df[c].nunique(dropna=True) >= 3]
+
+    for must in ["learning_rate","LOSS_SupCon","LOSS_TupMPN","LOSS_NEGATIVES","LOSS_TV"]:
+        if must in df.columns and must not in trend_params and pd.api.types.is_numeric_dtype(df[must]) and df[must].nunique(dropna=True) >= 3:
+            trend_params.append(must)
+
+    _created_stopgrad_imgs = []
+    for p in trend_params:
+        try:
+            sub = df[["val_sample_pr_auc","val_fp_per_min","COHORT_StopGrad", p]].copy()
+            agg = _trend_by_bins_cohort(sub, p, nbins=12)
+            if agg.empty or agg["bin_mid"].nunique() < 3:
+                print(f"[trend] Skipped {p}: insufficient data after binning")
+                continue
+            out1 = os.path.join(qt_dir, f"{p}_trend_stopgrad_overlay.png")
+            out2 = os.path.join(qt_dir, f"{p}_trend_stopgrad_facets.png")
+            ok1 = _plot_trend_overlay(agg, p, out1)
+            ok2 = _plot_trend_facets(agg, p, out2)
+            if ok1: _created_stopgrad_imgs.append(os.path.relpath(out1, viz_dir))
+            if ok2: _created_stopgrad_imgs.append(os.path.relpath(out2, viz_dir))
+        except Exception as e:
+            print(f"[trend] Skipped {p}: {e}")
+
+    # ---------- CORRELATIONS ----------
+    heatmap_fp = None
+    obj_corr_fp = None
+    try:
+        num_cols = [c for c in df.columns
+                    if c not in ["trial_number","val_sample_pr_auc","val_fp_per_min"]
+                    and pd.api.types.is_numeric_dtype(df[c])]
+        if num_cols:
+            corr_df = df[num_cols + ["val_sample_pr_auc","val_fp_per_min"]].corr(method='spearman')
+            plt.figure(figsize=(max(8, 0.6*len(corr_df.columns)), max(6, 0.5*len(corr_df)))
+                       )
+            sns.heatmap(corr_df, annot=True, fmt=".2f", cmap="coolwarm", cbar=True, square=False)
+            plt.title("Spearman correlation: numeric hyperparameters vs objectives")
+            plt.tight_layout()
+            heatmap_fp = os.path.join(viz_dir, "correlations_spearman.png")
+            plt.savefig(heatmap_fp, dpi=130); plt.close()
+    except Exception as e:
+        print(f"Correlation heatmap warning: {e}"); plt.close()
+
+    try:
+        obj_corr = df[["val_sample_pr_auc","val_fp_per_min"]].corr(method='spearman')
+        plt.figure(figsize=(3.8,3.6))
+        sns.heatmap(obj_corr, annot=True, fmt=".2f", cmap="vlag", cbar=False,
+                    xticklabels=["PR-AUC (↑)","FP/min (↓)"],
+                    yticklabels=["PR-AUC (↑)","FP/min (↓)"])
+        plt.tight_layout()
+        obj_corr_fp = os.path.join(viz_dir, "objective_correlations.png")
+        plt.savefig(obj_corr_fp, dpi=140); plt.close()
+    except Exception as e:
+        print(f"Objective correlation warning: {e}"); plt.close()
+
+    # ---------- SIMPLE COMBINED RANK (top-k) ----------
+    def robust_minmax(x):
+        q05, q95 = np.nanquantile(x, [0.05, 0.95])
+        d = max(1e-9, q95 - q05); z = (x - q05) / d
+        return np.clip(z, 0, 1)
+
+    df["score_pr"] = df["val_sample_pr_auc"]                 # higher better
+    df["score_fp"] = 1 - robust_minmax(df["val_fp_per_min"]) # lower fp → higher score
+    df["combined_avg"] = (df["score_pr"] + df["score_fp"]) / 2.0
+    top_combined = df.sort_values("combined_avg", ascending=False).head(25)
+    top_combined.to_csv(os.path.join(viz_dir, "top25_combined_avg.csv"), index=False)
+
+    # Top-by-objective HTML tables with links
+    try:
+        top_k = 25
+        best_pr  = df.sort_values("val_sample_pr_auc", ascending=False).head(top_k).copy()
+        best_fp  = df.sort_values("val_fp_per_min", ascending=True ).head(top_k).copy()
+        for fname, ddd in [("top_by_pr_auc.html", best_pr),
+                           ("top_by_fpmin.html", best_fp),
+                           ("top_by_combined.html", top_combined)]:
+            dd = ddd.copy()
+            dd["study_dir"] = dd["trial_number"].apply(_trial_link)
+            lead = ["trial_number","val_sample_pr_auc","val_fp_per_min","combined_avg","study_dir"]
+            keep = [c for c in lead if c in dd.columns] + [c for c in dd.columns if c not in lead]
+            html_tbl = dd[keep].to_html(escape=False, index=False)
+            with open(os.path.join(viz_dir, fname), "w") as fh:
+                fh.write(f"<html><head><meta charset='utf-8'><style>body{{font-family:Arial;margin:20px}} table{{border-collapse:collapse}} th,td{{border:1px solid #ddd;padding:6px}} th{{background:#f5f5f5}}</style></head><body>{html_tbl}</body></html>")
+    except Exception as e:
+        print(f"Top-k HTML warning: {e}")
+
+    # =========================
+    # EXTRA ANALYSIS ADD-ONS
+    # =========================
+    extras_dir    = os.path.join(viz_dir, "extras");                os.makedirs(extras_dir, exist_ok=True)
+    qplots_dir    = os.path.join(extras_dir, "quantile_trends");    os.makedirs(qplots_dir, exist_ok=True)
+    heat2d_dir    = os.path.join(extras_dir, "heatmaps_2d");        os.makedirs(heat2d_dir, exist_ok=True)
+    cohort_dir    = os.path.join(extras_dir, "cohorts");            os.makedirs(cohort_dir, exist_ok=True)
+    recommend_dir = os.path.join(extras_dir, "range_recommendations"); os.makedirs(recommend_dir, exist_ok=True)
+    recon_dir     = os.path.join(extras_dir, "importance_reconciliation"); os.makedirs(recon_dir, exist_ok=True)
+
+    objective_cols = ["val_sample_pr_auc","val_fp_per_min"]
+    param_cols = [c for c in df.columns if c not in ["trial_number", *objective_cols,
+                                                     "score_pr","score_fp","combined_avg","COHORT_StopGrad"]]
+    num_params_all = [p for p in param_cols if pd.api.types.is_numeric_dtype(df[p])]
+    cat_params = [p for p in param_cols if p not in num_params_all]
+
+    # Cohort analysis (StopGrad ON/OFF)
+    def _detect_stopgrad_series(dfx: pd.DataFrame) -> pd.Series:
+        if "USE_StopGrad" in dfx.columns:
+            s = dfx["USE_StopGrad"]
+            if s.dtype == bool:
+                return s
+            return s.map(lambda v: bool(v) if pd.notna(v) else False)
+        if "TYPE_ARCH" in dfx.columns:
+            return dfx["TYPE_ARCH"].astype(str).str.lower().str.contains("stopgrad", na=False)
+        return None
+
+    stopgrad_series = _detect_stopgrad_series(df)
+
+    def _safe_corr_heatmap(data: pd.DataFrame, name: str, out_png: str):
+        try:
+            cols = [*num_params_all, *objective_cols]
+            cols = [c for c in cols if c in data.columns]
+            if len(cols) < 3: return
+            corr_df = data[cols].corr(method="spearman")
+            plt.figure(figsize=(max(8, 0.6*len(corr_df.columns)), max(6, 0.5*len(corr_df))))
+            sns.heatmap(corr_df, annot=True, fmt=".2f", cmap="coolwarm")
+            plt.title(f"Spearman (numeric) — {name}")
+            plt.tight_layout()
+            plt.savefig(out_png, dpi=130); plt.close()
+        except Exception:
+            plt.close()
+
+    def _param_summary_scatter(data: pd.DataFrame, name: str):
+        for obj, ylabel in [("val_sample_pr_auc","PR-AUC (↑)"),
+                            ("val_fp_per_min","FP/min (↓)")]:
+            if obj not in data.columns: continue
+            plt.figure(figsize=(max(8, 0.4*len(param_cols)), 4))
+            ax = plt.gca()
+            x_idx, x_labs = [], []
+            for i, p in enumerate(param_cols):
+                if p not in data.columns or data[p].nunique(dropna=True) <= 1:
+                    continue
+                if pd.api.types.is_numeric_dtype(data[p]):
+                    valid = data[[p, obj]].dropna()
+                    if valid[p].nunique() < 3 or len(valid) < 8:
+                        continue
+                    qbins = pd.qcut(valid[p], q=min(10, max(3, valid[p].nunique())), duplicates="drop")
+                    means = valid.groupby(qbins, observed=True)[obj].mean().values
+                    ax.scatter(np.full_like(means, len(x_idx)), means, s=26, alpha=0.7)
+                else:
+                    g = data.groupby(p, observed=True)[obj].mean().sort_values(ascending=False)
+                    ax.scatter(np.full_like(g.values, len(x_idx)), g.values, s=26, alpha=0.7)
+                x_idx.append(len(x_idx)); x_labs.append(p)
+            ax.set_xticks(range(len(x_labs))); ax.set_xticklabels(x_labs, rotation=28, ha="right")
+            ax.set_ylabel(ylabel); ax.set_title(f"{ylabel} vs params — {name}")
+            plt.tight_layout()
+            plt.savefig(os.path.join(cohort_dir, f"{obj}_vs_params_{name}.png"), dpi=120); plt.close()
+
+    if isinstance(stopgrad_series, pd.Series):
+        sg_mask = stopgrad_series.fillna(False)
+        d0 = df[~sg_mask].copy()  # StopGrad OFF
+        d1 = df[ sg_mask].copy()  # StopGrad ON
+        if len(d0) >= 30:
+            _safe_corr_heatmap(d0, "StopGrad_OFF", os.path.join(cohort_dir, "corr_spearman_StopGrad_OFF.png"))
+            _param_summary_scatter(d0, "StopGrad_OFF")
+        if len(d1) >= 30:
+            _safe_corr_heatmap(d1, "StopGrad_ON",  os.path.join(cohort_dir, "corr_spearman_StopGrad_ON.png"))
+            _param_summary_scatter(d1, "StopGrad_ON")
+
+    # Quantile trends (global)
+    def quantile_trend(x: pd.Series, y: pd.Series, q=12):
+        valid = x.notna() & y.notna()
+        xv, yv = x[valid], y[valid]
+        if len(xv) < 10 or xv.nunique() < 3:
+            return None
+        bins = pd.qcut(xv, q=min(q, max(3, xv.nunique())), duplicates="drop")
+        grp  = pd.DataFrame({"y": yv, "bin": bins, "x": xv}).groupby("bin", observed=True)
+        mu = grp["y"].mean().values
+        sd = grp["y"].std().values
+        n  = grp["y"].size().values.astype(float)
+        se = np.where(n>1, sd/np.sqrt(n), np.nan)
+        xc = grp["x"].mean().values
+        return xc, mu, se
+
+    num_params_simple = [c for c in df.columns
+                         if c not in ["trial_number","val_sample_pr_auc","val_fp_per_min","COHORT_StopGrad"]
+                         and pd.api.types.is_numeric_dtype(df[c])
+                         and df[c].nunique(dropna=True) >= 3]
+
+    for p in num_params_simple:
+        fig, axs = plt.subplots(2,1,figsize=(8,7), sharex=True)
+        ok = False
+        for ax, obj, lab in zip(axs,
+                                ["val_sample_pr_auc","val_fp_per_min"],
+                                ["PR-AUC (↑)", "FP/min (↓)"]):
+            if obj not in df.columns:
+                ax.set_ylabel(lab); continue
+            out = quantile_trend(df[p], df[obj], q=12)
+            if out is None:
+                ax.set_ylabel(lab); continue
+            x, mu, se = out
+            ax.plot(x, mu, marker="o", linewidth=1.5)
+            if np.isfinite(se).any():
+                ax.fill_between(x, mu - 1.96*np.nan_to_num(se), mu + 1.96*np.nan_to_num(se), alpha=0.2)
+            ax.set_ylabel(lab); ok = True
+        axs[-1].set_xlabel(p)
+        if ok:
+            fig.suptitle(f"Quantile trend — {p}")
+            fig.tight_layout(rect=[0,0,1,0.97])
+            fig.savefig(os.path.join(qplots_dir, f"{p}_quantile_trends.png"), dpi=130)
+        plt.close(fig)
+
+    # 2D interaction heatmaps for informative pairs (example axes)
+    def heat2d(x: pd.Series, y: pd.Series, z: pd.Series, xq=12, yq=12):
+        valid = x.notna() & y.notna() & z.notna()
+        xv, yv, zv = x[valid], y[valid], z[valid]
+        if xv.nunique() < 4 or yv.nunique() < 4 or len(zv) < 25:
+            return None
+        xb = pd.qcut(xv, q=min(xq, max(4, xv.nunique())), duplicates="drop")
+        yb = pd.qcut(yv, q=min(yq, max(4, yv.nunique())), duplicates="drop")
+        grid = pd.DataFrame({"xb": xb, "yb": yb, "z": zv}).groupby(["xb","yb"], observed=True)["z"].mean().unstack()
+        return grid
+
+    def _maybe_heatmap(xname, yname):
+        if xname not in df.columns or yname not in df.columns:
+            return
+        for obj, lab in [("val_sample_pr_auc","PR-AUC (↑)"),
+                         ("val_fp_per_min","FP/min (↓)")]:
+            if obj not in df.columns: continue
+            H = heat2d(df[xname], df[yname], df[obj])
+            if H is None:
+                continue
+            plt.figure(figsize=(6.8,5.2))
+            sns.heatmap(H, cmap="viridis", annot=False)
+            plt.title(f"{lab} mean — {xname} × {yname}")
+            plt.tight_layout()
+            plt.savefig(os.path.join(heat2d_dir, f"{obj}_{xname}_x_{yname}.png"), dpi=140)
+            plt.close()
+
+    if "LOSS_SupCon" in df.columns and "LOSS_TupMPN" in df.columns:
+        _maybe_heatmap("LOSS_SupCon", "LOSS_TupMPN")
+    if "learning_rate" in df.columns and "LOSS_NEGATIVES" in df.columns:
+        _maybe_heatmap("learning_rate", "LOSS_NEGATIVES")
+    if "LOSS_TV" in df.columns and "LOSS_TupMPN" in df.columns:
+        _maybe_heatmap("LOSS_TV", "LOSS_TupMPN")
+
+    # Range recommendations: top-quartile trial bands per objective
+    def recommend_ranges(data: pd.DataFrame, name: str, top_frac=0.25):
+        num_params_local = [p for p in data.columns
+                            if p not in ["trial_number","val_sample_pr_auc","val_fp_per_min",
+                                         "score_pr","score_fp","combined_avg","COHORT_StopGrad"]
+                            and pd.api.types.is_numeric_dtype(data[p])]
+        cat_params_local = [p for p in data.columns
+                            if p not in ["trial_number","val_sample_pr_auc","val_fp_per_min",
+                                         "score_pr","score_fp","combined_avg","COHORT_StopGrad"]
+                            and p not in num_params_local]
+        recs = {}
+        for obj, asc, nice in [("val_sample_pr_auc", False, "PR-AUC (↑)"),
+                               ("val_fp_per_min", True,  "FP/min (↓)")]:
+            if obj not in data.columns or data[obj].isnull().all():
+                continue
+            dsort = data.sort_values(obj, ascending=asc)
+            top_n = max(20, int(len(dsort)*top_frac))
+            top   = dsort.head(top_n)
+            rng = {}
+            for p in num_params_local:
+                col = pd.to_numeric(top[p], errors="coerce").dropna()
+                if col.nunique() < 2:
+                    continue
+                try:
+                    rng[p] = (float(np.nanquantile(col, 0.20)), float(np.nanquantile(col, 0.80)))
+                except Exception:
+                    pass
+            cat = {}
+            for p in cat_params_local:
+                vc = top[p].value_counts(normalize=True, dropna=False)
+                if len(vc):
+                    cat[p] = vc.head(3).to_dict()
+            recs[nice] = {"num_quantile_20_80": rng, "cat_top3_props": cat, "n_top": int(len(top))}
+        with open(os.path.join(recommend_dir, f"ranges_{name}.json"), "w") as fh:
+            json.dump(recs, fh, indent=2)
+        rows = []
+        for obj, payload in recs.items():
+            for p,(lo,hi) in payload["num_quantile_20_80"].items():
+                rows.append({"objective": obj, "param": p, "q20": lo, "q80": hi})
+        if rows:
+            pd.DataFrame(rows).to_csv(os.path.join(recommend_dir, f"ranges_numeric_{name}.csv"), index=False)
+
+    recommend_ranges(df, "ALL")
+    if isinstance(stopgrad_series, pd.Series):
+        sg_mask = stopgrad_series.fillna(False)
+        if df[~sg_mask].shape[0] >= 40: recommend_ranges(df[~sg_mask], "StopGrad_OFF")
+        if df[ sg_mask].shape[0] >= 40: recommend_ranges(df[ sg_mask], "StopGrad_ON")
+
+    # Importance reconciliation: absolute Spearman vs PR-AUC (global/cohort)
+    imp_rows = []
+    for p in num_params_all:
+        try:
+            r = df[[p,"val_sample_pr_auc"]].dropna().corr(method="spearman").iloc[0,1]
+            if pd.notna(r):
+                imp_rows.append({"param": p, "source": "Spearman|rho| (global)", "value": abs(float(r))})
+        except Exception:
+            pass
+    if isinstance(stopgrad_series, pd.Series):
+        sg_mask = stopgrad_series.fillna(False)
+        for name, dsub in [("StopGrad_OFF", df[~sg_mask]), ("StopGrad_ON", df[sg_mask])]:
+            if len(dsub) < 30: continue
+            for p in num_params_all:
+                try:
+                    rr = dsub[[p,"val_sample_pr_auc"]].dropna().corr(method="spearman").iloc[0,1]
+                    if pd.notna(rr):
+                        imp_rows.append({"param": p, "source": f"Spearman|rho| ({name})", "value": abs(float(rr))})
+                except Exception:
+                    pass
+    if imp_rows:
+        imp_df = pd.DataFrame(imp_rows)
+        piv = imp_df.pivot_table(index="param", columns="source", values="value", aggfunc="max").fillna(0.0)
+        piv = piv.sort_values(by=list(piv.columns)[0], ascending=False)
+        ax = piv.plot(kind="bar", figsize=(max(9, 0.55*len(piv)),5))
+        ax.set_ylabel("|Spearman| vs PR-AUC"); plt.title("Correlation-based importances (compare with Optuna fANOVA)")
+        plt.tight_layout()
+        plt.savefig(os.path.join(recon_dir, "spearman_vs_pr_auc.png"), dpi=130)
+        plt.close()
+
+    # ---------- HTML REPORT ----------
+    html = []
+    html.append(f"""<!doctype html><html><head><meta charset="utf-8">
+    <title>Study Visualization (2-obj): {study.study_name}</title>
+    <style>
+    body{{font-family:Arial,Helvetica,sans-serif;margin:20px;}} h2{{margin-top:28px}}
+    a{{color:#007bff;text-decoration:none}} a:hover{{text-decoration:underline}}
+    .grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:16px}}
+    .card{{border:1px solid #ddd;border-radius:8px;padding:12px;background:#fafafa}}
+    img{{max-width:100%}}
+    .notice{{padding:10px;border:1px solid #ffc107;background:#fff3cd;border-radius:6px}}
+    </style></head><body>
+    <h1>Visualization — {study.study_name}</h1>
+    <p>Objectives: <b>maximize</b> PR-AUC, <b>minimize</b> FP/min.</p>
+    <p><b>Trials:</b> {len(df)} | <b>Pareto set:</b> {len(pareto_df)}</p>""")
+
+    html.append(f"""
+    <ul>
+      <li><a href="all_completed_trials.csv">all_completed_trials.csv</a></li>
+      <li><a href="pareto_trials.csv">pareto_trials.csv</a> &nbsp;|&nbsp; <a href="pareto_trials.html">Pareto table (HTML)</a></li>
+      <li><a href="top25_combined_avg.csv">top25_combined_avg.csv</a></li>
+      <li>Top-K (HTML): <a href="top_by_pr_auc.html">PR-AUC</a> · <a href="top_by_fpmin.html">FP/min</a> · <a href="top_by_combined.html">Combined</a></li>
+      <li>Objective EDFs: <a href="edf_pr_auc.html">PR-AUC</a> · <a href="edf_fp_per_min.html">FP/min</a></li>
+    </ul>""")
+
+    if pareto_snapshot_html:
+        html.append("<h2>Pareto snapshot (top 15 by PR-AUC)</h2>")
+        html.append(pareto_snapshot_html)
+
+    html.append("""
+    <h2>Standard Optuna Plots</h2>
+    <div class="grid">
+      <div class="card"><a href="history_pr_auc.html">Optimization History — PR-AUC</a></div>
+      <div class="card"><a href="history_fp_per_min.html">Optimization History — FP/min</a></div>
+      <div class="card"><a href="param_importances_pr_auc.html">Param Importances — PR-AUC</a></div>
+      <div class="card"><a href="param_importances_fp_per_min.html">Param Importances — FP/min</a></div>
+      <div class="card"><a href="pareto_front_2obj.html">Pareto Front (interactive)</a></div>
+      <div class="card"><a href="hypervolume_history.html">Hypervolume History</a></div>
+    </div>""")
+
+    html.append("<h2>Objective Projection</h2><div class='grid'>")
+    if HAVE_PLOTLY and os.path.exists(os.path.join(viz_dir, "scatter2d_all.html")):
+        html.append('<div class="card"><a href="scatter2d_all.html">2D Scatter (All trials, Pareto highlighted)</a></div>')
+    html.append("</div>")
+
+    # StopGrad trend plots (overlay + facets)
+    if len(_created_stopgrad_imgs) > 0:
+        html.append("<h2>Quantile Trends — StopGrad</h2><div class='grid'>")
+        for imgp in _created_stopgrad_imgs:
+            html.append(f'<div class="card"><img src="{imgp}"></div>')
+        html.append("</div>")
+    else:
+        html.append("<h2>Quantile Trends — StopGrad</h2><p class='notice'>No StopGrad trend plots were created (insufficient data or parameters too discrete).</p>")
+
+    # Correlations
+    if heatmap_fp or obj_corr_fp:
+        html.append("<h2>Correlations</h2><div class='grid'>")
+        if heatmap_fp and os.path.exists(heatmap_fp):
+            html.append(f'<div class="card"><img src="correlations_spearman.png" alt="Hyperparameter correlations"></div>')
+        if obj_corr_fp and os.path.exists(obj_corr_fp):
+            html.append(f'<div class="card"><img src="objective_correlations.png" alt="Objective correlations"></div>')
+        html.append("</div>")
+
+    # Per-Parameter Impact thumbnails
+    html.append("<h2>Per-Parameter Impact</h2><div class='grid'>")
+    for p in hyperparams:
+        imgp = os.path.join("param_impact", f"{p}_impact.png")
+        if os.path.exists(os.path.join(viz_dir, imgp)):
+            html.append(f'<div class="card"><h3>{p}</h3><img src="{imgp}"></div>')
+    html.append("</div>")
+
+    # Extras links
+    html.append("""
+    <h2>Extras</h2>
+    <ul>
+      <li><b>Cohorts:</b> see PNGs in <code>extras/cohorts/</code></li>
+      <li><b>Quantile Trends (global):</b> <code>extras/quantile_trends/</code></li>
+      <li><b>2D Heatmaps:</b> <code>extras/heatmaps_2d/</code></li>
+      <li><b>Range Recommendations:</b> JSON/CSV in <code>extras/range_recommendations/</code></li>
+      <li><b>Importance Reconciliation:</b> <code>extras/importance_reconciliation/spearman_vs_pr_auc.png</code></li>
+    </ul>
+    </body></html>""")
+
+    with open(os.path.join(viz_dir, "index.html"), "w") as f:
+        f.write("\n".join(html))
+
+    # ---------- SUMMARY ----------
+    stats = {
+        "study_name": study.study_name,
+        "n_completed_trials": int(len(df)),
+        "n_pareto_trials": int(len(pareto_df)),
+        "has_constraints": bool(has_constraints),
+        "n_feasible_trials": int(len(feasible_trials)),
+        "objectives": ["val_sample_pr_auc (max)", "val_fp_per_min (min)"],
+        "objective_index_map": OBJECTIVE_INDEX
     }
     with open(os.path.join(viz_dir, "study_stats.json"), "w") as f:
         json.dump(stats, f, indent=2)

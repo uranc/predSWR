@@ -941,8 +941,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
         # --- derive total steps from dataset config ---
         steps_per_epoch = int(params.get('ESTIMATED_STEPS_PER_EPOCH', params.get('steps_per_epoch', 1000)))
-        epochs = int(params.get('NO_EPOCHS', 250))
-        total_steps = max(1, steps_per_epoch * epochs)
+        total_steps = float(params.get('TOTAL_STEPS', 100000))
 
         lr_schedule = WarmStableCool(
             base_lr=params['LEARNING_RATE'],
