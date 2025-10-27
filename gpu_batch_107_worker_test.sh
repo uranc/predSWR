@@ -4,7 +4,7 @@
 #SBATCH --gres=gpu:rtxa6000:1
 #SBATCH --cpus-per-gpu=4
 #SBATCH --mem-per-cpu=7800
-#SBATCH --time=00-12:59:00
+#SBATCH --time=00-06:59:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cem.uran@esi-frankfurt.de
 #SBATCH --gres-flags=enforce-binding

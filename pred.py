@@ -50,7 +50,7 @@ def objective_triplet(trial):
             }
 
     # Dynamic learning rate range
-    learning_rate = trial.suggest_float('learning_rate', 6e-3, 1.5e-2, log=True)
+    learning_rate = 1e-2 #trial.suggest_float('learning_rate', 6e-3, 1.5e-2, log=True)
     # learning_rate = 3e-3
     params['LEARNING_RATE'] = learning_rate
 
@@ -63,7 +63,7 @@ def objective_triplet(trial):
     # Base parameters
     params['TOTAL_STEPS'] = 50 * 1000  # Assuming 1000 steps per epoch for 300 epochs
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 500
+    params['NO_EPOCHS'] = 250
     params['TYPE_MODEL'] = 'Base'
 
     arch_lib = ['MixerOnly', 'MixerHori',
@@ -99,14 +99,6 @@ def objective_triplet(trial):
         from model.input_proto_new import rippleAI_load_dataset
         # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
 
-
-        # Set a reasonable steps_per_epoch value - much smaller than 1500 for initial testing
-        # params['steps_per_epoch'] = 1200  # Increase gradually if training works
-
-        # Add debug lines
-        # print("Setting up triplet dataset with steps_per_epoch:", params['steps_per_epoch'])
-        # print("Batch size:", params['BATCH_SIZE'])
-
     # pdb.set_trace()
     # Timing parameters remain the same
     params['NO_TIMEPOINTS'] = 64#trial.suggest_categorical('NO_TIMEPOINTS', [32, 64, 128])
@@ -128,40 +120,86 @@ def objective_triplet(trial):
     # params['LOSS_NEGATIVES'] = trial.suggest_categorical('LOSS_NEGATIVES', [1, 10, 30, 100, 1000])
     # # params['LOSS_WEIGHT'] = 7.5e-4
 
+    # params['LOSS_WEIGHT'] = 1.0
+    # params['LOSS_SupCon']    = 1.0#trial.suggest_float("LOSS_SupCon",    2.0, 40.0, log=True)
+    # # params['LOSS_TupMPN']    = trial.suggest_float("LOSS_TupMPN",    10.0, 80.0, log=True)
+
+    # # params['SG_START_RATIO'] = 0.00
+    # # params['SG_END_RATIO']   = 0.35
+    # # Circle loss knobs
+    # params['CIRCLE_m']     = trial.suggest_float('CIRCLE_m',     0.20, 0.45)
+    # params['CIRCLE_gamma'] = trial.suggest_float('CIRCLE_gamma',  8.0, 64.0, log=True)
+
+    # # Circle loss global weight (keep your old name for continuity if you want)
+    # params['LOSS_TupMPN']  = trial.suggest_float("LOSS_TupMPN", 10.0, 300.0, log=True)
+    # params['LOSS_Circle']  = params['LOSS_TupMPN']  # alias, circle-only study    
+    # params['LOSS_NEGATIVES'] = trial.suggest_float("LOSS_NEGATIVES", 20.0, 30.0, log=True)
+    # params['LOSS_TV'] = trial.suggest_float("LOSS_TV", 1e-3, 8e-1, log=True)
     params['LOSS_WEIGHT'] = 1.0
-    params['LOSS_SupCon']    = 1.0#trial.suggest_float("LOSS_SupCon",    2.0, 40.0, log=True)
-    # params['LOSS_TupMPN']    = trial.suggest_float("LOSS_TupMPN",    10.0, 80.0, log=True)
 
-    # params['SG_START_RATIO'] = 0.00
-    # params['SG_END_RATIO']   = 0.35
-    # Circle loss knobs
-    params['CIRCLE_m']     = trial.suggest_float('CIRCLE_m',     0.20, 0.45)
-    params['CIRCLE_gamma'] = trial.suggest_float('CIRCLE_gamma',  8.0, 64.0, log=True)
+    params.update({
+        "CIRCLE_m": 0.32, "CIRCLE_gamma": 20.0,
+        "LOSS_Circle": 60.0, "LOSS_SupCon": 0.5, "SUPCON_T": 0.1,
+        "BCE_ANC_ALPHA": 2.0, "BCE_POS_ALPHA": 2.0,
+        "LOSS_NEGATIVES_MIN": 4.0, "LOSS_NEGATIVES": 26.0,
+        "LOSS_TV": 0.30, "SMOOTH_TYPE": "tMSE", "SMOOTH_SPACE": "logit", "SMOOTH_TAU": 3.5,
+        "CLF_SCALE": 0.30,
+        # ramps — keep as you had; no tuning needed
+        "RAMP_DELAY": 0.01 * params.get("TOTAL_STEPS", 100000),
+        "RAMP_STEPS": 0.25 * params.get("TOTAL_STEPS", 100000),
+        "NEG_RAMP_DELAY": 0.05 * params.get("TOTAL_STEPS", 100000),
+        "NEG_RAMP_STEPS": 0.45 * params.get("TOTAL_STEPS", 100000),
+        "TV_DELAY": 0.10 * params.get("TOTAL_STEPS", 100000),
+        "TV_DUR":   0.30 * params.get("TOTAL_STEPS", 100000),
+    })
 
-    # Circle loss global weight (keep your old name for continuity if you want)
-    params['LOSS_TupMPN']  = trial.suggest_float("LOSS_TupMPN", 10.0, 300.0, log=True)
-    params['LOSS_Circle']  = params['LOSS_TupMPN']  # alias, circle-only study    
-    params['LOSS_NEGATIVES'] = trial.suggest_float("LOSS_NEGATIVES", 20.0, 30.0, log=True)
-    params['LOSS_TV'] = trial.suggest_float("LOSS_TV", 1e-3, 8e-1, log=True)
-    
+    # ---- Metric: Circle + SupCon (time-averaged sims) ----
+    params["CIRCLE_m"]     = trial.suggest_categorical("CIRCLE_m",     [0.30, 0.32, 0.34, 0.36])
+    params["CIRCLE_gamma"] = trial.suggest_categorical("CIRCLE_gamma", [18, 20, 22, 24])
+    params["LOSS_Circle"]  = trial.suggest_categorical("LOSS_Circle",  [40.0, 60.0, 80.0])
+
+    # SupCon kept as a stabilizer; grid chosen so (LOSS_SupCon / SUPCON_T) ≤ 10
+    params["LOSS_SupCon"]  = trial.suggest_categorical("LOSS_SupCon",  [0.25, 0.50, 1.00])
+    params["SUPCON_T"]     = trial.suggest_categorical("SUPCON_T",     [0.10, 0.15])
+
+    # ---- Classifier weights + FP pressure ----
+    params["BCE_ANC_ALPHA"]      = trial.suggest_categorical("BCE_ANC_ALPHA", [1.0, 2.0, 4.0])
+    params["BCE_POS_ALPHA"]      = trial.suggest_categorical("BCE_POS_ALPHA", [1.0, 2.0, 4.0])
+    params["LOSS_NEGATIVES_MIN"] = trial.suggest_categorical("LOSS_NEGATIVES_MIN", [2.0, 4.0])
+    params["LOSS_NEGATIVES"]     = trial.suggest_categorical("LOSS_NEGATIVES",     [24.0, 26.0, 28.0])
+    params["CLF_SCALE"]          = trial.suggest_categorical("CLF_SCALE",          [0.25, 0.30, 0.35])
+
+    # ---- Temporal smoothing (truncated |Δlogit|) ----
+    params["LOSS_TV"]     = trial.suggest_categorical("LOSS_TV",  [0.20, 0.30, 0.40])
+    params["SMOOTH_TAU"]  = 3.5#trial.suggest_categorical("SMOOTH_TAU", [3.0, 3.5, 4.0])
+    params["SMOOTH_TYPE"] = "tMSE"
+    params["SMOOTH_SPACE"]= "logit"
+
+    # ---- Gate sparsity (keeps dead/noisy channels closed) ----
+    params["l1_gate"] = trial.suggest_categorical("l1_gate", [1e-5, 3e-5, 1e-4])
+
+    # =====================  FIXED RIDGE / CONSTANTS  =====================
+    # Optimizer / schedule
+    params["LEARNING_RATE"] = 1e-2
+    params["WEIGHT_DECAY"]  = 1e-4
+    params["CLIP_NORM"]     = 1.5
+
+    # Ramps (keep constant for stability this round)
+    ts = float(params.get("TOTAL_STEPS", 150000))
+    params["RAMP_DELAY"]     = 0.01 * ts
+    params["RAMP_STEPS"]     = 0.25 * ts
+    params["NEG_RAMP_DELAY"] = 0.05 * ts
+    params["NEG_RAMP_STEPS"] = 0.45 * ts
+    params["TV_DELAY"]       = 0.10 * ts
+    params["TV_DUR"]         = 0.30 * ts
+
+
     ax = 25#trial.suggest_int('AX', 25, 85, step=20)
     gx = 200#350#trial.suggest_int('GX', 150, 400, step=100)
 
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     # params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
     params['TYPE_LOSS'] = 'FocalAx{:03d}Gx{:03d}'.format(ax, gx)
-
-    # entropyLib = [0, 0.005, 0.5, 1]
-    # entropy_ind = trial.suggest_categorical('HYPER_ENTROPY', [0,1,2,3])
-    # if entropy_ind > 0:
-    #     params['HYPER_ENTROPY'] = entropyLib[entropy_ind]
-    # params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 5.0, log=True)
-    # params['TYPE_LOSS'] += 'Entropy'
-
-    # params['HYPER_TMSE'] = trial.suggest_float('HYPER_TMSE', 0.000001, 10.0, log=True)
-    # params['HYPER_BARLOW'] = 2e-5
-    # params['HYPER_BARLOW'] = trial.suggest_float('HYPER_BARLOW', 0.000001, 10.0, log=True)
-    # params['HYPER_MONO'] = trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
     params['HYPER_MONO'] = 0 #trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
 
     # Model parameters matching training format
@@ -181,7 +219,7 @@ def objective_triplet(trial):
         dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
-    params['NO_FILTERS'] = 32 #trial.suggest_categorical('NO_FILTERS', [32, 64, 128])
+    params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [24, 32, 48])
     # params['NO_FILTERS'] = 64
 
     # Remove the hardcoded use_freq and derive it from tag instead
@@ -220,54 +258,28 @@ def objective_triplet(trial):
     params['TYPE_ARCH'] = arch_str
 
 
-    # Use multiple binary flags for a combinatorial categorical parameter
-    # params['USE_ZNorm'] = trial.suggest_categorical('USE_ZNorm', [True, False])
-    # if params['USE_ZNorm']:
-    # params['TYPE_ARCH'] += 'ZNorm'
-    # params['USE_L2N'] = trial.suggest_categorical('USE_L2N', [True, False])
-    # if params['USE_L2N']:
-    #     params['TYPE_ARCH'] += 'L2N'
-    # params['TYPE_ARCH'] += 'L2N'
+    # params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
+    # if params['USE_Aug']:
+    #     params['TYPE_ARCH'] += 'Aug'
+    params['TYPE_ARCH'] += 'Aug'
 
 
-    params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
-    if params['USE_Aug']:
-        params['TYPE_ARCH'] += 'Aug'
-    # params['TYPE_ARCH'] += 'Aug'
+    # params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
+    # if params['USE_StopGrad']:
+    #     print('Using Stop Gradient for Class. Branch')
+    #     params['TYPE_ARCH'] += 'StopGrad'
+    params['TYPE_ARCH'] += 'StopGrad'
 
-
-    params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
-    if params['USE_StopGrad']:
-        print('Using Stop Gradient for Class. Branch')
-        params['TYPE_ARCH'] += 'StopGrad'
-    # params['TYPE_ARCH'] += 'StopGrad'
-
-    params['USE_Attention'] = trial.suggest_categorical('USE_Attention', [True, False])
-    if params['USE_Attention']:
-        print('Using Attention')
-        params['TYPE_ARCH'] += 'Att'
-    # params['TYPE_ARCH'] += 'Att'
-        
-    # params['USE_Attention'] = trial.suggest_categorical('USE_Online', [True, False])
+    # # ensure StopGrad ON via architecture token you already use
+    # if 'StopGrad' not in params.get('TYPE_ARCH', ''):
+    #     params['TYPE_ARCH'] += 'StopGrad'    
+    # params['USE_Attention'] = trial.suggest_categorical('USE_Attention', [True, False])
     # if params['USE_Attention']:
     #     print('Using Attention')
-    params['TYPE_ARCH'] += 'Online'        
-    # if (not 'Cori' in params['TYPE_ARCH']) and  (not 'SingleCh' in params['TYPE_MODEL']):
-    #     params['TYPE_LOSS'] += 'BarAug'
-    # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
-    # params['USE_CSD'] = trial.suggest_categorical('USE_CSD', [True, False])
-    # if params['USE_CSD']:
-    #     params['TYPE_ARCH'] += 'CSD'
-    # params['Dropout'] = trial.suggest_int('Dropout', 0, 10)
-    # params['USE_L2Reg'] = trial.suggest_categorical('USE_L2Reg', [True])#, False
-    # if params['USE_L2Reg']:
-    #     params['TYPE_LOSS'] += 'L2Reg'
-
-    # drop_lib = [0, 5, 10, 20]
-    # drop_ind = trial.suggest_categorical('Dropout', [0,1,2,3])
-    # print('Dropout rate:', drop_lib[drop_ind])
-    # if drop_ind > 0:
-    #     params['TYPE_ARCH'] += f"Drop{drop_lib[drop_ind]:02d}"
+    #     params['TYPE_ARCH'] += 'Att'
+    params['TYPE_ARCH'] += 'Att'
+        
+    params['TYPE_ARCH'] += 'Online'
 
     params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
 
@@ -359,16 +371,9 @@ def objective_triplet(trial):
         epochs=params['NO_EPOCHS'],
         callbacks=callbacks,
         verbose=1,
-        max_queue_size=8)       # how many batches to keep ready
-            # workers=4,               # >0  → background threads / procs
-        # use_multiprocessing=True,# True → processes, False → threads
+        max_queue_size=4)       # how many batches to keep ready
     hist = history.history
 
-    # tf.profiler.experimental.stop()
-    # val_event_pr_auc: 0.83 ‖ val_latency_weighted_f1: 0.71 ‖ val_tpr_at_fpmin: 0.88
-
-    # val_accuracy = (max(history.history['val_event_pr_auc'])+max(history.history['val_latency_weighted_f1']))/2
-    # val_accuracy_mean = (np.mean(history.history['val_event_pr_auc'])+np.mean(history.history['val_latency_weighted_f1']))/2
     def _best(xs, mode="max"):
         if not xs:  # empty list guard
             return float('nan')
@@ -380,29 +385,20 @@ def objective_triplet(trial):
     best_fp_min = _best(hist.get('val_fp_per_min', []),     "min")
     best_latency = _best(hist.get('val_latency_score', []),     "max")
 
+
+    # attrs for constraints/analysis
+    trial.set_user_attr("prauc",   float(best_pr_auc))
+    trial.set_user_attr("fpmin",   float(best_fp_min))
+    trial.set_user_attr("latency", float(best_latency))
+
     logger.info(
         f"Trial {trial.number} bests — PRAUC: {best_pr_auc:.4f} | "
         f"MCC: {best_mcc:.4f} | F1: {best_f1:.4f} | FP/min: {best_fp_min:.3f} | Latency: {best_latency:.4f}"
     )
     
-    # best_pr_auc  = _best(history.get('val_sample_pr_auc', []),   "max")
-    # best_mcc     = _best(history.get('val_sample_max_mcc', []),  "max")
-    # best_f1      = _best(history.get('val_sample_max_f1', []),   "max")
-    # best_fp_min  = _best(history.get('val_fp_per_min', []),      "min")
-
-    # ####################3
-    # val_accuracy = (max(history.history['val_event_pr_auc'])+max(history.history['val_f1']))/2
-    # val_accuracy_mean = (np.mean(history.history['val_event_pr_auc'])+np.mean(history.history['val_f1']))/2    
-    # val_accuracy = (val_accuracy + val_accuracy_mean)/2
-    # val_latency = np.mean(history.history['val_fp_per_min'])
-    # ######################
-    
-    # val_accuracy = (max(history.history['val_event_f1'])+max(history.history['val_f1']))/2
-    # val_accuracy_mean = (np.mean(history.history['val_event_f1'])+np.mean(history.history['val_f1']))/2
-    # val_accuracy = (val_accuracy + val_accuracy_mean)/2
-    # val_latency = np.mean(history.history['val_event_fp_rate'])
-    # Log results
-    # logger.info(f"Trial {trial.number} finished with val_accuracy: {val_accuracy:.4f}, val_fprate: {val_latency:.4f}")
+    # prune obvious bug runs
+    if (best_fp_min is not None and best_fp_min <= 0.0) or (best_latency is not None and best_latency >= 0.99):
+        raise optuna.TrialPruned("Bug signature (fp==0 or latency≈1).")
 
     # Save trial information
     trial_info = {
@@ -419,8 +415,7 @@ def objective_triplet(trial):
     with open(f"{study_dir}/trial_info.json", 'w') as f:
         json.dump(trial_info, f, indent=4)
 
-    return best_pr_auc, best_fp_min, best_latency
-    # return val_accuracy, val_latency #, final_latency
+    return best_pr_auc, best_fp_min
 
 # tf.config.run_functions_eagerly(True)
 parser = argparse.ArgumentParser(
@@ -2460,6 +2455,8 @@ elif mode == 'tune_server':
     import logging
     import os
     from optuna.samplers import NSGAIISampler
+    from optuna.storages import RDBStorage
+    from optuna.samplers import GPSampler
 
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
@@ -2478,27 +2475,45 @@ elif mode == 'tune_server':
     shutil.copytree('./model', model_dir)
     shutil.copy2('./pred.py', f"{model_dir}/pred.py")
 
-    # Configure storage with more resilient settings
+    # robust SQLite storage
     storage = optuna.storages.RDBStorage(
-        url=f"sqlite:///studies/{param_dir}/{param_dir}.db",
+        url=f"sqlite:///studies/{param_dir}/{param_dir}.db?timeout=300",  # move timeout to URL
         heartbeat_interval=1,
-        grace_period=600,  # Increased grace period
-        failed_trial_callback=lambda study_id, trial_id: True,  # Auto-fail dead trials
+        grace_period=600,
+        failed_trial_callback=lambda study_id, trial_id: True,
         engine_kwargs={
             "connect_args": {
-                "timeout": 300,  # Longer timeout
-                "isolation_level": "IMMEDIATE"  # Better concurrent access
+                # keep it simple for SQLite; don't set isolation_level here
+                # "check_same_thread": False,  # optional if you ever use threads
             }
-        }
+        },
     )
-    
+
+    from optuna.samplers import TPESampler  # <- use MOTPE via TPESampler
+
+    sampler = TPESampler(
+        multivariate=True,      # joint modeling across params
+        group=True,             # handles conditional/subspace grouping
+        constant_liar=True,     # parallel-friendly; avoids collisions
+        n_startup_trials=64,    # pure random warmup (bump if your space is large)
+        n_ei_candidates=64,     # more candidate draws for better proposals
+        seed=1337,
+    )
+
     study = optuna.create_study(
-    study_name=param_dir,
-    storage=storage,
-    directions=["maximize", "minimize", "maximize"],  # Maximize F1, minimize FP
-    # directions=["maximize", "maximize", "maximize", "minimize"],
-    load_if_exists=True,
-    sampler=optuna.samplers.GPSampler())
+        study_name=param_dir,
+        storage=storage,
+        directions=["maximize", "minimize"],  # PR-AUC up, FP/min down
+        load_if_exists=True,
+        sampler=sampler,
+    )
+    # study = optuna.create_study(
+    # study_name=param_dir,
+    # storage=storage,
+    # directions=["maximize", "minimize", "maximize"],  # Maximize F1, minimize FP
+    # # directions=["maximize", "maximize", "maximize", "minimize"],
+    # load_if_exists=True,
+    # sampler=optuna.samplers.GPSampler())
 
     print("Resilient async study server started.")
     print("Study name:", study.study_name)
@@ -2513,11 +2528,24 @@ elif mode == 'tune_worker':
     logging.basicConfig(level=logging.INFO)
     logger = logging.getLogger(__name__)
 
-    # Configure worker with auto-retry
+
+    from optuna.samplers import TPESampler
+
+    sampler = TPESampler(
+        multivariate=True, group=True, constant_liar=True,
+        n_startup_trials=64, n_ei_candidates=64, seed=1337
+    )
+
     study = optuna.load_study(
         study_name=param_dir,
-        storage=f"sqlite:///studies/{param_dir}/{param_dir}.db"
+        storage=f"sqlite:///studies/{param_dir}/{param_dir}.db",
+        sampler=sampler,                         # <- important
     )
+    # # Configure worker with auto-retry
+    # study = optuna.load_study(
+    #     study_name=param_dir,
+    #     storage=f"sqlite:///studies/{param_dir}/{param_dir}.db"
+    # )
     
     # Optimize for 1000 trials
     if 'TripletOnly'.lower() in tag.lower():

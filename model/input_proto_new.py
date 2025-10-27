@@ -107,7 +107,7 @@ def augment_window(x, rng, p):
         x += noise
 
     # 3) Channel dropout / corruption
-    if rng.random() < p.get('AUG_DROP_PROB', 0.2):
+    if rng.random() < p.get('AUG_DROP_PROB', 0.3):
         ch = rng.integers(0, x.shape[1])
         mode = rng.choice(["zero", "gauss", "swap"])
         if mode == "zero":
@@ -118,6 +118,16 @@ def augment_window(x, rng, p):
             ch2 = rng.integers(0, x.shape[1])
             if ch2 != ch:
                 x[:, ch] = x[:, ch2]
+
+    # 2) Laminar roll (shift channels up/down)
+    if rng.random() < p.get('AUG_CH_ROLL_PROB', 0.3):
+        shift = int(rng.integers(-1, 2))  # -2..+2
+        x = np.roll(x, shift=shift, axis=1)
+
+    # 3) Random re-reference (median across channels)
+    if rng.random() < p.get('AUG_REREF_PROB', 0.2):
+        ref = np.median(x, axis=1, keepdims=True)
+        x = x - ref        
 
     # 4) Transient artifact (short spike/jump)
     if rng.random() < p.get('AUG_ARTIFACT_PROB', 0.1):

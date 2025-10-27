@@ -941,7 +941,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
         # --- derive total steps from dataset config ---
         steps_per_epoch = int(params.get('ESTIMATED_STEPS_PER_EPOCH', params.get('steps_per_epoch', 1000)))
-        epochs = 100#int(params.get('NO_EPOCHS', 100))
+        epochs = int(params.get('NO_EPOCHS', 250))
         total_steps = max(1, steps_per_epoch * epochs)
 
         lr_schedule = WarmStableCool(
@@ -1084,8 +1084,8 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
         # ---- Classification head ----
         h = tf.stop_gradient(feats) if 'StopGrad' in params['TYPE_ARCH'] else feats
-        # h = LayerNormalization(name='emb_class')(h
-        h = LayerNormalization()(h)
+        h = LayerNormalization(name='emb_class')(h)
+        # h = LayerNormalization()(h)
         h = Conv1D(64, 
                     1, 
                     kernel_initializer='glorot_uniform', 
@@ -1301,312 +1301,6 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         model.load_weights(params['WEIGHT_FILE'])#, skip_mismatch=False, by_name=False)
 
     return model
-
-def build_DBI_Patch(params):
-    """Builds model with concatenated outputs based on actual PatchAD returns."""
-
-    # this_activation = 'relu'
-    if params['TYPE_REG'].find('RELU')>-1:
-        this_activation = 'relu'
-    elif params['TYPE_REG'].find('GELU')>-1:
-        this_activation = gelu
-    elif params['TYPE_REG'].find('ELU')>-1:
-        this_activation = ELU(alpha=1)
-    else:
-        this_activation = 'linear'
-
-    # optimizer
-    if params['TYPE_REG'].find('AdamW')>-1:
-        # Increase initial learning rate for better exploration
-        initial_lr = params['LEARNING_RATE']
-        this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, weight_decay=1e-4, clipnorm=1.0)
-        # Optional schedule (else keep constant LR)
-        if params.get("USE_LR_SCHEDULE", False):
-            sched = WarmStableCool(
-                base_lr=params["LEARNING_RATE"],
-                warmup_steps=int(0.02 * T_steps),
-                cool_start=int(0.80 * T_steps),
-                total_steps=T_steps,
-                final_scale=0.1
-            )
-            this_optimizer.learning_rate = sched
-    elif params['TYPE_REG'].find('Adam')>-1:
-        this_optimizer = tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE'])
-    elif params['TYPE_REG'].find('SGD')>-1:
-        this_optimizer = tf.keras.optimizers.SGD(learning_rate=params['LEARNING_RATE'], momentum=0.9)
-
-    if params['TYPE_REG'].find('Glo')>-1:
-        print('Using Glorot')
-        this_kernel_initializer = 'glorot_uniform'
-    elif params['TYPE_REG'].find('He')>-1:
-        print('Using He')
-        this_kernel_initializer = 'he_normal'
-    model_type = params['TYPE_MODEL']
-    n_filters = params['NO_FILTERS']
-    n_kernels = params['NO_KERNELS']
-    n_dilations = params['NO_DILATIONS']
-    if params['TYPE_ARCH'].find('Drop')>-1:
-        r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
-        print('Using Dropout')
-        print(r_drop)
-    else:
-        r_drop = 0.0
-
-    hori_shift = 0
-
-    # Input layer
-    input_layer = Input(shape=(params['seq_length'], params['input_channels']))
-
-    # Create PatchAD model
-    patch_ad = PatchAD(
-        input_channels=params['input_channels'],
-        seq_length=params['seq_length'],
-        patch_sizes=params['patch_sizes'],
-        d_model=params['NO_FILTERS'],
-        e_layer=params['NO_KERNELS'],
-        dropout=params.get('dropout', 0.1),
-        activation=params.get('activation', 'elu'), # Ensure this matches MLPBlock's activ_name if needed
-        norm=params.get('patch_ad_norm', 'ln')
-    )
-
-    # Get all PatchAD outputs
-    num_dists, size_dists, num_mx, size_mx, reconstruction = patch_ad(input_layer)
-
-    # Get target sequence length from reconstruction
-    target_seq_length = tf.shape(reconstruction)[1]
-    d_model = params['NO_FILTERS']
-    batch_size = tf.shape(input_layer)[0]
-
-    def upsample_and_combine_repeat(tensor_list, target_len_tensor, name_prefix):
-        """Upsamples using tf.repeat (inter-patch style) and concatenates."""
-        upsampled_tensors = []
-        if not tensor_list: # Handle empty list case
-            return None
-        for i, tensor in enumerate(tensor_list):
-            B_ = tf.shape(tensor)[0]
-            current_len = tf.shape(tensor)[1]
-            D_ = tf.shape(tensor)[2]
-
-            repeats = tf.cast(tf.math.ceil(tf.cast(target_len_tensor, tf.float32) / tf.cast(current_len, tf.float32)), tf.int32)
-            repeated = tf.repeat(tensor, repeats=repeats, axis=1)
-
-            sliced_tensor = tf.slice(repeated, [0, 0, 0], tf.stack([B_, target_len_tensor, D_]))
-            upsampled_tensors.append(sliced_tensor)
-
-        if not upsampled_tensors: # Should not happen if tensor_list was not empty initially
-             return None
-        # Concatenate along the feature dimension
-        return Concatenate(axis=2, name=f'{name_prefix}_concat')(upsampled_tensors)
-
-    def upsample_and_combine_tile(tensor_list, target_len_tensor, name_prefix):
-        """Upsamples using tf.tile (intra-patch style) and concatenates."""
-        upsampled_tensors = []
-        if not tensor_list: # Handle empty list case
-            return None
-        for i, tensor in enumerate(tensor_list):
-            B_ = tf.shape(tensor)[0]
-            current_len = tf.shape(tensor)[1]
-            D_ = tf.shape(tensor)[2]
-
-            repeats_factor = tf.cast(tf.math.ceil(tf.cast(target_len_tensor, tf.float32) / tf.cast(current_len, tf.float32)), tf.int32)
-
-            reshaped = tf.reshape(tensor, tf.stack([B_, current_len, 1, D_]))
-            multiples = tf.stack([1, 1, repeats_factor, 1]) # Multiples for tf.tile
-            tiled = tf.tile(reshaped, multiples)
-
-            # Reshape back: current_len * repeats_factor can be a tensor
-            # Ensure the shape for reshape uses tensor multiplication
-            tiled_flat = tf.reshape(tiled, tf.stack([B_, current_len * repeats_factor, D_]))
-
-            sliced_tensor = tf.slice(tiled_flat, [0, 0, 0], [B_, target_len_tensor, D_])
-            upsampled_tensors.append(sliced_tensor)
-
-        if not upsampled_tensors: # Should not happen if tensor_list was not empty initially
-            return None
-        # Concatenate along the feature dimension
-        return Concatenate(axis=2, name=f'{name_prefix}_concat')(upsampled_tensors)
-
-
-    # pdb.set_trace()
-    # Upsample and combine features from different scales using repeat/tile
-    combined_num_dists = upsample_and_combine_repeat(num_dists, target_seq_length, 'num_dists')
-    combined_size_dists = upsample_and_combine_tile(size_dists, target_seq_length, 'size_dists')
-    combined_num_mx = upsample_and_combine_repeat(num_mx, target_seq_length, 'num_mx')
-    combined_size_mx = upsample_and_combine_tile(size_mx, target_seq_length, 'size_mx')
-
-    # # Create upsampling layers
-    # upsample_repeat = UpsampleAndCombineRepeat(name_prefix='num_dists')
-    # upsample_tile = UpsampleAndCombineTile(name_prefix='size_dists')
-
-    # # Apply upsampling
-    # combined_num_dists = upsample_repeat([num_dists, target_seq_length])
-    # combined_size_dists = upsample_tile([size_dists, target_seq_length])
-    # combined_num_mx = upsample_repeat([num_mx, target_seq_length])
-    # combined_size_mx = upsample_tile([size_mx, target_seq_length])
-
-    # pdb.set_trace()
-    # --- Classification Head ---
-    # Combine features relevant for classification (e.g., distributions)
-    cls_features = tf.concat([
-        combined_num_dists,
-        combined_size_dists,
-        combined_num_mx, # Optional
-        combined_size_mx
-    ], axis=-1, name='cls_features_concat') # Shape [B, L, D*2 or D*4]
-
-    # Apply L2 Normalization if specified
-    if params.get('TYPE_ARCH', '').find('L2N') > -1:
-        cls_features = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1), name='l2_norm_cls')(cls_features)
-
-    # Final classification layer
-    classification_output = Dense(1, kernel_initializer=tf.keras.initializers.GlorotUniform(),
-                                  use_bias=True,
-                                  activation='sigmoid', # Use sigmoid for probability
-                                  name='classification_output')(cls_features) # Shape [B, L, 1]
-
-    # --- Final Model Output ---
-    if params['mode'] == 'predict':
-        final_output = tf.concat([reconstruction, classification_output], axis=-1)
-        final_output = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(final_output) # [B, 1, C+1]
-    else:
-        final_output = tf.concat([
-            reconstruction,                    # [B, L, C]
-            classification_output,            # [B, L, 1]
-            combined_num_dists,              # [B, L, D*(Patch*Levels)]
-            combined_size_dists,             # [B, L, D*(Patch*Levels)]
-            combined_num_mx,                 # [B, L, D*(Patch*Levels)]
-            combined_size_mx                 # [B, L, D*(Patch*Levels)]
-        ], axis=-1)
-
-    # Create the Model
-    model = Model(inputs=input_layer, outputs=final_output)
-
-    # Set attribute for metrics (indicates reconstruction is present)
-    model._is_classification_only = False
-    hori_shift = 0 # Set horizon shift for metrics
-    loss_weight = params.get('LOSS_WEIGHT', 1.0) # Default to 1.0 if not specified
-    loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params)
-    # loss_fn = combined_mse_fbfce_loss(params)
-    # Compile the model
-    # Ensure `combined_mse_fbfce_loss` is adapted for this output structure
-    model.compile(
-        optimizer=tf.keras.optimizers.Adam(params.get('LEARNING_RATE', 1e-3)),
-        # loss=combined_mse_fbfce_loss(params), # Use the updated loss function below
-        loss = loss_fn,
-        metrics=[MaxF1MetricHorizon(model=model),
-                 EventAwareF1(model=model),
-                 EventFalsePositiveRateMetric(model=model)]
-    )
-
-    return model
-
-def build_CAD_Downsampler(input_shape=(1536*2, 8), target_length=128*2, embed_dim=32):
-    """
-    Causal Context-Aware Downsampler with ELU activations and residual connections.
-    Downsamples from 1024 → 128 timepoints.
-    """
-    inputs = Input(shape=input_shape, name="highfreq_input")
-    x = inputs
-
-    num_blocks = int(tf.math.log(float(input_shape[0]) / target_length) / tf.math.log(2.0))
-    for i in range(num_blocks):
-        # Store the input before processing for skip connection
-        input_layer = x
-
-        # Apply convolution with downsampling (stride=2)
-        x = layers.Conv1D(embed_dim,
-                          kernel_size=5 if i == 0 else 3,
-                          strides=3 if i == 0 else 2,
-                          padding="causal",
-                          activation=None,
-                        name=f"conv_block_{i}")(x)
-        x = layers.LayerNormalization()(x)
-        x = layers.ELU()(x)
-
-        # Use average pooling to downsample the input to match conv output dimensions
-        pooled_input = layers.AveragePooling1D(pool_size=2, strides=2, padding="same")(input_layer)
-
-        # Project channels if needed (regardless of sequence length)
-        if pooled_input.shape[-1] != embed_dim:
-            pooled_input = layers.Conv1D(embed_dim, kernel_size=1, padding="same")(pooled_input)
-
-        # Always trim pooled_input to match x's length using a Lambda layer
-        # This avoids comparing symbolic tensors directly
-        pooled_input = layers.Lambda(
-            lambda tensors: tensors[0][:, :tf.shape(tensors[1])[1], :],
-            name=f"trim_skip_{i}"
-        )([pooled_input, x])
-
-        # Add the transformed input as a skip connection
-        x = layers.Add()([x, pooled_input])
-
-    # Final projection to match original channel dim (8)
-    x = layers.Conv1D(input_shape[1], kernel_size=1, activation="elu")(x)
-
-    return Model(inputs, x, name="CAD_Downsampler")
-
-def build_DBI_TCN_CADMixerOnly(input_timepoints, input_chans=8, params=None, pretrained_tcn=None):
-    print('Input Timepoints', input_timepoints)
-    # optimizer
-    if params['TYPE_REG'].find('AdamW')>-1:
-        # Increase initial learning rate for better exploration
-        initial_lr = params['LEARNING_RATE'] * 2.0
-        this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, clipnorm=1.0)
-    elif params['TYPE_REG'].find('Adam')>-1:
-        this_optimizer = tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE'])
-    elif params['TYPE_REG'].find('SGD')>-1:
-        this_optimizer = tf.keras.optimizers.SGD(learning_rate=params['LEARNING_RATE'], momentum=0.9)
-
-    downsample_dim = params['NO_FILTERS']
-    # horizontal shift
-    hori_shift = 0
-    if params['TYPE_ARCH'].find('Only')>-1:
-        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Only')+4:params['TYPE_ARCH'].find('Only')+6])/1000*2500)
-        print('Using Horizon Timesteps:', hori_shift)
-
-    print('Using Loss Weight:', params['LOSS_WEIGHT'])
-    loss_weight = params['LOSS_WEIGHT']
-    # model to be trained
-    # with K.name_scope('CAD'):  # name scope used to make sure weights get unique names
-    # CAD = build_CAD_Downsampler(input_shape=(None, 8), target_length=input_timepoints, embed_dim=downsample_dim)  # CAD module
-    CAD = build_CAD_Downsampler(input_shape=(1104, 8), target_length=92, embed_dim=downsample_dim)  # CAD module
-
-    # Inputs
-    X_highfreq = Input(shape=(None, 8), name="X_highfreq")     # 30 kHz input
-    # y_label = Input(shape=(T,), name="y_label")                # label for classification (same T as TCN output)
-
-    # CAD module
-    X_downsampled = CAD(X_highfreq)                            # Output shape: (96, 8)
-
-    # Frozen TCN
-    TCN_output = pretrained_tcn(X_downsampled)
-    # pdb.set_trace()
-    TCN_output = Lambda(lambda x: x[:, -1:, :], name='Last_Output')(TCN_output)  # Output shape: (128, 8)
-    # TCN_output = Lambda(lambda x: x[:, -input_timepoints:, :], name='Last_Output')(TCN_output)  # Output shape: (128, 8)
-
-
-    model = Model(inputs=X_highfreq, outputs=TCN_output)
-    model._is_classification_only = True
-    # model._is_cad = True
-
-    f1_metric = MaxF1MetricHorizon(model=model)
-    event_f1_metric = EventAwareF1(model=model)
-    fp_event_metric = EventFalsePositiveRateMetric(model=model)
-
-    # Create loss function without calling it
-    loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-
-    model.compile(optimizer=this_optimizer,
-                  loss=loss_fn,
-                  metrics=[f1_metric, event_f1_metric, fp_event_metric])
-
-    if params['WEIGHT_FILE']:
-        print('load model')
-        model.load_weights(params['WEIGHT_FILE'])
-
-    return model
-
-
 
 #################### Custom Layers ####################
 class CSDLayer(Layer):
@@ -2110,990 +1804,1485 @@ class FPperMinMetric(tf.keras.metrics.Metric):
         self.fp.assign(0.); self.nwin.assign(0.)
 
 
-def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None):
-    flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
-    is_classification_only = 'Only' in  params['TYPE_ARCH']
-    is_cad = 'CAD' in params['TYPE_ARCH']
-    is_patch = 'Patch' in params['TYPE_ARCH']
-    """
-    Custom loss function that combines focal binary cross-entropy (FBFCE) with additional terms.
-    Args:
-    - y_true: Ground truth labels.
-    - y_pred: Predicted labels.
-    - loss_weight: Weight for the additional loss terms.
-    - horizon: Horizon for prediction.
-    - params: Dictionary of parameters.
-    - model: Keras model.
-    - this_op: Optional additional operation.
-    Returns:
-    - Combined loss value.
-    """
-    @tf.function
-    def loss_fn(y_true, y_pred, loss_weight=loss_weight, horizon=horizon, flag_sigmoid=flag_sigmoid, is_classification_only=is_classification_only, is_cad=is_cad):
-        # Get the last dimension size and determine mode
-        # print(y_true.shape)
-        # print(y_pred.shape)
-        # pdb.set_trace()
-
-        def extract_param_from_loss_type(loss_type, param_prefix, default_value):
-            """Helper function to extract parameters from loss type string"""
-            try:
-                if param_prefix in loss_type:
-                    idx = loss_type.find(param_prefix) + len(param_prefix)
-                    param_str = loss_type[idx:idx+3]
-                    return float(param_str) / 100.0
-                return default_value
-            except:
-                return default_value
-
-        def compute_classification_loss(y_true_exp, y_pred_exp, sample_weight, params):
-            loss_type = params['TYPE_LOSS']
-
-            # Initialize the loss variable
-            classification_loss = 0.0
-
-            # FocalSmooth loss
-            if 'FocalSmooth' in loss_type:
-                # Extract alpha and gamma parameters
-                alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
-                gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
-
-                focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
-                    apply_class_balancing=True,
-                    alpha=alpha,
-                    gamma=gamma,
-                    label_smoothing=0.1,
-                    reduction=tf.keras.losses.Reduction.NONE
-                )
-                # pdb.set_trace()
-                loss_values = focal_loss(y_true_exp, y_pred_exp)
-                classification_loss = tf.reduce_mean(loss_values * sample_weight)
-
-            # SigmoidFoc loss
-            elif 'SigmoidFoc' in loss_type:
-                # Extract alpha and gamma parameters
-                alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
-                gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
-
-                focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
-                    apply_class_balancing=True,
-                    alpha=alpha,
-                    gamma=gamma,
-                    from_logits=flag_sigmoid,
-                    reduction=tf.keras.losses.Reduction.NONE
-                )
-                loss_values = focal_loss(y_true_exp, y_pred_exp)
-                classification_loss = tf.reduce_mean(loss_values * sample_weight)
-
-            # Focal loss
-            elif 'Focal' in loss_type:
-                # Extract alpha and gamma parameters
-                alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
-                gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
-
-                # print(f"Using Focal loss with alpha={alpha}, gamma={gamma}")
-
-                use_class_balancing = alpha > 0
-                focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
-                    apply_class_balancing=use_class_balancing,
-                    alpha=alpha if alpha > 0 else None,
-                    gamma=gamma,
-                    reduction=tf.keras.losses.Reduction.NONE
-                )
-                # pdb.set_trace()
-                loss_values = focal_loss(y_true_exp, y_pred_exp)
-                # pdb.set_trace()
-                classification_loss = tf.reduce_mean(loss_values)# * sample_weight)
-                # classification_loss = tf.reduce_mean(loss_values * sample_weight)
-
-            # Default to binary cross-entropy
-            else:
-                bce_loss = tf.keras.losses.BinaryCrossentropy(
-                    reduction=tf.keras.losses.Reduction.NONE
-                )
-                loss_values = bce_loss(y_true_exp, y_pred_exp)
-                classification_loss = tf.reduce_mean(loss_values * sample_weight)
-
-            return classification_loss
-
-        def add_extra_losses(base_loss, y_true_exp, y_pred_exp, sample_weight, params, model,
-                            prediction_targets, prediction_out, this_op):
-            # Start with the base loss
-            total_loss = base_loss
-            loss_type = params['TYPE_LOSS']
-
-            # Add TV Loss if specified (Total Variation - encourages smoothness)
-            if 'TV' in loss_type:
-                tv_factor = 1e-5
-                tv_loss = tv_factor * tf.reduce_sum(
-                    tf.image.total_variation(tf.expand_dims(y_pred_exp, axis=-1))
-                )
-                total_loss += tv_loss
-
-            # Add L2 smoothness loss - penalizes large changes between consecutive predictions
-            if 'L2' in loss_type:
-                l2_factor = 1e-5
-                l2_smooth_loss = l2_factor * tf.reduce_mean(
-                    tf.square(y_pred_exp[:, 1:] - y_pred_exp[:, :-1])
-                )
-                total_loss += l2_smooth_loss
-
-            # Add margin loss - encourages confident predictions
-            if 'Margin' in loss_type:
-                margin_factor = 1e-4
-                margin_loss = margin_factor * tf.reduce_mean(
-                    tf.squeeze(y_pred_exp * (1 - y_pred_exp))
-                )
-                total_loss += margin_loss
-
-            # Add entropy loss - encourages confident predictions for binary labels
-            if 'Entropy' in loss_type and 'HYPER_ENTROPY' in params:
-                entropy_factor = params['HYPER_ENTROPY']
-
-                # Calculate prediction entropy: -p*log(p) - (1-p)*log(1-p)
-                # Add small epsilon to avoid log(0)
-                epsilon = 1e-8
-                y_pred_squeezed = tf.squeeze(y_pred_exp, axis=-1)
-                y_true_squeezed = tf.squeeze(y_true_exp, axis=-1)
-
-                # Calculate binary entropy of predictions
-                entropy = -(y_pred_squeezed * tf.math.log(y_pred_squeezed + epsilon) +
-                        (1 - y_pred_squeezed) * tf.math.log(1 - y_pred_squeezed + epsilon))
-
-                # For binary labels (0/1), we want to minimize entropy for all predictions
-                # Higher penalty for incorrect low-confidence predictions, lower penalty for correct confident predictions
-                confidence_weight = tf.abs(y_true_squeezed - y_pred_squeezed) + 0.1  # Higher weight for incorrect predictions
-
-                # Weight entropy by confidence - penalize uncertainty more for incorrect predictions
-                weighted_entropy = entropy * confidence_weight
-
-                entropy_loss = tf.reduce_mean(weighted_entropy)
-                total_loss += entropy_factor * entropy_loss
-
-            # add false positive loss
-            if 'FalsePositive' in loss_type and 'HYPER_FALSEPOSITIVE' in params:
-                false_positive_factor = params['HYPER_FALSEPOSITIVE']
-                # False positive loss implementation
-                # FP = tf.reduce_sum(tf.cast((y_pred > threshold) & (y_true < 0.5), tf.float32))
-                # FP_loss = FP / (tf.reduce_sum(1 - y_true) + epsilon)
-                # FP_loss = tf.reduce_mean(tf.square(y_pred * (1 - y_true))) * lambda_fp
-
-                total_loss += false_positive_factor * false_positive_loss
-
-            # Add truncated MSE loss
-            if 'TMSE' in loss_type and 'HYPER_TMSE' in params:
-                tmse_factor = params['HYPER_TMSE']
-                # Truncated MSE loss implementation
-                tmse_loss = truncated_mse_loss(y_true_exp, y_pred_exp)
-                total_loss += tmse_factor * tmse_loss
-
-            # Early onset preference loss - encourages early detection
-            if 'Early' in loss_type:
-                early_factor = 0.1
-                if 'HYPER_EARLY' in params:
-                    early_factor = params['HYPER_EARLY']
-
-                def early_onset_loss():
-                    threshold = 0.5
-                    early_onset_threshold = 5
-                    penalty_factor = 0.1
-                    reward_factor = 0.05
-
-                    # Reshape for compatibility if needed
-                    y_true_sq = tf.squeeze(y_true_exp, axis=-1)
-                    y_pred_sq = tf.squeeze(y_pred_exp, axis=-1)
-
-                    # Calculate delay in detection - find first time predictions cross threshold
-                    detected_times = tf.argmax(tf.cast(y_pred_sq >= threshold, tf.int32), axis=1)
-                    true_event_times = tf.argmax(tf.cast(y_true_sq, tf.int32), axis=1)
-                    delay = detected_times - true_event_times
-
-                    # Penalty for late detections
-                    late_penalty = tf.where(delay > early_onset_threshold,
-                                            penalty_factor * tf.cast(delay - early_onset_threshold, tf.float32),
-                                            0.0)
-
-                    # Reward for slightly early detections
-                    early_reward = tf.where((delay < 0) & (delay >= -early_onset_threshold),
-                                        reward_factor * tf.cast(-delay, tf.float32),
-                                        0.0)
-
-                    # Combine penalty and reward terms
-                    onset_loss = tf.reduce_mean(late_penalty - early_reward)
-                    return onset_loss
-
-                # Only calculate early onset loss if there are actual events in the batch
-                has_events = tf.reduce_any(y_true_exp > 0.5)
-                early_loss = tf.cond(
-                    has_events,
-                    early_onset_loss,
-                    lambda: 0.0
-                )
-                total_loss += early_factor * early_loss
-
-            # Monotonicity loss - encourages predictions to rise toward events
-            if 'Mono' in loss_type and 'HYPER_MONO' in params:
-                mono_factor = params['HYPER_MONO']
-
-                def monotonicity_loss():
-                    """Loss to encourage early rising predictions before onset"""
-                    batch_size = tf.shape(y_true_exp)[0]
-                    time_steps = tf.shape(y_true_exp)[1]
-                    gap_margin = 40  # Default max time steps before onset to apply monotonicity
-
-                    # Find onset indices (first 0 to 1 transition)
-                    y_true_flat = tf.squeeze(y_true_exp, axis=-1)
-                    shifted_y_true = tf.concat([tf.zeros((batch_size, 1)), y_true_flat[:, :-1]], axis=1)
-                    onset_mask = tf.logical_and(shifted_y_true < 0.5, y_true_flat >= 0.5)
-                    onset_indices = tf.argmax(tf.cast(onset_mask, tf.int32), axis=1)
-
-                    # Create gap mask relative to onset indices
-                    gap_start = tf.maximum(onset_indices - gap_margin, 0)
-                    gap_end = onset_indices
-                    gap_mask = tf.sequence_mask(gap_end, maxlen=time_steps, dtype=tf.float32) - \
-                            tf.sequence_mask(gap_start, maxlen=time_steps, dtype=tf.float32)
-                    gap_mask = tf.expand_dims(gap_mask, axis=-1)
-
-                    # Differences between consecutive predictions
-                    y_pred_flat = tf.squeeze(y_pred_exp, axis=-1)
-                    diff = y_pred_flat[:, :-1] - y_pred_flat[:, 1:]
-                    diff = tf.pad(diff, [[0, 0], [0, 1]])  # Pad to match original shape
-
-                    # Penalize non-monotonic increases in the gap period
-                    monotonicity_penalty = tf.nn.relu(diff) * gap_mask
-                    return tf.reduce_mean(monotonicity_penalty)
-
-                # Only calculate monotonicity loss if there are actual events in the batch
-                has_events = tf.reduce_any(y_true_exp > 0.5)
-                mono_loss = tf.cond(
-                    has_events,
-                    monotonicity_loss,
-                    lambda: 0.0
-                )
-
-                total_loss += mono_factor * mono_loss
-
-            # Add Barlow Twins loss for representation learning
-            if 'Bar' in loss_type and 'HYPER_BARLOW' in params:
-                barlow_factor = params['HYPER_BARLOW']
-
-                def barlow_twins_loss(embedding1, embedding2, lambda_param=0.005):
-                    # Normalize embeddings
-                    embedding1 = tf.nn.l2_normalize(embedding1, axis=1)
-                    embedding2 = tf.nn.l2_normalize(embedding2, axis=1)
-
-                    # Cross-correlation matrix
-                    c = tf.matmul(embedding1, embedding2, transpose_a=True)
-                    c /= tf.cast(tf.shape(embedding1)[0], tf.float32)  # Normalize by batch size
-
-                    # On-diagonal: minimize difference from 1
-                    on_diag = tf.reduce_sum(tf.square(tf.linalg.diag_part(c) - 1))
-
-                    # Off-diagonal: minimize correlation
-                    off_diag = tf.reduce_sum(tf.square(c)) - on_diag
-
-                    # Total loss
-                    return on_diag + lambda_param * off_diag
-
-                if this_op is not None:
-                    # Extract intermediate tensor representations
-                    # This is a simplified implementation that would need adjustment
-                    total_loss += barlow_factor * barlow_twins_loss(this_op(prediction_out), this_op(prediction_targets))
-            return total_loss
-
-        def prediction_mode_branch():
-            if horizon == 0:
-                prediction_targets = y_true[:, :, :8]  # LFP targets (8 channels)
-                prediction_out = y_pred[:, :, :8]     # LFP predictions (8 channels)
-            else:
-                prediction_targets = y_true[:, horizon:, :8]  # LFP targets (8 channels)
-                prediction_out = y_pred[:, :-horizon, :8]     # LFP predictions (8 channels)
-            y_true_exp = tf.expand_dims(y_true[:, :, 8], axis=-1)  # Probability at index 8
-            y_pred_exp = tf.expand_dims(y_pred[:, :, 8], axis=-1)  # Predicted probability at index 8
-            return prediction_targets, prediction_out, y_true_exp, y_pred_exp
-
-        def patch_mode_branch():
-            # Assumes d_model and proj_dim are correctly retrieved from params or scope
-            # Example: d_model = params.get('D_MODEL', 32) # Make sure D_MODEL is in params
-            # Example: proj_dim = params.get('PROJ_DIM', d_model) # Often same as d_model
-            input_channels = params['input_channels']
-            d_model = params['NO_FILTERS']
-            n_patch = params['NO_DILATIONS']
-            n_layer = params['NO_KERNELS']
-            proj_dim = d_model # Assuming proj_dim is d_model
-
-            # LFP Reconstruction part
-            if horizon == 0:
-                prediction_targets = y_true[:, :, :8]  # LFP targets (8 channels)
-                prediction_out = y_pred[:, :, :8]     # LFP predictions (8 channels)
-            else:
-                prediction_targets = y_true[:, horizon:, :8]
-                prediction_out = y_pred[:, :-horizon, :8]
-
-            # Classification part
-            y_true_exp = tf.expand_dims(y_true[:, :, 8], axis=-1)  # True probability at index 8
-            y_pred_exp = tf.expand_dims(y_pred[:, :, 8], axis=-1)  # Predicted probability at index 8
-
-            current_idx = 9  # Start index for additional features
-            # Split tensor into n_layer*n_patch tensors of d_model dimension
-            num_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
-            num_dists = []
-            for i in range(n_layer*n_patch):
-                start_idx = i * d_model
-                end_idx = (i + 1) * d_model
-                num_dists.append(num_dists_full[:, :, start_idx:end_idx])
-            current_idx += d_model*n_layer*n_patch
-
-            size_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
-            size_dists = []
-            for i in range(n_layer*n_patch):
-                start_idx = i * d_model
-                end_idx = (i + 1) * d_model
-                size_dists.append(size_dists_full[:, :, start_idx:end_idx])
-            current_idx += d_model*n_layer*n_patch
-
-            num_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
-            num_mx = []
-            for i in range(n_layer*n_patch):
-                start_idx = i * d_model
-                end_idx = (i + 1) * d_model
-                num_mx.append(num_mx_full[:, :, start_idx:end_idx])
-            current_idx += d_model*n_layer*n_patch
-
-            size_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
-            size_mx = []
-            for i in range(n_layer*n_patch):
-                start_idx = i * d_model
-                end_idx = (i + 1) * d_model
-                size_mx.append(size_mx_full[:, :, start_idx:end_idx])
-            return prediction_targets, prediction_out, y_true_exp, y_pred_exp, num_dists, size_dists, num_mx, size_mx
-
-        def classification_mode_branch():
-            # For classification-only mode (1 or 2 channels)
-            if tf.shape(y_true)[-1] > 1:
-                y_true_exp = tf.expand_dims(y_true[:, :, 0], axis=-1)
-                y_pred_exp = tf.expand_dims(y_pred[:, :, 0], axis=-1)
-            else:
-                # y_true_exp = tf.expand_dims(y_true, axis=-1)
-                # y_pred_exp = tf.expand_dims(y_pred, axis=-1)
-                y_true_exp = y_true#tf.expand_dims(y_true, axis=-1)
-                y_pred_exp = y_pred#tf.expand_dims(y_pred, axis=-1)
-
-            # Create dummy tensors for prediction targets and outputs
-            dummy_shape = tf.concat([tf.shape(y_true)[:2], [8]], axis=0)
-            dummy_tensor = tf.zeros(dummy_shape)
-            return dummy_tensor, dummy_tensor, y_true_exp, y_pred_exp
-
-        # print('Using classification only:', is_classification_only)
-        if is_patch:
-            prediction_targets, prediction_out, y_true_exp, y_pred_exp, num_dists, size_dists, num_mx, size_mx = patch_mode_branch()
-            sample_weight =  tf.ones_like(y_true[:, :, 0])
-        elif not is_classification_only:
-            prediction_targets, prediction_out, y_true_exp, y_pred_exp = prediction_mode_branch()
-            sample_weight = tf.cond(
-                tf.greater(tf.shape(y_true)[-1], 9),
-                lambda: y_true[:, :, 9],
-                lambda: tf.ones_like(y_true[:, :, 0])
-            )
-        else:
-            prediction_targets, prediction_out, y_true_exp, y_pred_exp = classification_mode_branch()
-            sample_weight = tf.cond(
-                tf.greater(tf.shape(y_true)[-1], 1),
-                lambda: y_true[:, :, 1],
-                lambda: tf.ones_like(y_true[:, :, 0])
-            )
-
-            # if is_cad:
-            #     print('Using CAD mode and downsampling labels')
-            #     pool = tf.keras.layers.MaxPooling1D(pool_size=12, strides=12, padding='valid')
-            #     sample_weight_expanded = tf.expand_dims(sample_weight, axis=-1)
-            #     sample_weight = pool(sample_weight_expanded)
-            #     # y_true_exp_expanded = tf.expand_dims(y_true_exp, axis=-1)
-            #     y_true_exp = pool(y_true_exp)
-        # pdb.set_trace()
-
-        # # Maybe zero weights during training (20% chance)
-        # if params.get('TRAINING', False):  # Only if in training mode
-        #     random_val = tf.random.uniform(())
-        #     sample_weight = tf.cond(
-        #         tf.less(random_val, 0.2),
-        #         lambda: tf.zeros_like(sample_weight),
-        #         lambda: sample_weight
-        #     )
-
-        # Calculate classification loss
-        total_loss = compute_classification_loss(y_true_exp, y_pred_exp, sample_weight, params)
-
-        # # Handle sigmoid activation if needed
-        # if flag_sigmoid:
-        #     y_pred_exp = tf.math.sigmoid(y_pred_exp)
-
-        # Add extra loss terms
-        # total_loss = add_extra_losses(total_loss, y_true_exp, y_pred_exp, sample_weight,
-        #                              params, model, prediction_targets, prediction_out, this_op)
-
-        # if is_patch:
-        #     from model.patchAD.loss import tf_anomaly_score
-        #     # total_loss += loss_weight*patch_loss(prediction_targets, prediction_out, proj_inter, proj_intra, x_inter, x_intra)
-
-
-        #     loss_cont = tf.reduce_mean(tf_anomaly_score( # Renamed variable
-        #         num_dists, size_dists,
-        #         params['seq_length'],
-        #         True,
-        #         params.get('patch_ad_temp', 1.0)
-        #     ))
-
-        #     # Calculate patch loss
-        #     Np_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
-        #         num_mx, size_dists,
-        #         params['seq_length'],
-        #         True,
-        #         params.get('patch_ad_temp', 1.0)
-        #     ))
-
-        #     Pp_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
-        #         num_dists, size_mx,
-        #         params['seq_length'],
-        #         True,
-        #         params.get('patch_ad_temp', 1.0)
-        #     ))
-
-        #     loss_proj = Np_proj + Pp_proj
-        #     # Ensure patch_loss is a scalar tensor
-        #     proj_weight = params.get('patch_ad_proj', 0.2)
-        #     patch_loss = (1-proj_weight)*tf.reduce_mean(loss_cont)+proj_weight*tf.reduce_mean(loss_proj)
-        #     weight_patch = tf.cast(params.get('WEIGHT_Patch', 1.0), dtype=tf.float32)
-        #     total_loss += weight_patch * patch_loss
-        # elif not is_classification_only:
-        if not is_classification_only:
-            mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out))
-            total_loss += loss_weight * mse_loss
-
-        return total_loss
-    return loss_fn
-
-
-def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
-    """
-    Custom triplet loss function for SWR prediction that works with tuple outputs.
-    """
-    def extract_param_from_loss_type(loss_type, param_prefix, default_value):
-        """Helper function to extract parameters from loss type string"""
-        try:
-            if param_prefix in loss_type:
-                idx = loss_type.find(param_prefix) + len(param_prefix)
-                param_str = loss_type[idx:idx+3]
-                return float(param_str) / 100.0
-            return default_value
-        except:
-            return default_value
-    
-    @tf.function
-    def loss_fn(y_true, y_pred):
-        # Get batch size
-        # pdb.set_trace()
-        # batch_size = tf.shape(y_pred)[0] // 3
-        # params['BATCH_SIZE'] = tf.shape(y_pred)[0] // 3
-
-        # Split tensors using tf.split instead of unpacking
-        anchor_out, positive_out, negative_out = tf.split(y_pred, num_or_size_splits=3, axis=0)
-        anchor_true, positive_true, negative_true = tf.split(y_true, num_or_size_splits=3, axis=0)
-
-        # Split predictions into classification and embedding parts using tf operations
-        anchor_class = anchor_out[..., 0]
-        positive_class = positive_out[..., 0]
-        negative_class = negative_out[..., 0]
-
-        anchor_emb = tf.reduce_mean(anchor_out[..., 1:], axis=1)
-        positive_emb = tf.reduce_mean(positive_out[..., 1:], axis=1)
-        negative_emb = tf.reduce_mean(negative_out[..., 1:], axis=1)
-
-        # Extract labels using tf operations
-        anchor_labels = tf.cast(anchor_true[..., 0], tf.float32)
-        positive_labels = tf.cast(positive_true[..., 0], tf.float32)
-        negative_labels = tf.cast(negative_true[..., 0], tf.float32)
-
-        # Calculate embedding distances using tf operations
-        pos_dist = tf.reduce_sum(tf.square(anchor_emb - positive_emb), axis=-1)
-        neg_dist = tf.reduce_sum(tf.square(anchor_emb - negative_emb), axis=-1)
-
-        # Triplet loss with margin
-        margin = tf.cast(params.get('TRIPLET_MARGIN', 1.0), tf.float32)
-        triplet_loss_val = tf.maximum(0.0, pos_dist - neg_dist + margin)
-
-        # Classification loss using focal loss
-
-        loss_type = params['TYPE_LOSS']
-        alpha = 0.5#extract_param_from_loss_type(loss_type, 'Ax', 0.65)
-        gamma = 2#extract_param_from_loss_type(loss_type, 'Gx', 2.0)
-
-        focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
-            apply_class_balancing=True,
-            alpha=alpha,
-            gamma=gamma,
-            reduction=tf.keras.losses.Reduction.NONE
-        )
-
-        # Calculate classification loss for each part of the triplet
-        class_loss_anchor = focal_loss(anchor_labels, anchor_class)
-        class_loss_positive = focal_loss(positive_labels, positive_class)
-        class_loss_negative = focal_loss(negative_labels, negative_class)
-
-        # Combine losses using tf operations
-        loss_fp_weight = params.get('LOSS_NEGATIVES', 2.0)
-        print(f"Loss weight: {loss_weight}, FP weight: {loss_fp_weight}")
-        total_class_loss = (class_loss_anchor + class_loss_positive + loss_fp_weight * class_loss_negative) / 3.0
-
-
-        # Weight between triplet and classification loss
-        total_loss = loss_weight*tf.reduce_mean(triplet_loss_val) + tf.reduce_mean(total_class_loss)
-
-        if ('Entropy' in params['TYPE_LOSS']) and ('HYPER_ENTROPY' in params):
-            entropy_factor = params['HYPER_ENTROPY']
-
-            # Calculate prediction entropy: -p*log(p) - (1-p)*log(1-p)
-            # Add small epsilon to avoid log(0)
-            epsilon = 1e-8
-
-            for y_pred_exp, y_true_exp in zip([anchor_class, positive_class, negative_class],
-                                           [anchor_labels, positive_labels, negative_labels]):
-
-                # y_pred_squeezed = tf.squeeze(y_pred_exp, axis=-1)
-                # y_true_squeezed = tf.squeeze(y_true_exp, axis=-1)
-                y_pred_squeezed = y_pred_exp
-                y_true_squeezed = y_true_exp
-
-                # Calculate binary entropy of predictions
-                entropy = -(y_pred_squeezed * tf.math.log(y_pred_squeezed + epsilon) +
-                        (1 - y_pred_squeezed) * tf.math.log(1 - y_pred_squeezed + epsilon))
-
-                # For binary labels (0/1), we want to minimize entropy for all predictions
-                # Higher penalty for incorrect low-confidence predictions, lower penalty for correct confident predictions
-                confidence_weight = tf.abs(y_true_squeezed - y_pred_squeezed) + 0.1  # Higher weight for incorrect predictions
-
-                # Weight entropy by confidence - penalize uncertainty more for incorrect predictions
-                weighted_entropy = entropy * confidence_weight
-
-                entropy_loss = tf.reduce_mean(weighted_entropy)
-                total_loss += entropy_factor * entropy_loss
-        return total_loss
-    return loss_fn
-
-# def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
-#     # ----- helpers -----
-#     def _mean_pool(x): return tf.reduce_mean(x, axis=1)
-
-#     # cosine ramp in [0,1]
-#     def _ramp(step, delay, dur):
-#         step  = tf.cast(step, tf.float32)
-#         delay = tf.cast(delay, tf.float32)
-#         dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
-#         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
-#         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)  # 0→1
-
-#     def tv_on_logits(z):  # z: [B,T]
-#         return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
-
-#     # ----- metric losses (unchanged math) -----
-#     def mpn_tuple_loss(z_a_raw, z_p_raw, z_n_raw, *, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1, exclude_self=True):
-#         z_a = tf.reduce_mean(tf.cast(z_a_raw, tf.float32), axis=1)
-#         z_p = tf.reduce_mean(tf.cast(z_p_raw, tf.float32), axis=1)
-#         z_n = tf.reduce_mean(tf.cast(z_n_raw, tf.float32), axis=1)
-#         B   = tf.shape(z_a)[0]
-
-#         # pull
-#         d_pair = tf.reduce_sum(tf.square(z_a - z_p), axis=1) + 1e-8
-#         L_pull = lambda_pull * d_pair
-
-#         def _mask_self(mat):
-#             if exclude_self:
-#                 mask = tf.eye(B, dtype=tf.bool)
-#                 return tf.where(mask, tf.fill(tf.shape(mat), tf.constant(1e9, tf.float32)), mat)
-#             return mat
-
-#         d_ap = tf.reduce_sum(tf.square(z_a[:,None,:] - z_p[None,:,:]), axis=2) + 1e-8
-#         d_ap = _mask_self(d_ap)
-#         L_weak = tf.reduce_mean(tf.nn.relu(margin_weak + d_pair[:,None] - d_ap))
-#         d_an = tf.reduce_sum(tf.square(z_a[:,None,:] - z_n[None,:,:]), axis=2) + 1e-8
-#         d_an = _mask_self(d_an)
-#         lifted = tf.reduce_logsumexp(margin_hard - d_an, axis=1)
-#         L_hard = tf.nn.relu(d_pair + lifted)
-
-#         return tf.reduce_mean(L_pull + L_weak + L_hard)
-
-#     def supcon_ripple(z_a_raw, z_p_raw, z_n_raw, *, temperature=0.1):
-#         z_a = _mean_pool(z_a_raw); z_p = _mean_pool(z_p_raw); z_n = _mean_pool(z_n_raw)
-#         z_all = tf.math.l2_normalize(tf.concat([z_a, z_p, z_n], axis=0), axis=1)
-#         M = tf.shape(z_all)[0]
-#         sim = tf.matmul(z_all, z_all, transpose_b=True) / temperature
-
-#         B = tf.shape(z_a)[0]
-#         labels = tf.concat([tf.ones(2*B, tf.int32), tf.zeros(B, tf.int32)], axis=0)
-#         pos = tf.cast(tf.equal(labels[:,None], labels[None,:]), tf.float32) - tf.eye(M, dtype=tf.float32)
-
-#         logits = sim - 1e9 * tf.eye(M)
-#         log_prob = logits - tf.reduce_logsumexp(logits, axis=1, keepdims=True)
-
-#         pos_cnt = tf.reduce_sum(pos, axis=1)
-#         loss_vec = -tf.reduce_sum(pos * log_prob, axis=1) / (pos_cnt + 1e-8)
-#         return tf.reduce_mean(loss_vec)
-
-#     @tf.function
-#     def loss_fn(y_true, y_pred):
-#         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
-#         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
-
-#         logit_idx = getattr(model, '_cls_logit_index', 0)
-#         prob_idx  = getattr(model, '_cls_prob_index',  1)
-#         emb_start = getattr(model, '_emb_start_index', 2)
-
-#         a_logit = a_out[..., logit_idx];  p_logit = p_out[..., logit_idx];  n_logit = n_out[..., logit_idx]
-#         a_prob  = a_out[..., prob_idx];   p_prob  = p_out[..., prob_idx];   n_prob  = n_out[..., prob_idx]
-#         a_emb   = a_out[..., emb_start:]; p_emb   = p_out[..., emb_start:]; n_emb   = n_out[..., emb_start:]
-
-#         a_lab = tf.cast(a_true[..., 0], tf.float32)
-#         p_lab = tf.cast(p_true[..., 0], tf.float32)
-#         n_lab = tf.cast(n_true[..., 0], tf.float32)
-
-#         # --------- ramps (READ-ONLY) ----------
-#         it = tf.cast(model.optimizer.iterations, tf.float32)
-
-#         total_steps = 100*1000
-#         # Metric ramps
-#         ramp_delay = tf.cast(params.get('RAMP_DELAY', int(0.01*total_steps)), tf.float32)
-#         ramp_steps = tf.cast(params.get('RAMP_STEPS', int(0.25*total_steps)), tf.float32)
-
-#         w_sup_tgt = tf.cast(params.get('LOSS_SupCon', 1.0), tf.float32)
-#         w_mpn_tgt = tf.cast(params.get('LOSS_TupMPN', 1.0), tf.float32)
-#         w_neg_tgt = tf.cast(params.get('LOSS_NEGATIVES', 2.0), tf.float32)
-        
-#         r = _ramp(it, ramp_delay, ramp_steps)  # 0→1 after delay
-#         w_supcon = r * w_sup_tgt
-#         w_tupMPN = r * w_mpn_tgt
-
-#         # Negatives ramp (MIN → target)
-#         # Negatives ramp: gentle 25–40% of run
-#         neg_min = params.setdefault('LOSS_NEGATIVES_MIN', 4.0)  # softer start to reduce FP early
-#         neg_delay = params.setdefault('NEG_RAMP_DELAY', int(0.05* total_steps))
-#         neg_steps = params.setdefault('NEG_RAMP_STEPS', int(0.45 * total_steps))
-#         neg_steps = tf.cast(neg_steps if neg_steps is not None else params.get('RAMP_STEPS', 1), tf.float32)
-#         neg_steps = tf.maximum(neg_steps, 1.0)
-
-#         r_neg = _ramp(it, neg_delay, neg_steps)
-#         loss_fp_weight = neg_min + r_neg * tf.maximum(0.0, w_neg_tgt - neg_min)
-
-#         # --------- metric learning ----------
-#         L_mpn_raw = mpn_tuple_loss(a_emb, p_emb, n_emb, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1)
-#         L_sup_raw = supcon_ripple(a_emb, p_emb, n_emb, temperature=0.1)
-#         metric_loss = w_tupMPN * L_mpn_raw + w_supcon * L_sup_raw
-
-#         # --------- BCE on logits ----------
-#         def bce_logits(y, z):
-#             return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
-
-#         cls_a = bce_logits(a_lab, a_logit)
-#         cls_p = bce_logits(p_lab, p_logit)
-#         cls_n = bce_logits(n_lab, n_logit)
-
-#         alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
-#         classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
-
-#         # --------- logit-TV smoothing ----------
-#         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
-#         print(f"TV weight: {lam_tv}")
-#         tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
-#         classification_loss = classification_loss + lam_tv * tv_term
-
-#         # --------- re-scaling (ratio trick) ----------
-#         ratio = tf.stop_gradient(
-#             (tf.reduce_mean(L_mpn_raw + L_sup_raw)) /
-#             (tf.reduce_mean(classification_loss) + 1e-6)
-#         )
-#         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
-
-#         total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
-
-#         # Optional entropy term
-#         if ('Entropy' in params.get('TYPE_LOSS','')) and ('HYPER_ENTROPY' in params):
-#             eps = tf.constant(1e-8, tf.float32)
-#             ent_w = tf.cast(params['HYPER_ENTROPY'], tf.float32)
-#             y_prob_all = tf.concat([a_prob, p_prob, n_prob], axis=0)
-#             y_true_all = tf.concat([a_lab,  p_lab,  n_lab],  axis=0)
-#             entropy = -y_prob_all*tf.math.log(y_prob_all+eps) -(1. - y_prob_all)*tf.math.log(1.-y_prob_all+eps)
-#             conf = tf.abs(y_true_all - y_prob_all) + 0.1
-#             total += ent_w * tf.reduce_mean(entropy * conf)
-#         return total
-#     return loss_fn
-
+# --------------------------------------------------------------------- #
+# LOSS FN 
+# --------------------------------------------------------------------- #
 def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
     import math
     import tensorflow as tf
 
     # ---------- helpers ----------
-    def _mean_pool_bt(x):               # [B,T,D] -> [B,D]
-        return tf.reduce_mean(tf.cast(x, tf.float32), axis=1)
-
-    def _ramp(step, delay, dur):        # cosine 0→1
+    def _ramp(step, delay, dur):
         step  = tf.cast(step,  tf.float32)
         delay = tf.cast(delay, tf.float32)
         dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
 
-    def tv_on_logits(z_bt):             # z: [B,T]
-        return tf.reduce_mean(tf.abs(z_bt[:, 1:] - z_bt[:, :-1]))
+    def _temporal_deltas(x_bt):  # [B,T] -> [B,T-1]
+        return x_bt[:, 1:] - x_bt[:, :-1]
 
-    # --- post-onset mask for A/P (fixes dtype mismatch robustly) ---
-    def post_onset_mask(y_bt):
+    def _temporal_penalty(deltas, kind="tMSE", tau=3.5):
+        absd = tf.abs(deltas)
+        if kind == "TV":
+            return tf.reduce_mean(absd)                       # classic TV (L1)
+        return tf.reduce_mean(tf.minimum(absd, tf.cast(tau, absd.dtype)))  # truncated-L1
+
+    def _smooth_gate(x, k=8.0, eps=0.02):  # ≥0, smooth; avoids silent gradients
+        return tf.nn.softplus(k * x) / k + eps
+
+    # ---------- metric losses on time-averaged similarities ----------
+    def circle_timeavg(a_btd, p_btd, n_btd, m=0.32, gamma=20.0):
         """
-        y_bt: [B,T] float in {0,1}
-        returns: [B,T] float mask in {0,1}
-        - For windows with any positive (>=0.5): mask=1 from onset onward, else 0 before.
-        - For windows with no positive: return all ones (do NOT drop them).
+        Cosine per time, then mean over time:
+          s_ap = mean_t <a_t, p_t>
+          s_an[i,j] = mean_t <a_i,t, n_j,t>, s_pn similar.
+        Circle is applied on these time-averaged sims (no feature pooling).
         """
-        yb = y_bt >= 0.5                        # bool [B,T]
-        # First positive index and has-event flag
-        idx = tf.argmax(tf.cast(yb, tf.int32), axis=1, output_type=tf.int32)   # [B] int32
-        has = tf.reduce_any(yb, axis=1)                                        # [B] bool
+        a = tf.math.l2_normalize(a_btd, axis=-1)  # [B,T,D]
+        p = tf.math.l2_normalize(p_btd, axis=-1)
+        n = tf.math.l2_normalize(n_btd, axis=-1)
 
-        B = tf.shape(y_bt)[0]
-        T = tf.shape(y_bt)[1]
-        rng = tf.range(T, dtype=tf.int32)[None, :]                              # [1,T] int32
-        mpos = tf.cast(rng >= idx[:, None], tf.float32)                         # [B,T] 1 from onset onward
+        s_ap_bt = tf.reduce_sum(a * p, axis=-1)           # [B,T]
+        s_ap = tf.reduce_mean(s_ap_bt, axis=1)            # [B]
 
-        # no-onset windows -> keep whole window (all ones)
-        return tf.where(has[:, None], mpos, tf.ones((B, T), tf.float32))
+        s_an_bbt = tf.einsum('btd,ktd->bkt', a, n)        # [B,B,T]
+        s_pn_bbt = tf.einsum('btd,ktd->bkt', p, n)        # [B,B,T]
+        s_an = tf.reduce_mean(s_an_bbt, axis=-1)          # [B,B]
+        s_pn = tf.reduce_mean(s_pn_bbt, axis=-1)          # [B,B]
 
-    # --- weighted BCE (time-masked), safe reduction ---
-    def bce_logits_weighted(y_bt, logit_bt, w_bt):
-        # per-timepoint BCE
-        bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_bt, logits=logit_bt)  # [B,T]
-        w   = tf.cast(w_bt, tf.float32)
-        num = tf.reduce_sum(bce * w)
-        den = tf.reduce_sum(w) + tf.keras.backend.epsilon()
-        return num / den
-
-    # --- Circle loss (pooled, cosine sim, all negatives per anchor) ---
-    def circle_loss(z_a_bt, z_p_bt, z_n_bt, m=0.25, gamma=32.0):
-        """
-        z_*_bt: [B,T,D] -> pooled to [B,D]
-        Standard Circle loss (Sun et al., CVPR 2020):
-          L_a = softplus( logsumexp(gamma * alpha_n * (s_an - m)) + gamma * alpha_p * (s_ap - (1-m)) )
-          (and symmetric p-branch), averaged over batch and branches.
-        """
-        za = tf.math.l2_normalize(_mean_pool_bt(z_a_bt), axis=1)  # [B,D]
-        zp = tf.math.l2_normalize(_mean_pool_bt(z_p_bt), axis=1)  # [B,D]
-        zn = tf.math.l2_normalize(_mean_pool_bt(z_n_bt), axis=1)  # [B,D]
-
-        # Similarities
-        s_ap = tf.reduce_sum(za * zp, axis=1)                     # [B]
-        s_an = tf.matmul(za, zn, transpose_b=True)                # [B,B]
-        s_pn = tf.matmul(zp, zn, transpose_b=True)                # [B,B]
-
-        # Circle weights
-        ap = tf.nn.relu(m + s_ap)                                 # [B]
-        an = tf.nn.relu(s_an + m)                                 # [B,B]
-        pn = tf.nn.relu(s_pn + m)                                 # [B,B]
+        alpha_p = _smooth_gate(m + 1.0 - s_ap)            # [B]
+        alpha_n = _smooth_gate(s_an + m)                  # [B,B]
         delta_p = 1.0 - m
 
-        # Anchor branch
-        neg_part_a = tf.reduce_logsumexp(gamma * an * (s_an - m), axis=1)      # [B]
-        pos_part_a = gamma * ap * (s_ap - delta_p)                              # [B]
-        L_a = tf.nn.softplus(neg_part_a + pos_part_a)                           # [B]
+        neg_part_a = tf.reduce_logsumexp(gamma * alpha_n * (s_an - m), axis=1)  # [B]
+        pos_part_a = gamma * alpha_p * (s_ap - delta_p)                          # [B]
+        L_a = tf.nn.softplus(neg_part_a + pos_part_a)
 
-        # Positive-as-anchor branch (symmetry)
-        neg_part_p = tf.reduce_logsumexp(gamma * pn * (s_pn - m), axis=1)      # [B]
-        pos_part_p = gamma * ap * (s_ap - delta_p)                              # [B] (same s_ap)
+        alpha_n_p = _smooth_gate(s_pn + m)
+        neg_part_p = tf.reduce_logsumexp(gamma * alpha_n_p * (s_pn - m), axis=1)
+        pos_part_p = gamma * alpha_p * (s_ap - delta_p)
         L_p = tf.nn.softplus(neg_part_p + pos_part_p)
 
         return tf.reduce_mean(0.5 * (L_a + L_p))
 
+    def supcon_timeavg(a_btd, p_btd, n_btd, temperature=0.1):
+        """
+        SupCon over a similarity matrix built from time-averaged cosine sims.
+        Class 1: A&P blocks; Class 0: N block.
+        """
+        B = tf.shape(a_btd)[0]
+        z_all = tf.concat([a_btd, p_btd, n_btd], axis=0)         # [3B,T,D]
+        z_all = tf.math.l2_normalize(z_all, axis=-1)
+
+        sim_nmt = tf.einsum('ntd,mtd->nmt', z_all, z_all)        # [3B,3B,T]
+        sim_nm = tf.reduce_mean(sim_nmt, axis=-1)                 # [3B,3B]
+
+        M = tf.shape(sim_nm)[0]
+        logits = sim_nm / tf.cast(temperature, sim_nm.dtype)
+        eye = tf.eye(M, dtype=logits.dtype)
+        logits = logits - 1e9 * eye
+
+        labels = tf.concat([tf.ones([2*B], tf.int32), tf.zeros([B], tf.int32)], axis=0)
+        pos = tf.cast(tf.equal(labels[:, None], labels[None, :]), logits.dtype) - eye
+
+        log_prob = logits - tf.reduce_logsumexp(logits, axis=1, keepdims=True)
+        pos_cnt = tf.reduce_sum(pos, axis=1)
+        loss_vec = -tf.reduce_sum(pos * log_prob, axis=1) / (pos_cnt + 1e-8)
+        return tf.reduce_mean(loss_vec)
+
     @tf.function
     def loss_fn(y_true, y_pred):
-        # ---- split triplet on batch axis ----
+        # --- triplet split ---
         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
 
-        # ---- head indices from model ----
+        # --- heads ---
         logit_idx = getattr(model, '_cls_logit_index', 0)
+        prob_idx  = getattr(model, '_cls_prob_index',  1)
         emb_start = getattr(model, '_emb_start_index', 2)
 
-        # ---- slice logits / embeddings ----
-        a_logit = a_out[..., logit_idx]      # [B,T]
-        p_logit = p_out[..., logit_idx]      # [B,T]
-        n_logit = n_out[..., logit_idx]      # [B,T]
-        a_emb   = a_out[..., emb_start:]     # [B,T,D]
-        p_emb   = p_out[..., emb_start:]     # [B,T,D]
-        n_emb   = n_out[..., emb_start:]     # [B,T,D]
+        a_logit = a_out[..., logit_idx];  p_logit = p_out[..., logit_idx];  n_logit = n_out[..., logit_idx]  # [B,T]
+        a_prob  = a_out[..., prob_idx];   p_prob  = p_out[..., prob_idx];   n_prob  = n_out[..., prob_idx]   # [B,T]
+        a_emb   = a_out[..., emb_start:]; p_emb   = p_out[..., emb_start:]; n_emb   = n_out[..., emb_start:] # [B,T,D]
 
-        # ---- labels ----
-        a_lab = tf.cast(a_true[..., 0], tf.float32)  # [B,T] (0/1)
-        p_lab = tf.cast(p_true[..., 0], tf.float32)  # [B,T]
-        n_lab = tf.cast(n_true[..., 0], tf.float32)  # [B,T] (all zeros by design)
+        a_lab = tf.cast(a_true[..., 0], tf.float32)
+        p_lab = tf.cast(p_true[..., 0], tf.float32)
+        n_lab = tf.cast(n_true[..., 0], tf.float32)
 
-        # ---- ramps ----
+        # --- ramps (same keys as before) ---
         it = tf.cast(model.optimizer.iterations, tf.float32)
         total_steps = float(params.get('TOTAL_STEPS', 100000))
 
-        ramp_delay = float(params.get('RAMP_DELAY', 0.01 * total_steps))
-        ramp_steps = float(params.get('RAMP_STEPS', 0.25 * total_steps))
-        r = _ramp(it, ramp_delay, ramp_steps)                       # 0→1
+        r = _ramp(it,
+                  float(params.get('RAMP_DELAY', 0.01 * total_steps)),
+                  float(params.get('RAMP_STEPS', 0.25 * total_steps)))
 
-        # Circle weight (use LOSS_Circle if present; else fall back to your old TupMPN weight)
-        w_circle_tgt = tf.cast(params.get('LOSS_Circle',
-                                   params.get('LOSS_TupMPN', 30.0)), tf.float32)
-        w_circle = r * w_circle_tgt
+        # Metric weights
+        w_circle   = tf.cast(params.get('LOSS_Circle', 60.0), tf.float32)
+        w_supcon_t = tf.cast(params.get('LOSS_SupCon', 0.5),  tf.float32)  # ramp to target and stay
+        w_supcon   = r * w_supcon_t
 
-        # Negatives ramp (controls FP/min pressure)
+        # Negatives ramp
         neg_min    = float(params.get('LOSS_NEGATIVES_MIN', 4.0))
-        neg_target = float(params.get('LOSS_NEGATIVES', 20.0))
-        neg_delay  = float(params.get('NEG_RAMP_DELAY', 0.05 * total_steps))
-        neg_steps  = float(params.get('NEG_RAMP_STEPS', 0.45 * total_steps))
-        r_neg = _ramp(it, neg_delay, max(1.0, neg_steps))
-        loss_fp_weight = tf.cast(neg_min + r_neg * max(0.0, neg_target - neg_min), tf.float32)
+        neg_target = float(params.get('LOSS_NEGATIVES', 26.0))
+        r_neg = _ramp(it,
+                      float(params.get('NEG_RAMP_DELAY', 0.05 * total_steps)),
+                      float(params.get('NEG_RAMP_STEPS', 0.45 * total_steps)))
+        w_neg = tf.cast(neg_min + r_neg * max(0.0, neg_target - neg_min), tf.float32)
 
-        # ---- Circle metric loss ----
-        m     = float(params.get('CIRCLE_m', 0.25))
-        gamma = float(params.get('CIRCLE_gamma', 32.0))
-        L_circle_raw = circle_loss(a_emb, p_emb, n_emb, m=m, gamma=gamma)
-        metric_loss  = w_circle * L_circle_raw
+        # --- metric (NO pooling) ---
+        m = float(params.get('CIRCLE_m', 0.32))
+        g = float(params.get('CIRCLE_gamma', 20.0))
+        L_circle_raw = circle_timeavg(a_emb, p_emb, n_emb, m=m, gamma=g)
+        L_sup_raw    = supcon_timeavg(a_emb, p_emb, n_emb, temperature=float(params.get('SUPCON_T', 0.1)))
+        metric_loss  = w_circle * L_circle_raw + w_supcon * L_sup_raw
 
-        # ---- Classification BCE with post-onset masking ----
-        a_mask = post_onset_mask(a_lab)                 # [B,T]
-        p_mask = post_onset_mask(p_lab)                 # [B,T]
-        n_mask = tf.ones_like(n_lab, tf.float32)        # keep all negatives
+        # --- BCE (separate A/P/N weights) ---
+        def bce_logits(y, z):
+            return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
 
-        alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
+        w_a = float(params.get('BCE_ANC_ALPHA', 2.0))   # anchor
+        w_p = float(params.get('BCE_POS_ALPHA', 2.0))   # positive
+        cls_a = bce_logits(a_lab, a_logit)
+        cls_p = bce_logits(p_lab, p_logit)
+        cls_n = bce_logits(n_lab, n_logit)
+        classification_loss = w_a * cls_a + w_p * cls_p + w_neg * cls_n
 
-        cls_a = bce_logits_weighted(a_lab, a_logit, a_mask)
-        cls_p = bce_logits_weighted(p_lab, p_logit, p_mask)
-        cls_n = bce_logits_weighted(n_lab, n_logit, n_mask)
+        # --- temporal smoothing (truncated change on logits) ---
+        lam_tv   = tf.cast(params.get('LOSS_TV', 0.30), tf.float32)
+        r_tv     = _ramp(it,
+                         float(params.get('TV_DELAY', 0.10 * total_steps)),
+                         float(params.get('TV_DUR',   0.30 * total_steps)))
+        # fixed, robust defaults
+        smooth_type  = params.get('SMOOTH_TYPE',  'tMSE')     # "tMSE" or "TV"
+        smooth_space = params.get('SMOOTH_SPACE', 'logit')    # "logit" | "prob" | "logprob"
+        tau_fixed    = float(params.get('SMOOTH_TAU', 3.5))
 
-        classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
+        if smooth_space == 'logit':
+            a_seq, p_seq, n_seq = a_logit, p_logit, n_logit
+        elif smooth_space == 'prob':
+            eps = tf.constant(1e-8, tf.float32)
+            a_seq = tf.clip_by_value(a_prob, eps, 1.0 - eps)
+            p_seq = tf.clip_by_value(p_prob, eps, 1.0 - eps)
+            n_seq = tf.clip_by_value(n_prob, eps, 1.0 - eps)
+        else:  # 'logprob'
+            eps = tf.constant(1e-8, tf.float32)
+            a_seq = tf.math.log(tf.clip_by_value(a_prob, eps, 1.0))
+            p_seq = tf.math.log(tf.clip_by_value(p_prob, eps, 1.0))
+            n_seq = tf.math.log(tf.clip_by_value(n_prob, eps, 1.0))
 
-        # ---- TV smoothing on logits ----
-        lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
-        tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
-        classification_loss = classification_loss + lam_tv * tv_term
+        da = _temporal_deltas(a_seq); dp = _temporal_deltas(p_seq); dn = _temporal_deltas(n_seq)
+        tpen = _temporal_penalty(da, kind=smooth_type, tau=tau_fixed) \
+             + _temporal_penalty(dp, kind=smooth_type, tau=tau_fixed) \
+             + _temporal_penalty(dn, kind=smooth_type, tau=tau_fixed)
+        classification_loss = classification_loss + (lam_tv * r_tv) * tpen
 
-        # ---- magnitude balancing (same idea as before) ----
+        # --- ratio trick + mild throttle (names unchanged) ---
         ratio = tf.stop_gradient(
-            tf.reduce_mean(metric_loss) / (tf.reduce_mean(classification_loss) + 1e-6)
+            (tf.reduce_mean(L_circle_raw + L_sup_raw)) /
+            (tf.reduce_mean(classification_loss) + 1e-6)
         )
         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
+        clf_scale = tf.cast(params.get("CLF_SCALE", 0.30), tf.float32)
 
-        total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
+        total = tf.reduce_mean(metric_loss) + clf_scale * ratio * tf.reduce_mean(classification_loss)
         return total
 
     return loss_fn
 
 
-def combined_mse_fbfce_loss(params):
-    def loss(y_true, y_pred):
-        # Get dimensions from params
-        input_channels = params['input_channels']
-        d_model = params['NO_FILTERS']
-        n_patch = params['NO_DILATIONS']
-        n_layer = params['NO_KERNELS']
+# def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None):
+#     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
+#     is_classification_only = 'Only' in  params['TYPE_ARCH']
+#     is_cad = 'CAD' in params['TYPE_ARCH']
+#     is_patch = 'Patch' in params['TYPE_ARCH']
+#     """
+#     Custom loss function that combines focal binary cross-entropy (FBFCE) with additional terms.
+#     Args:
+#     - y_true: Ground truth labels.
+#     - y_pred: Predicted labels.
+#     - loss_weight: Weight for the additional loss terms.
+#     - horizon: Horizon for prediction.
+#     - params: Dictionary of parameters.
+#     - model: Keras model.
+#     - this_op: Optional additional operation.
+#     Returns:
+#     - Combined loss value.
+#     """
+#     @tf.function
+#     def loss_fn(y_true, y_pred, loss_weight=loss_weight, horizon=horizon, flag_sigmoid=flag_sigmoid, is_classification_only=is_classification_only, is_cad=is_cad):
+#         # Get the last dimension size and determine mode
+#         # print(y_true.shape)
+#         # print(y_pred.shape)
+#         # pdb.set_trace()
 
-        # Slice tensors
-        current_idx = 0
-        reconstruction = y_pred[:, :, current_idx:current_idx + input_channels]
-        current_idx += input_channels
+#         def extract_param_from_loss_type(loss_type, param_prefix, default_value):
+#             """Helper function to extract parameters from loss type string"""
+#             try:
+#                 if param_prefix in loss_type:
+#                     idx = loss_type.find(param_prefix) + len(param_prefix)
+#                     param_str = loss_type[idx:idx+3]
+#                     return float(param_str) / 100.0
+#                 return default_value
+#             except:
+#                 return default_value
 
-        classification_output = y_pred[:, :, current_idx:current_idx + 1]
-        current_idx += 1
+#         def compute_classification_loss(y_true_exp, y_pred_exp, sample_weight, params):
+#             loss_type = params['TYPE_LOSS']
 
-        # Split tensor into n_layer*n_patch tensors of d_model dimension
-        num_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
-        num_dists = []
-        for i in range(n_layer*n_patch):
-            start_idx = i * d_model
-            end_idx = (i + 1) * d_model
-            num_dists.append(num_dists_full[:, :, start_idx:end_idx])
-        current_idx += d_model*n_layer*n_patch
+#             # Initialize the loss variable
+#             classification_loss = 0.0
 
-        size_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
-        size_dists = []
-        for i in range(n_layer*n_patch):
-            start_idx = i * d_model
-            end_idx = (i + 1) * d_model
-            size_dists.append(size_dists_full[:, :, start_idx:end_idx])
-        current_idx += d_model*n_layer*n_patch
+#             # FocalSmooth loss
+#             if 'FocalSmooth' in loss_type:
+#                 # Extract alpha and gamma parameters
+#                 alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
+#                 gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
 
-        num_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
-        num_mx = []
-        for i in range(n_layer*n_patch):
-            start_idx = i * d_model
-            end_idx = (i + 1) * d_model
-            num_mx.append(num_mx_full[:, :, start_idx:end_idx])
-        current_idx += d_model*n_layer*n_patch
+#                 focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
+#                     apply_class_balancing=True,
+#                     alpha=alpha,
+#                     gamma=gamma,
+#                     label_smoothing=0.1,
+#                     reduction=tf.keras.losses.Reduction.NONE
+#                 )
+#                 # pdb.set_trace()
+#                 loss_values = focal_loss(y_true_exp, y_pred_exp)
+#                 classification_loss = tf.reduce_mean(loss_values * sample_weight)
 
-        size_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
-        size_mx = []
-        for i in range(n_layer*n_patch):
-            start_idx = i * d_model
-            end_idx = (i + 1) * d_model
-            size_mx.append(size_mx_full[:, :, start_idx:end_idx])
+#             # SigmoidFoc loss
+#             elif 'SigmoidFoc' in loss_type:
+#                 # Extract alpha and gamma parameters
+#                 alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
+#                 gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
 
-        # Slice y_true
-        true_signal = y_true[:, :, :input_channels]
-        true_labels = y_true[:, :, input_channels:input_channels + 1]
+#                 focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
+#                     apply_class_balancing=True,
+#                     alpha=alpha,
+#                     gamma=gamma,
+#                     from_logits=flag_sigmoid,
+#                     reduction=tf.keras.losses.Reduction.NONE
+#                 )
+#                 loss_values = focal_loss(y_true_exp, y_pred_exp)
+#                 classification_loss = tf.reduce_mean(loss_values * sample_weight)
 
-        # Calculate reconstruction loss
-        recon_loss = tf.reduce_mean(tf.square(true_signal - reconstruction))
+#             # Focal loss
+#             elif 'Focal' in loss_type:
+#                 # Extract alpha and gamma parameters
+#                 alpha = extract_param_from_loss_type(loss_type, 'Ax', 0.65)
+#                 gamma = extract_param_from_loss_type(loss_type, 'Gx', 2.0)
 
-        loss_cont = tf.reduce_mean(tf_anomaly_score( # Renamed variable
-            num_dists, size_dists,
-            params['seq_length'],
-            True,
-            params.get('patch_ad_temp', 1.0)
-        ))
+#                 # print(f"Using Focal loss with alpha={alpha}, gamma={gamma}")
 
-        # Calculate patch loss
-        Np_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
-            num_mx, size_dists,
-            params['seq_length'],
-            True,
-            params.get('patch_ad_temp', 1.0)
-        ))
+#                 use_class_balancing = alpha > 0
+#                 focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
+#                     apply_class_balancing=use_class_balancing,
+#                     alpha=alpha if alpha > 0 else None,
+#                     gamma=gamma,
+#                     reduction=tf.keras.losses.Reduction.NONE
+#                 )
+#                 # pdb.set_trace()
+#                 loss_values = focal_loss(y_true_exp, y_pred_exp)
+#                 # pdb.set_trace()
+#                 classification_loss = tf.reduce_mean(loss_values)# * sample_weight)
+#                 # classification_loss = tf.reduce_mean(loss_values * sample_weight)
 
-        Pp_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
-            num_dists, size_mx,
-            params['seq_length'],
-            True,
-            params.get('patch_ad_temp', 1.0)
-        ))
+#             # Default to binary cross-entropy
+#             else:
+#                 bce_loss = tf.keras.losses.BinaryCrossentropy(
+#                     reduction=tf.keras.losses.Reduction.NONE
+#                 )
+#                 loss_values = bce_loss(y_true_exp, y_pred_exp)
+#                 classification_loss = tf.reduce_mean(loss_values * sample_weight)
 
-        loss_proj = Np_proj + Pp_proj
-        # Ensure patch_loss is a scalar tensor
-        proj_weight = params.get('patch_ad_proj', 0.2)
-        patch_loss = (1-proj_weight)*tf.reduce_mean(loss_cont)+proj_weight*tf.reduce_mean(loss_proj)
+#             return classification_loss
 
-        # Extract alpha and gamma parameters
-        alpha = params['focal_alpha'] if 'focal_alpha' in params else 0.25
-        gamma = params['focal_gamma'] if 'focal_gamma' in params else 3.50
+#         def add_extra_losses(base_loss, y_true_exp, y_pred_exp, sample_weight, params, model,
+#                             prediction_targets, prediction_out, this_op):
+#             # Start with the base loss
+#             total_loss = base_loss
+#             loss_type = params['TYPE_LOSS']
 
-        use_class_balancing = alpha > 0
-        focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
-            apply_class_balancing=use_class_balancing,
-            alpha=alpha if alpha > 0 else None,
-            gamma=gamma,
-            reduction=tf.keras.losses.Reduction.NONE
-        )
-        loss_values = focal_loss(true_labels, classification_output)
-        cls_loss = tf.reduce_mean(loss_values)
+#             # Add TV Loss if specified (Total Variation - encourages smoothness)
+#             if 'TV' in loss_type:
+#                 tv_factor = 1e-5
+#                 tv_loss = tv_factor * tf.reduce_sum(
+#                     tf.image.total_variation(tf.expand_dims(y_pred_exp, axis=-1))
+#                 )
+#                 total_loss += tv_loss
+
+#             # Add L2 smoothness loss - penalizes large changes between consecutive predictions
+#             if 'L2' in loss_type:
+#                 l2_factor = 1e-5
+#                 l2_smooth_loss = l2_factor * tf.reduce_mean(
+#                     tf.square(y_pred_exp[:, 1:] - y_pred_exp[:, :-1])
+#                 )
+#                 total_loss += l2_smooth_loss
+
+#             # Add margin loss - encourages confident predictions
+#             if 'Margin' in loss_type:
+#                 margin_factor = 1e-4
+#                 margin_loss = margin_factor * tf.reduce_mean(
+#                     tf.squeeze(y_pred_exp * (1 - y_pred_exp))
+#                 )
+#                 total_loss += margin_loss
+
+#             # Add entropy loss - encourages confident predictions for binary labels
+#             if 'Entropy' in loss_type and 'HYPER_ENTROPY' in params:
+#                 entropy_factor = params['HYPER_ENTROPY']
+
+#                 # Calculate prediction entropy: -p*log(p) - (1-p)*log(1-p)
+#                 # Add small epsilon to avoid log(0)
+#                 epsilon = 1e-8
+#                 y_pred_squeezed = tf.squeeze(y_pred_exp, axis=-1)
+#                 y_true_squeezed = tf.squeeze(y_true_exp, axis=-1)
+
+#                 # Calculate binary entropy of predictions
+#                 entropy = -(y_pred_squeezed * tf.math.log(y_pred_squeezed + epsilon) +
+#                         (1 - y_pred_squeezed) * tf.math.log(1 - y_pred_squeezed + epsilon))
+
+#                 # For binary labels (0/1), we want to minimize entropy for all predictions
+#                 # Higher penalty for incorrect low-confidence predictions, lower penalty for correct confident predictions
+#                 confidence_weight = tf.abs(y_true_squeezed - y_pred_squeezed) + 0.1  # Higher weight for incorrect predictions
+
+#                 # Weight entropy by confidence - penalize uncertainty more for incorrect predictions
+#                 weighted_entropy = entropy * confidence_weight
+
+#                 entropy_loss = tf.reduce_mean(weighted_entropy)
+#                 total_loss += entropy_factor * entropy_loss
+
+#             # add false positive loss
+#             if 'FalsePositive' in loss_type and 'HYPER_FALSEPOSITIVE' in params:
+#                 false_positive_factor = params['HYPER_FALSEPOSITIVE']
+#                 # False positive loss implementation
+#                 # FP = tf.reduce_sum(tf.cast((y_pred > threshold) & (y_true < 0.5), tf.float32))
+#                 # FP_loss = FP / (tf.reduce_sum(1 - y_true) + epsilon)
+#                 # FP_loss = tf.reduce_mean(tf.square(y_pred * (1 - y_true))) * lambda_fp
+
+#                 total_loss += false_positive_factor * false_positive_loss
+
+#             # Add truncated MSE loss
+#             if 'TMSE' in loss_type and 'HYPER_TMSE' in params:
+#                 tmse_factor = params['HYPER_TMSE']
+#                 # Truncated MSE loss implementation
+#                 tmse_loss = truncated_mse_loss(y_true_exp, y_pred_exp)
+#                 total_loss += tmse_factor * tmse_loss
+
+#             # Early onset preference loss - encourages early detection
+#             if 'Early' in loss_type:
+#                 early_factor = 0.1
+#                 if 'HYPER_EARLY' in params:
+#                     early_factor = params['HYPER_EARLY']
+
+#                 def early_onset_loss():
+#                     threshold = 0.5
+#                     early_onset_threshold = 5
+#                     penalty_factor = 0.1
+#                     reward_factor = 0.05
+
+#                     # Reshape for compatibility if needed
+#                     y_true_sq = tf.squeeze(y_true_exp, axis=-1)
+#                     y_pred_sq = tf.squeeze(y_pred_exp, axis=-1)
+
+#                     # Calculate delay in detection - find first time predictions cross threshold
+#                     detected_times = tf.argmax(tf.cast(y_pred_sq >= threshold, tf.int32), axis=1)
+#                     true_event_times = tf.argmax(tf.cast(y_true_sq, tf.int32), axis=1)
+#                     delay = detected_times - true_event_times
+
+#                     # Penalty for late detections
+#                     late_penalty = tf.where(delay > early_onset_threshold,
+#                                             penalty_factor * tf.cast(delay - early_onset_threshold, tf.float32),
+#                                             0.0)
+
+#                     # Reward for slightly early detections
+#                     early_reward = tf.where((delay < 0) & (delay >= -early_onset_threshold),
+#                                         reward_factor * tf.cast(-delay, tf.float32),
+#                                         0.0)
+
+#                     # Combine penalty and reward terms
+#                     onset_loss = tf.reduce_mean(late_penalty - early_reward)
+#                     return onset_loss
+
+#                 # Only calculate early onset loss if there are actual events in the batch
+#                 has_events = tf.reduce_any(y_true_exp > 0.5)
+#                 early_loss = tf.cond(
+#                     has_events,
+#                     early_onset_loss,
+#                     lambda: 0.0
+#                 )
+#                 total_loss += early_factor * early_loss
+
+#             # Monotonicity loss - encourages predictions to rise toward events
+#             if 'Mono' in loss_type and 'HYPER_MONO' in params:
+#                 mono_factor = params['HYPER_MONO']
+
+#                 def monotonicity_loss():
+#                     """Loss to encourage early rising predictions before onset"""
+#                     batch_size = tf.shape(y_true_exp)[0]
+#                     time_steps = tf.shape(y_true_exp)[1]
+#                     gap_margin = 40  # Default max time steps before onset to apply monotonicity
+
+#                     # Find onset indices (first 0 to 1 transition)
+#                     y_true_flat = tf.squeeze(y_true_exp, axis=-1)
+#                     shifted_y_true = tf.concat([tf.zeros((batch_size, 1)), y_true_flat[:, :-1]], axis=1)
+#                     onset_mask = tf.logical_and(shifted_y_true < 0.5, y_true_flat >= 0.5)
+#                     onset_indices = tf.argmax(tf.cast(onset_mask, tf.int32), axis=1)
+
+#                     # Create gap mask relative to onset indices
+#                     gap_start = tf.maximum(onset_indices - gap_margin, 0)
+#                     gap_end = onset_indices
+#                     gap_mask = tf.sequence_mask(gap_end, maxlen=time_steps, dtype=tf.float32) - \
+#                             tf.sequence_mask(gap_start, maxlen=time_steps, dtype=tf.float32)
+#                     gap_mask = tf.expand_dims(gap_mask, axis=-1)
+
+#                     # Differences between consecutive predictions
+#                     y_pred_flat = tf.squeeze(y_pred_exp, axis=-1)
+#                     diff = y_pred_flat[:, :-1] - y_pred_flat[:, 1:]
+#                     diff = tf.pad(diff, [[0, 0], [0, 1]])  # Pad to match original shape
+
+#                     # Penalize non-monotonic increases in the gap period
+#                     monotonicity_penalty = tf.nn.relu(diff) * gap_mask
+#                     return tf.reduce_mean(monotonicity_penalty)
+
+#                 # Only calculate monotonicity loss if there are actual events in the batch
+#                 has_events = tf.reduce_any(y_true_exp > 0.5)
+#                 mono_loss = tf.cond(
+#                     has_events,
+#                     monotonicity_loss,
+#                     lambda: 0.0
+#                 )
+
+#                 total_loss += mono_factor * mono_loss
+
+#             # Add Barlow Twins loss for representation learning
+#             if 'Bar' in loss_type and 'HYPER_BARLOW' in params:
+#                 barlow_factor = params['HYPER_BARLOW']
+
+#                 def barlow_twins_loss(embedding1, embedding2, lambda_param=0.005):
+#                     # Normalize embeddings
+#                     embedding1 = tf.nn.l2_normalize(embedding1, axis=1)
+#                     embedding2 = tf.nn.l2_normalize(embedding2, axis=1)
+
+#                     # Cross-correlation matrix
+#                     c = tf.matmul(embedding1, embedding2, transpose_a=True)
+#                     c /= tf.cast(tf.shape(embedding1)[0], tf.float32)  # Normalize by batch size
+
+#                     # On-diagonal: minimize difference from 1
+#                     on_diag = tf.reduce_sum(tf.square(tf.linalg.diag_part(c) - 1))
+
+#                     # Off-diagonal: minimize correlation
+#                     off_diag = tf.reduce_sum(tf.square(c)) - on_diag
+
+#                     # Total loss
+#                     return on_diag + lambda_param * off_diag
+
+#                 if this_op is not None:
+#                     # Extract intermediate tensor representations
+#                     # This is a simplified implementation that would need adjustment
+#                     total_loss += barlow_factor * barlow_twins_loss(this_op(prediction_out), this_op(prediction_targets))
+#             return total_loss
+
+#         def prediction_mode_branch():
+#             if horizon == 0:
+#                 prediction_targets = y_true[:, :, :8]  # LFP targets (8 channels)
+#                 prediction_out = y_pred[:, :, :8]     # LFP predictions (8 channels)
+#             else:
+#                 prediction_targets = y_true[:, horizon:, :8]  # LFP targets (8 channels)
+#                 prediction_out = y_pred[:, :-horizon, :8]     # LFP predictions (8 channels)
+#             y_true_exp = tf.expand_dims(y_true[:, :, 8], axis=-1)  # Probability at index 8
+#             y_pred_exp = tf.expand_dims(y_pred[:, :, 8], axis=-1)  # Predicted probability at index 8
+#             return prediction_targets, prediction_out, y_true_exp, y_pred_exp
+
+#         def patch_mode_branch():
+#             # Assumes d_model and proj_dim are correctly retrieved from params or scope
+#             # Example: d_model = params.get('D_MODEL', 32) # Make sure D_MODEL is in params
+#             # Example: proj_dim = params.get('PROJ_DIM', d_model) # Often same as d_model
+#             input_channels = params['input_channels']
+#             d_model = params['NO_FILTERS']
+#             n_patch = params['NO_DILATIONS']
+#             n_layer = params['NO_KERNELS']
+#             proj_dim = d_model # Assuming proj_dim is d_model
+
+#             # LFP Reconstruction part
+#             if horizon == 0:
+#                 prediction_targets = y_true[:, :, :8]  # LFP targets (8 channels)
+#                 prediction_out = y_pred[:, :, :8]     # LFP predictions (8 channels)
+#             else:
+#                 prediction_targets = y_true[:, horizon:, :8]
+#                 prediction_out = y_pred[:, :-horizon, :8]
+
+#             # Classification part
+#             y_true_exp = tf.expand_dims(y_true[:, :, 8], axis=-1)  # True probability at index 8
+#             y_pred_exp = tf.expand_dims(y_pred[:, :, 8], axis=-1)  # Predicted probability at index 8
+
+#             current_idx = 9  # Start index for additional features
+#             # Split tensor into n_layer*n_patch tensors of d_model dimension
+#             num_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+#             num_dists = []
+#             for i in range(n_layer*n_patch):
+#                 start_idx = i * d_model
+#                 end_idx = (i + 1) * d_model
+#                 num_dists.append(num_dists_full[:, :, start_idx:end_idx])
+#             current_idx += d_model*n_layer*n_patch
+
+#             size_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+#             size_dists = []
+#             for i in range(n_layer*n_patch):
+#                 start_idx = i * d_model
+#                 end_idx = (i + 1) * d_model
+#                 size_dists.append(size_dists_full[:, :, start_idx:end_idx])
+#             current_idx += d_model*n_layer*n_patch
+
+#             num_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+#             num_mx = []
+#             for i in range(n_layer*n_patch):
+#                 start_idx = i * d_model
+#                 end_idx = (i + 1) * d_model
+#                 num_mx.append(num_mx_full[:, :, start_idx:end_idx])
+#             current_idx += d_model*n_layer*n_patch
+
+#             size_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+#             size_mx = []
+#             for i in range(n_layer*n_patch):
+#                 start_idx = i * d_model
+#                 end_idx = (i + 1) * d_model
+#                 size_mx.append(size_mx_full[:, :, start_idx:end_idx])
+#             return prediction_targets, prediction_out, y_true_exp, y_pred_exp, num_dists, size_dists, num_mx, size_mx
+
+#         def classification_mode_branch():
+#             # For classification-only mode (1 or 2 channels)
+#             if tf.shape(y_true)[-1] > 1:
+#                 y_true_exp = tf.expand_dims(y_true[:, :, 0], axis=-1)
+#                 y_pred_exp = tf.expand_dims(y_pred[:, :, 0], axis=-1)
+#             else:
+#                 # y_true_exp = tf.expand_dims(y_true, axis=-1)
+#                 # y_pred_exp = tf.expand_dims(y_pred, axis=-1)
+#                 y_true_exp = y_true#tf.expand_dims(y_true, axis=-1)
+#                 y_pred_exp = y_pred#tf.expand_dims(y_pred, axis=-1)
+
+#             # Create dummy tensors for prediction targets and outputs
+#             dummy_shape = tf.concat([tf.shape(y_true)[:2], [8]], axis=0)
+#             dummy_tensor = tf.zeros(dummy_shape)
+#             return dummy_tensor, dummy_tensor, y_true_exp, y_pred_exp
+
+#         # print('Using classification only:', is_classification_only)
+#         if is_patch:
+#             prediction_targets, prediction_out, y_true_exp, y_pred_exp, num_dists, size_dists, num_mx, size_mx = patch_mode_branch()
+#             sample_weight =  tf.ones_like(y_true[:, :, 0])
+#         elif not is_classification_only:
+#             prediction_targets, prediction_out, y_true_exp, y_pred_exp = prediction_mode_branch()
+#             sample_weight = tf.cond(
+#                 tf.greater(tf.shape(y_true)[-1], 9),
+#                 lambda: y_true[:, :, 9],
+#                 lambda: tf.ones_like(y_true[:, :, 0])
+#             )
+#         else:
+#             prediction_targets, prediction_out, y_true_exp, y_pred_exp = classification_mode_branch()
+#             sample_weight = tf.cond(
+#                 tf.greater(tf.shape(y_true)[-1], 1),
+#                 lambda: y_true[:, :, 1],
+#                 lambda: tf.ones_like(y_true[:, :, 0])
+#             )
+
+#             # if is_cad:
+#             #     print('Using CAD mode and downsampling labels')
+#             #     pool = tf.keras.layers.MaxPooling1D(pool_size=12, strides=12, padding='valid')
+#             #     sample_weight_expanded = tf.expand_dims(sample_weight, axis=-1)
+#             #     sample_weight = pool(sample_weight_expanded)
+#             #     # y_true_exp_expanded = tf.expand_dims(y_true_exp, axis=-1)
+#             #     y_true_exp = pool(y_true_exp)
+#         # pdb.set_trace()
+
+#         # # Maybe zero weights during training (20% chance)
+#         # if params.get('TRAINING', False):  # Only if in training mode
+#         #     random_val = tf.random.uniform(())
+#         #     sample_weight = tf.cond(
+#         #         tf.less(random_val, 0.2),
+#         #         lambda: tf.zeros_like(sample_weight),
+#         #         lambda: sample_weight
+#         #     )
+
+#         # Calculate classification loss
+#         total_loss = compute_classification_loss(y_true_exp, y_pred_exp, sample_weight, params)
+
+#         # # Handle sigmoid activation if needed
+#         # if flag_sigmoid:
+#         #     y_pred_exp = tf.math.sigmoid(y_pred_exp)
+
+#         # Add extra loss terms
+#         # total_loss = add_extra_losses(total_loss, y_true_exp, y_pred_exp, sample_weight,
+#         #                              params, model, prediction_targets, prediction_out, this_op)
+
+#         # if is_patch:
+#         #     from model.patchAD.loss import tf_anomaly_score
+#         #     # total_loss += loss_weight*patch_loss(prediction_targets, prediction_out, proj_inter, proj_intra, x_inter, x_intra)
 
 
-        # Convert weights to tensors and ensure correct dtype
-        weight_recon = tf.cast(params.get('WEIGHT_Recon', 1.0), dtype=tf.float32)
-        weight_patch = tf.cast(params.get('WEIGHT_Patch', 1.0), dtype=tf.float32)
-        weight_class = tf.cast(params.get('WEIGHT_Class', 1.0), dtype=tf.float32)
+#         #     loss_cont = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+#         #         num_dists, size_dists,
+#         #         params['seq_length'],
+#         #         True,
+#         #         params.get('patch_ad_temp', 1.0)
+#         #     ))
 
-        # Calculate total loss using tensor operations
-        total_loss = patch_loss#cls_loss#recon_loss#cls_loss#weight_class * cls_loss#weight_recon * recon_loss
-        #+ weight_class * cls_loss#* recon_loss + weight_patch * patch_loss + weight_class * cls_loss
-        return total_loss
+#         #     # Calculate patch loss
+#         #     Np_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+#         #         num_mx, size_dists,
+#         #         params['seq_length'],
+#         #         True,
+#         #         params.get('patch_ad_temp', 1.0)
+#         #     ))
 
-    return loss
+#         #     Pp_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+#         #         num_dists, size_mx,
+#         #         params['seq_length'],
+#         #         True,
+#         #         params.get('patch_ad_temp', 1.0)
+#         #     ))
+
+#         #     loss_proj = Np_proj + Pp_proj
+#         #     # Ensure patch_loss is a scalar tensor
+#         #     proj_weight = params.get('patch_ad_proj', 0.2)
+#         #     patch_loss = (1-proj_weight)*tf.reduce_mean(loss_cont)+proj_weight*tf.reduce_mean(loss_proj)
+#         #     weight_patch = tf.cast(params.get('WEIGHT_Patch', 1.0), dtype=tf.float32)
+#         #     total_loss += weight_patch * patch_loss
+#         # elif not is_classification_only:
+#         if not is_classification_only:
+#             mse_loss = tf.reduce_mean(tf.square(prediction_targets-prediction_out))
+#             total_loss += loss_weight * mse_loss
+
+#         return total_loss
+#     return loss_fn
+
+
+# def triplet_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+#     """
+#     Custom triplet loss function for SWR prediction that works with tuple outputs.
+#     """
+#     def extract_param_from_loss_type(loss_type, param_prefix, default_value):
+#         """Helper function to extract parameters from loss type string"""
+#         try:
+#             if param_prefix in loss_type:
+#                 idx = loss_type.find(param_prefix) + len(param_prefix)
+#                 param_str = loss_type[idx:idx+3]
+#                 return float(param_str) / 100.0
+#             return default_value
+#         except:
+#             return default_value
+    
+#     @tf.function
+#     def loss_fn(y_true, y_pred):
+#         # Get batch size
+#         # pdb.set_trace()
+#         # batch_size = tf.shape(y_pred)[0] // 3
+#         # params['BATCH_SIZE'] = tf.shape(y_pred)[0] // 3
+
+#         # Split tensors using tf.split instead of unpacking
+#         anchor_out, positive_out, negative_out = tf.split(y_pred, num_or_size_splits=3, axis=0)
+#         anchor_true, positive_true, negative_true = tf.split(y_true, num_or_size_splits=3, axis=0)
+
+#         # Split predictions into classification and embedding parts using tf operations
+#         anchor_class = anchor_out[..., 0]
+#         positive_class = positive_out[..., 0]
+#         negative_class = negative_out[..., 0]
+
+#         anchor_emb = tf.reduce_mean(anchor_out[..., 1:], axis=1)
+#         positive_emb = tf.reduce_mean(positive_out[..., 1:], axis=1)
+#         negative_emb = tf.reduce_mean(negative_out[..., 1:], axis=1)
+
+#         # Extract labels using tf operations
+#         anchor_labels = tf.cast(anchor_true[..., 0], tf.float32)
+#         positive_labels = tf.cast(positive_true[..., 0], tf.float32)
+#         negative_labels = tf.cast(negative_true[..., 0], tf.float32)
+
+#         # Calculate embedding distances using tf operations
+#         pos_dist = tf.reduce_sum(tf.square(anchor_emb - positive_emb), axis=-1)
+#         neg_dist = tf.reduce_sum(tf.square(anchor_emb - negative_emb), axis=-1)
+
+#         # Triplet loss with margin
+#         margin = tf.cast(params.get('TRIPLET_MARGIN', 1.0), tf.float32)
+#         triplet_loss_val = tf.maximum(0.0, pos_dist - neg_dist + margin)
+
+#         # Classification loss using focal loss
+
+#         loss_type = params['TYPE_LOSS']
+#         alpha = 0.5#extract_param_from_loss_type(loss_type, 'Ax', 0.65)
+#         gamma = 2#extract_param_from_loss_type(loss_type, 'Gx', 2.0)
+
+#         focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
+#             apply_class_balancing=True,
+#             alpha=alpha,
+#             gamma=gamma,
+#             reduction=tf.keras.losses.Reduction.NONE
+#         )
+
+#         # Calculate classification loss for each part of the triplet
+#         class_loss_anchor = focal_loss(anchor_labels, anchor_class)
+#         class_loss_positive = focal_loss(positive_labels, positive_class)
+#         class_loss_negative = focal_loss(negative_labels, negative_class)
+
+#         # Combine losses using tf operations
+#         loss_fp_weight = params.get('LOSS_NEGATIVES', 2.0)
+#         print(f"Loss weight: {loss_weight}, FP weight: {loss_fp_weight}")
+#         total_class_loss = (class_loss_anchor + class_loss_positive + loss_fp_weight * class_loss_negative) / 3.0
+
+
+#         # Weight between triplet and classification loss
+#         total_loss = loss_weight*tf.reduce_mean(triplet_loss_val) + tf.reduce_mean(total_class_loss)
+
+#         if ('Entropy' in params['TYPE_LOSS']) and ('HYPER_ENTROPY' in params):
+#             entropy_factor = params['HYPER_ENTROPY']
+
+#             # Calculate prediction entropy: -p*log(p) - (1-p)*log(1-p)
+#             # Add small epsilon to avoid log(0)
+#             epsilon = 1e-8
+
+#             for y_pred_exp, y_true_exp in zip([anchor_class, positive_class, negative_class],
+#                                            [anchor_labels, positive_labels, negative_labels]):
+
+#                 # y_pred_squeezed = tf.squeeze(y_pred_exp, axis=-1)
+#                 # y_true_squeezed = tf.squeeze(y_true_exp, axis=-1)
+#                 y_pred_squeezed = y_pred_exp
+#                 y_true_squeezed = y_true_exp
+
+#                 # Calculate binary entropy of predictions
+#                 entropy = -(y_pred_squeezed * tf.math.log(y_pred_squeezed + epsilon) +
+#                         (1 - y_pred_squeezed) * tf.math.log(1 - y_pred_squeezed + epsilon))
+
+#                 # For binary labels (0/1), we want to minimize entropy for all predictions
+#                 # Higher penalty for incorrect low-confidence predictions, lower penalty for correct confident predictions
+#                 confidence_weight = tf.abs(y_true_squeezed - y_pred_squeezed) + 0.1  # Higher weight for incorrect predictions
+
+#                 # Weight entropy by confidence - penalize uncertainty more for incorrect predictions
+#                 weighted_entropy = entropy * confidence_weight
+
+#                 entropy_loss = tf.reduce_mean(weighted_entropy)
+#                 total_loss += entropy_factor * entropy_loss
+#         return total_loss
+#     return loss_fn
+
+# # def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+# #     # ----- helpers -----
+# #     def _mean_pool(x): return tf.reduce_mean(x, axis=1)
+
+# #     # cosine ramp in [0,1]
+# #     def _ramp(step, delay, dur):
+# #         step  = tf.cast(step, tf.float32)
+# #         delay = tf.cast(delay, tf.float32)
+# #         dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+# #         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
+# #         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)  # 0→1
+
+# #     def tv_on_logits(z):  # z: [B,T]
+# #         return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
+
+# #     # ----- metric losses (unchanged math) -----
+# #     def mpn_tuple_loss(z_a_raw, z_p_raw, z_n_raw, *, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1, exclude_self=True):
+# #         z_a = tf.reduce_mean(tf.cast(z_a_raw, tf.float32), axis=1)
+# #         z_p = tf.reduce_mean(tf.cast(z_p_raw, tf.float32), axis=1)
+# #         z_n = tf.reduce_mean(tf.cast(z_n_raw, tf.float32), axis=1)
+# #         B   = tf.shape(z_a)[0]
+
+# #         # pull
+# #         d_pair = tf.reduce_sum(tf.square(z_a - z_p), axis=1) + 1e-8
+# #         L_pull = lambda_pull * d_pair
+
+# #         def _mask_self(mat):
+# #             if exclude_self:
+# #                 mask = tf.eye(B, dtype=tf.bool)
+# #                 return tf.where(mask, tf.fill(tf.shape(mat), tf.constant(1e9, tf.float32)), mat)
+# #             return mat
+
+# #         d_ap = tf.reduce_sum(tf.square(z_a[:,None,:] - z_p[None,:,:]), axis=2) + 1e-8
+# #         d_ap = _mask_self(d_ap)
+# #         L_weak = tf.reduce_mean(tf.nn.relu(margin_weak + d_pair[:,None] - d_ap))
+# #         d_an = tf.reduce_sum(tf.square(z_a[:,None,:] - z_n[None,:,:]), axis=2) + 1e-8
+# #         d_an = _mask_self(d_an)
+# #         lifted = tf.reduce_logsumexp(margin_hard - d_an, axis=1)
+# #         L_hard = tf.nn.relu(d_pair + lifted)
+
+# #         return tf.reduce_mean(L_pull + L_weak + L_hard)
+
+# #     def supcon_ripple(z_a_raw, z_p_raw, z_n_raw, *, temperature=0.1):
+# #         z_a = _mean_pool(z_a_raw); z_p = _mean_pool(z_p_raw); z_n = _mean_pool(z_n_raw)
+# #         z_all = tf.math.l2_normalize(tf.concat([z_a, z_p, z_n], axis=0), axis=1)
+# #         M = tf.shape(z_all)[0]
+# #         sim = tf.matmul(z_all, z_all, transpose_b=True) / temperature
+
+# #         B = tf.shape(z_a)[0]
+# #         labels = tf.concat([tf.ones(2*B, tf.int32), tf.zeros(B, tf.int32)], axis=0)
+# #         pos = tf.cast(tf.equal(labels[:,None], labels[None,:]), tf.float32) - tf.eye(M, dtype=tf.float32)
+
+# #         logits = sim - 1e9 * tf.eye(M)
+# #         log_prob = logits - tf.reduce_logsumexp(logits, axis=1, keepdims=True)
+
+# #         pos_cnt = tf.reduce_sum(pos, axis=1)
+# #         loss_vec = -tf.reduce_sum(pos * log_prob, axis=1) / (pos_cnt + 1e-8)
+# #         return tf.reduce_mean(loss_vec)
+
+# #     @tf.function
+# #     def loss_fn(y_true, y_pred):
+# #         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
+# #         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+
+# #         logit_idx = getattr(model, '_cls_logit_index', 0)
+# #         prob_idx  = getattr(model, '_cls_prob_index',  1)
+# #         emb_start = getattr(model, '_emb_start_index', 2)
+
+# #         a_logit = a_out[..., logit_idx];  p_logit = p_out[..., logit_idx];  n_logit = n_out[..., logit_idx]
+# #         a_prob  = a_out[..., prob_idx];   p_prob  = p_out[..., prob_idx];   n_prob  = n_out[..., prob_idx]
+# #         a_emb   = a_out[..., emb_start:]; p_emb   = p_out[..., emb_start:]; n_emb   = n_out[..., emb_start:]
+
+# #         a_lab = tf.cast(a_true[..., 0], tf.float32)
+# #         p_lab = tf.cast(p_true[..., 0], tf.float32)
+# #         n_lab = tf.cast(n_true[..., 0], tf.float32)
+
+# #         # --------- ramps (READ-ONLY) ----------
+# #         it = tf.cast(model.optimizer.iterations, tf.float32)
+
+# #         total_steps = 100*1000
+# #         # Metric ramps
+# #         ramp_delay = tf.cast(params.get('RAMP_DELAY', int(0.01*total_steps)), tf.float32)
+# #         ramp_steps = tf.cast(params.get('RAMP_STEPS', int(0.25*total_steps)), tf.float32)
+
+# #         w_sup_tgt = tf.cast(params.get('LOSS_SupCon', 1.0), tf.float32)
+# #         w_mpn_tgt = tf.cast(params.get('LOSS_TupMPN', 1.0), tf.float32)
+# #         w_neg_tgt = tf.cast(params.get('LOSS_NEGATIVES', 2.0), tf.float32)
+        
+# #         r = _ramp(it, ramp_delay, ramp_steps)  # 0→1 after delay
+# #         w_supcon = r * w_sup_tgt
+# #         w_tupMPN = r * w_mpn_tgt
+
+# #         # Negatives ramp (MIN → target)
+# #         # Negatives ramp: gentle 25–40% of run
+# #         neg_min = params.setdefault('LOSS_NEGATIVES_MIN', 4.0)  # softer start to reduce FP early
+# #         neg_delay = params.setdefault('NEG_RAMP_DELAY', int(0.05* total_steps))
+# #         neg_steps = params.setdefault('NEG_RAMP_STEPS', int(0.45 * total_steps))
+# #         neg_steps = tf.cast(neg_steps if neg_steps is not None else params.get('RAMP_STEPS', 1), tf.float32)
+# #         neg_steps = tf.maximum(neg_steps, 1.0)
+
+# #         r_neg = _ramp(it, neg_delay, neg_steps)
+# #         loss_fp_weight = neg_min + r_neg * tf.maximum(0.0, w_neg_tgt - neg_min)
+
+# #         # --------- metric learning ----------
+# #         L_mpn_raw = mpn_tuple_loss(a_emb, p_emb, n_emb, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1)
+# #         L_sup_raw = supcon_ripple(a_emb, p_emb, n_emb, temperature=0.1)
+# #         metric_loss = w_tupMPN * L_mpn_raw + w_supcon * L_sup_raw
+
+# #         # --------- BCE on logits ----------
+# #         def bce_logits(y, z):
+# #             return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
+
+# #         cls_a = bce_logits(a_lab, a_logit)
+# #         cls_p = bce_logits(p_lab, p_logit)
+# #         cls_n = bce_logits(n_lab, n_logit)
+
+# #         alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
+# #         classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
+
+# #         # --------- logit-TV smoothing ----------
+# #         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
+# #         print(f"TV weight: {lam_tv}")
+# #         tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
+# #         classification_loss = classification_loss + lam_tv * tv_term
+
+# #         # --------- re-scaling (ratio trick) ----------
+# #         ratio = tf.stop_gradient(
+# #             (tf.reduce_mean(L_mpn_raw + L_sup_raw)) /
+# #             (tf.reduce_mean(classification_loss) + 1e-6)
+# #         )
+# #         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
+
+# #         total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
+
+# #         # Optional entropy term
+# #         if ('Entropy' in params.get('TYPE_LOSS','')) and ('HYPER_ENTROPY' in params):
+# #             eps = tf.constant(1e-8, tf.float32)
+# #             ent_w = tf.cast(params['HYPER_ENTROPY'], tf.float32)
+# #             y_prob_all = tf.concat([a_prob, p_prob, n_prob], axis=0)
+# #             y_true_all = tf.concat([a_lab,  p_lab,  n_lab],  axis=0)
+# #             entropy = -y_prob_all*tf.math.log(y_prob_all+eps) -(1. - y_prob_all)*tf.math.log(1.-y_prob_all+eps)
+# #             conf = tf.abs(y_true_all - y_prob_all) + 0.1
+# #             total += ent_w * tf.reduce_mean(entropy * conf)
+# #         return total
+# #     return loss_fn
+
+# # def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+# #     import math
+# #     import tensorflow as tf
+
+# #     # ---------- helpers ----------
+# #     def _mean_pool_bt(x):               # [B,T,D] -> [B,D]
+# #         return tf.reduce_mean(tf.cast(x, tf.float32), axis=1)
+
+# #     def _ramp(step, delay, dur):        # cosine 0→1
+# #         step  = tf.cast(step,  tf.float32)
+# #         delay = tf.cast(delay, tf.float32)
+# #         dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+# #         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
+# #         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
+
+# #     def tv_on_logits(z_bt):             # z: [B,T]
+# #         return tf.reduce_mean(tf.abs(z_bt[:, 1:] - z_bt[:, :-1]))
+
+# #     # --- post-onset mask for A/P (fixes dtype mismatch robustly) ---
+# #     def post_onset_mask(y_bt):
+# #         """
+# #         y_bt: [B,T] float in {0,1}
+# #         returns: [B,T] float mask in {0,1}
+# #         - For windows with any positive (>=0.5): mask=1 from onset onward, else 0 before.
+# #         - For windows with no positive: return all ones (do NOT drop them).
+# #         """
+# #         yb = y_bt >= 0.5                        # bool [B,T]
+# #         # First positive index and has-event flag
+# #         idx = tf.argmax(tf.cast(yb, tf.int32), axis=1, output_type=tf.int32)   # [B] int32
+# #         has = tf.reduce_any(yb, axis=1)                                        # [B] bool
+
+# #         B = tf.shape(y_bt)[0]
+# #         T = tf.shape(y_bt)[1]
+# #         rng = tf.range(T, dtype=tf.int32)[None, :]                              # [1,T] int32
+# #         mpos = tf.cast(rng >= idx[:, None], tf.float32)                         # [B,T] 1 from onset onward
+
+# #         # no-onset windows -> keep whole window (all ones)
+# #         return tf.where(has[:, None], mpos, tf.ones((B, T), tf.float32))
+
+# #     # --- weighted BCE (time-masked), safe reduction ---
+# #     def bce_logits_weighted(y_bt, logit_bt, w_bt):
+# #         # per-timepoint BCE
+# #         bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_bt, logits=logit_bt)  # [B,T]
+# #         w   = tf.cast(w_bt, tf.float32)
+# #         num = tf.reduce_sum(bce * w)
+# #         den = tf.reduce_sum(w) + tf.keras.backend.epsilon()
+# #         return num / den
+
+# #     # --- Circle loss (pooled, cosine sim, all negatives per anchor) ---
+# #     def circle_loss(z_a_bt, z_p_bt, z_n_bt, m=0.25, gamma=32.0):
+# #         """
+# #         z_*_bt: [B,T,D] -> pooled to [B,D]
+# #         Standard Circle loss (Sun et al., CVPR 2020):
+# #           L_a = softplus( logsumexp(gamma * alpha_n * (s_an - m)) + gamma * alpha_p * (s_ap - (1-m)) )
+# #           (and symmetric p-branch), averaged over batch and branches.
+# #         """
+# #         za = tf.math.l2_normalize(_mean_pool_bt(z_a_bt), axis=1)  # [B,D]
+# #         zp = tf.math.l2_normalize(_mean_pool_bt(z_p_bt), axis=1)  # [B,D]
+# #         zn = tf.math.l2_normalize(_mean_pool_bt(z_n_bt), axis=1)  # [B,D]
+
+# #         # Similarities
+# #         s_ap = tf.reduce_sum(za * zp, axis=1)                     # [B]
+# #         s_an = tf.matmul(za, zn, transpose_b=True)                # [B,B]
+# #         s_pn = tf.matmul(zp, zn, transpose_b=True)                # [B,B]
+
+# #         # Circle weights
+# #         ap = tf.nn.relu(m + s_ap)                                 # [B]
+# #         an = tf.nn.relu(s_an + m)                                 # [B,B]
+# #         pn = tf.nn.relu(s_pn + m)                                 # [B,B]
+# #         delta_p = 1.0 - m
+
+# #         # Anchor branch
+# #         neg_part_a = tf.reduce_logsumexp(gamma * an * (s_an - m), axis=1)      # [B]
+# #         pos_part_a = gamma * ap * (s_ap - delta_p)                              # [B]
+# #         L_a = tf.nn.softplus(neg_part_a + pos_part_a)                           # [B]
+
+# #         # Positive-as-anchor branch (symmetry)
+# #         neg_part_p = tf.reduce_logsumexp(gamma * pn * (s_pn - m), axis=1)      # [B]
+# #         pos_part_p = gamma * ap * (s_ap - delta_p)                              # [B] (same s_ap)
+# #         L_p = tf.nn.softplus(neg_part_p + pos_part_p)
+
+# #         return tf.reduce_mean(0.5 * (L_a + L_p))
+
+# #     @tf.function
+# #     def loss_fn(y_true, y_pred):
+# #         # ---- split triplet on batch axis ----
+# #         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
+# #         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+
+# #         # ---- head indices from model ----
+# #         logit_idx = getattr(model, '_cls_logit_index', 0)
+# #         emb_start = getattr(model, '_emb_start_index', 2)
+
+# #         # ---- slice logits / embeddings ----
+# #         a_logit = a_out[..., logit_idx]      # [B,T]
+# #         p_logit = p_out[..., logit_idx]      # [B,T]
+# #         n_logit = n_out[..., logit_idx]      # [B,T]
+# #         a_emb   = a_out[..., emb_start:]     # [B,T,D]
+# #         p_emb   = p_out[..., emb_start:]     # [B,T,D]
+# #         n_emb   = n_out[..., emb_start:]     # [B,T,D]
+
+# #         # ---- labels ----
+# #         a_lab = tf.cast(a_true[..., 0], tf.float32)  # [B,T] (0/1)
+# #         p_lab = tf.cast(p_true[..., 0], tf.float32)  # [B,T]
+# #         n_lab = tf.cast(n_true[..., 0], tf.float32)  # [B,T] (all zeros by design)
+
+# #         # ---- ramps ----
+# #         it = tf.cast(model.optimizer.iterations, tf.float32)
+# #         total_steps = float(params.get('TOTAL_STEPS', 100000))
+
+# #         ramp_delay = float(params.get('RAMP_DELAY', 0.01 * total_steps))
+# #         ramp_steps = float(params.get('RAMP_STEPS', 0.25 * total_steps))
+# #         r = _ramp(it, ramp_delay, ramp_steps)                       # 0→1
+
+# #         # Circle weight (use LOSS_Circle if present; else fall back to your old TupMPN weight)
+# #         w_circle_tgt = tf.cast(params.get('LOSS_Circle',
+# #                                    params.get('LOSS_TupMPN', 30.0)), tf.float32)
+# #         w_circle = r * w_circle_tgt
+
+# #         # Negatives ramp (controls FP/min pressure)
+# #         neg_min    = float(params.get('LOSS_NEGATIVES_MIN', 4.0))
+# #         neg_target = float(params.get('LOSS_NEGATIVES', 20.0))
+# #         neg_delay  = float(params.get('NEG_RAMP_DELAY', 0.05 * total_steps))
+# #         neg_steps  = float(params.get('NEG_RAMP_STEPS', 0.45 * total_steps))
+# #         r_neg = _ramp(it, neg_delay, max(1.0, neg_steps))
+# #         loss_fp_weight = tf.cast(neg_min + r_neg * max(0.0, neg_target - neg_min), tf.float32)
+
+# #         # ---- Circle metric loss ----
+# #         m     = float(params.get('CIRCLE_m', 0.25))
+# #         gamma = float(params.get('CIRCLE_gamma', 32.0))
+# #         L_circle_raw = circle_loss(a_emb, p_emb, n_emb, m=m, gamma=gamma)
+# #         metric_loss  = w_circle * L_circle_raw
+
+# #         # ---- Classification BCE with post-onset masking ----
+# #         a_mask = post_onset_mask(a_lab)                 # [B,T]
+# #         p_mask = post_onset_mask(p_lab)                 # [B,T]
+# #         n_mask = tf.ones_like(n_lab, tf.float32)        # keep all negatives
+
+# #         alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
+
+# #         cls_a = bce_logits_weighted(a_lab, a_logit, a_mask)
+# #         cls_p = bce_logits_weighted(p_lab, p_logit, p_mask)
+# #         cls_n = bce_logits_weighted(n_lab, n_logit, n_mask)
+
+# #         classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
+
+# #         # ---- TV smoothing on logits ----
+# #         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
+# #         tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
+# #         classification_loss = classification_loss + lam_tv * tv_term
+
+# #         # ---- magnitude balancing (same idea as before) ----
+# #         ratio = tf.stop_gradient(
+# #             tf.reduce_mean(metric_loss) / (tf.reduce_mean(classification_loss) + 1e-6)
+# #         )
+# #         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
+
+# #         total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
+# #         return total
+
+# #     return loss_fn
+
+
+# def combined_mse_fbfce_loss(params):
+#     def loss(y_true, y_pred):
+#         # Get dimensions from params
+#         input_channels = params['input_channels']
+#         d_model = params['NO_FILTERS']
+#         n_patch = params['NO_DILATIONS']
+#         n_layer = params['NO_KERNELS']
+
+#         # Slice tensors
+#         current_idx = 0
+#         reconstruction = y_pred[:, :, current_idx:current_idx + input_channels]
+#         current_idx += input_channels
+
+#         classification_output = y_pred[:, :, current_idx:current_idx + 1]
+#         current_idx += 1
+
+#         # Split tensor into n_layer*n_patch tensors of d_model dimension
+#         num_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+#         num_dists = []
+#         for i in range(n_layer*n_patch):
+#             start_idx = i * d_model
+#             end_idx = (i + 1) * d_model
+#             num_dists.append(num_dists_full[:, :, start_idx:end_idx])
+#         current_idx += d_model*n_layer*n_patch
+
+#         size_dists_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+#         size_dists = []
+#         for i in range(n_layer*n_patch):
+#             start_idx = i * d_model
+#             end_idx = (i + 1) * d_model
+#             size_dists.append(size_dists_full[:, :, start_idx:end_idx])
+#         current_idx += d_model*n_layer*n_patch
+
+#         num_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+#         num_mx = []
+#         for i in range(n_layer*n_patch):
+#             start_idx = i * d_model
+#             end_idx = (i + 1) * d_model
+#             num_mx.append(num_mx_full[:, :, start_idx:end_idx])
+#         current_idx += d_model*n_layer*n_patch
+
+#         size_mx_full = y_pred[:, :, current_idx:current_idx + d_model*n_layer*n_patch]
+#         size_mx = []
+#         for i in range(n_layer*n_patch):
+#             start_idx = i * d_model
+#             end_idx = (i + 1) * d_model
+#             size_mx.append(size_mx_full[:, :, start_idx:end_idx])
+
+#         # Slice y_true
+#         true_signal = y_true[:, :, :input_channels]
+#         true_labels = y_true[:, :, input_channels:input_channels + 1]
+
+#         # Calculate reconstruction loss
+#         recon_loss = tf.reduce_mean(tf.square(true_signal - reconstruction))
+
+#         loss_cont = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+#             num_dists, size_dists,
+#             params['seq_length'],
+#             True,
+#             params.get('patch_ad_temp', 1.0)
+#         ))
+
+#         # Calculate patch loss
+#         Np_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+#             num_mx, size_dists,
+#             params['seq_length'],
+#             True,
+#             params.get('patch_ad_temp', 1.0)
+#         ))
+
+#         Pp_proj = tf.reduce_mean(tf_anomaly_score( # Renamed variable
+#             num_dists, size_mx,
+#             params['seq_length'],
+#             True,
+#             params.get('patch_ad_temp', 1.0)
+#         ))
+
+#         loss_proj = Np_proj + Pp_proj
+#         # Ensure patch_loss is a scalar tensor
+#         proj_weight = params.get('patch_ad_proj', 0.2)
+#         patch_loss = (1-proj_weight)*tf.reduce_mean(loss_cont)+proj_weight*tf.reduce_mean(loss_proj)
+
+#         # Extract alpha and gamma parameters
+#         alpha = params['focal_alpha'] if 'focal_alpha' in params else 0.25
+#         gamma = params['focal_gamma'] if 'focal_gamma' in params else 3.50
+
+#         use_class_balancing = alpha > 0
+#         focal_loss = tf.keras.losses.BinaryFocalCrossentropy(
+#             apply_class_balancing=use_class_balancing,
+#             alpha=alpha if alpha > 0 else None,
+#             gamma=gamma,
+#             reduction=tf.keras.losses.Reduction.NONE
+#         )
+#         loss_values = focal_loss(true_labels, classification_output)
+#         cls_loss = tf.reduce_mean(loss_values)
+
+
+#         # Convert weights to tensors and ensure correct dtype
+#         weight_recon = tf.cast(params.get('WEIGHT_Recon', 1.0), dtype=tf.float32)
+#         weight_patch = tf.cast(params.get('WEIGHT_Patch', 1.0), dtype=tf.float32)
+#         weight_class = tf.cast(params.get('WEIGHT_Class', 1.0), dtype=tf.float32)
+
+#         # Calculate total loss using tensor operations
+#         total_loss = patch_loss#cls_loss#recon_loss#cls_loss#weight_class * cls_loss#weight_recon * recon_loss
+#         #+ weight_class * cls_loss#* recon_loss + weight_patch * patch_loss + weight_class * cls_loss
+#         return total_loss
+
+#     return loss
+
+
+
+# def build_DBI_Patch(params):
+#     """Builds model with concatenated outputs based on actual PatchAD returns."""
+
+#     # this_activation = 'relu'
+#     if params['TYPE_REG'].find('RELU')>-1:
+#         this_activation = 'relu'
+#     elif params['TYPE_REG'].find('GELU')>-1:
+#         this_activation = gelu
+#     elif params['TYPE_REG'].find('ELU')>-1:
+#         this_activation = ELU(alpha=1)
+#     else:
+#         this_activation = 'linear'
+
+#     # optimizer
+#     if params['TYPE_REG'].find('AdamW')>-1:
+#         # Increase initial learning rate for better exploration
+#         initial_lr = params['LEARNING_RATE']
+#         this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, weight_decay=1e-4, clipnorm=1.0)
+#         # Optional schedule (else keep constant LR)
+#         if params.get("USE_LR_SCHEDULE", False):
+#             sched = WarmStableCool(
+#                 base_lr=params["LEARNING_RATE"],
+#                 warmup_steps=int(0.02 * T_steps),
+#                 cool_start=int(0.80 * T_steps),
+#                 total_steps=T_steps,
+#                 final_scale=0.1
+#             )
+#             this_optimizer.learning_rate = sched
+#     elif params['TYPE_REG'].find('Adam')>-1:
+#         this_optimizer = tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE'])
+#     elif params['TYPE_REG'].find('SGD')>-1:
+#         this_optimizer = tf.keras.optimizers.SGD(learning_rate=params['LEARNING_RATE'], momentum=0.9)
+
+#     if params['TYPE_REG'].find('Glo')>-1:
+#         print('Using Glorot')
+#         this_kernel_initializer = 'glorot_uniform'
+#     elif params['TYPE_REG'].find('He')>-1:
+#         print('Using He')
+#         this_kernel_initializer = 'he_normal'
+#     model_type = params['TYPE_MODEL']
+#     n_filters = params['NO_FILTERS']
+#     n_kernels = params['NO_KERNELS']
+#     n_dilations = params['NO_DILATIONS']
+#     if params['TYPE_ARCH'].find('Drop')>-1:
+#         r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
+#         print('Using Dropout')
+#         print(r_drop)
+#     else:
+#         r_drop = 0.0
+
+#     hori_shift = 0
+
+#     # Input layer
+#     input_layer = Input(shape=(params['seq_length'], params['input_channels']))
+
+#     # Create PatchAD model
+#     patch_ad = PatchAD(
+#         input_channels=params['input_channels'],
+#         seq_length=params['seq_length'],
+#         patch_sizes=params['patch_sizes'],
+#         d_model=params['NO_FILTERS'],
+#         e_layer=params['NO_KERNELS'],
+#         dropout=params.get('dropout', 0.1),
+#         activation=params.get('activation', 'elu'), # Ensure this matches MLPBlock's activ_name if needed
+#         norm=params.get('patch_ad_norm', 'ln')
+#     )
+
+#     # Get all PatchAD outputs
+#     num_dists, size_dists, num_mx, size_mx, reconstruction = patch_ad(input_layer)
+
+#     # Get target sequence length from reconstruction
+#     target_seq_length = tf.shape(reconstruction)[1]
+#     d_model = params['NO_FILTERS']
+#     batch_size = tf.shape(input_layer)[0]
+
+#     def upsample_and_combine_repeat(tensor_list, target_len_tensor, name_prefix):
+#         """Upsamples using tf.repeat (inter-patch style) and concatenates."""
+#         upsampled_tensors = []
+#         if not tensor_list: # Handle empty list case
+#             return None
+#         for i, tensor in enumerate(tensor_list):
+#             B_ = tf.shape(tensor)[0]
+#             current_len = tf.shape(tensor)[1]
+#             D_ = tf.shape(tensor)[2]
+
+#             repeats = tf.cast(tf.math.ceil(tf.cast(target_len_tensor, tf.float32) / tf.cast(current_len, tf.float32)), tf.int32)
+#             repeated = tf.repeat(tensor, repeats=repeats, axis=1)
+
+#             sliced_tensor = tf.slice(repeated, [0, 0, 0], tf.stack([B_, target_len_tensor, D_]))
+#             upsampled_tensors.append(sliced_tensor)
+
+#         if not upsampled_tensors: # Should not happen if tensor_list was not empty initially
+#              return None
+#         # Concatenate along the feature dimension
+#         return Concatenate(axis=2, name=f'{name_prefix}_concat')(upsampled_tensors)
+
+#     def upsample_and_combine_tile(tensor_list, target_len_tensor, name_prefix):
+#         """Upsamples using tf.tile (intra-patch style) and concatenates."""
+#         upsampled_tensors = []
+#         if not tensor_list: # Handle empty list case
+#             return None
+#         for i, tensor in enumerate(tensor_list):
+#             B_ = tf.shape(tensor)[0]
+#             current_len = tf.shape(tensor)[1]
+#             D_ = tf.shape(tensor)[2]
+
+#             repeats_factor = tf.cast(tf.math.ceil(tf.cast(target_len_tensor, tf.float32) / tf.cast(current_len, tf.float32)), tf.int32)
+
+#             reshaped = tf.reshape(tensor, tf.stack([B_, current_len, 1, D_]))
+#             multiples = tf.stack([1, 1, repeats_factor, 1]) # Multiples for tf.tile
+#             tiled = tf.tile(reshaped, multiples)
+
+#             # Reshape back: current_len * repeats_factor can be a tensor
+#             # Ensure the shape for reshape uses tensor multiplication
+#             tiled_flat = tf.reshape(tiled, tf.stack([B_, current_len * repeats_factor, D_]))
+
+#             sliced_tensor = tf.slice(tiled_flat, [0, 0, 0], [B_, target_len_tensor, D_])
+#             upsampled_tensors.append(sliced_tensor)
+
+#         if not upsampled_tensors: # Should not happen if tensor_list was not empty initially
+#             return None
+#         # Concatenate along the feature dimension
+#         return Concatenate(axis=2, name=f'{name_prefix}_concat')(upsampled_tensors)
+
+
+#     # pdb.set_trace()
+#     # Upsample and combine features from different scales using repeat/tile
+#     combined_num_dists = upsample_and_combine_repeat(num_dists, target_seq_length, 'num_dists')
+#     combined_size_dists = upsample_and_combine_tile(size_dists, target_seq_length, 'size_dists')
+#     combined_num_mx = upsample_and_combine_repeat(num_mx, target_seq_length, 'num_mx')
+#     combined_size_mx = upsample_and_combine_tile(size_mx, target_seq_length, 'size_mx')
+
+#     # # Create upsampling layers
+#     # upsample_repeat = UpsampleAndCombineRepeat(name_prefix='num_dists')
+#     # upsample_tile = UpsampleAndCombineTile(name_prefix='size_dists')
+
+#     # # Apply upsampling
+#     # combined_num_dists = upsample_repeat([num_dists, target_seq_length])
+#     # combined_size_dists = upsample_tile([size_dists, target_seq_length])
+#     # combined_num_mx = upsample_repeat([num_mx, target_seq_length])
+#     # combined_size_mx = upsample_tile([size_mx, target_seq_length])
+
+#     # pdb.set_trace()
+#     # --- Classification Head ---
+#     # Combine features relevant for classification (e.g., distributions)
+#     cls_features = tf.concat([
+#         combined_num_dists,
+#         combined_size_dists,
+#         combined_num_mx, # Optional
+#         combined_size_mx
+#     ], axis=-1, name='cls_features_concat') # Shape [B, L, D*2 or D*4]
+
+#     # Apply L2 Normalization if specified
+#     if params.get('TYPE_ARCH', '').find('L2N') > -1:
+#         cls_features = Lambda(lambda t: tf.math.l2_normalize(t, axis=-1), name='l2_norm_cls')(cls_features)
+
+#     # Final classification layer
+#     classification_output = Dense(1, kernel_initializer=tf.keras.initializers.GlorotUniform(),
+#                                   use_bias=True,
+#                                   activation='sigmoid', # Use sigmoid for probability
+#                                   name='classification_output')(cls_features) # Shape [B, L, 1]
+
+#     # --- Final Model Output ---
+#     if params['mode'] == 'predict':
+#         final_output = tf.concat([reconstruction, classification_output], axis=-1)
+#         final_output = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(final_output) # [B, 1, C+1]
+#     else:
+#         final_output = tf.concat([
+#             reconstruction,                    # [B, L, C]
+#             classification_output,            # [B, L, 1]
+#             combined_num_dists,              # [B, L, D*(Patch*Levels)]
+#             combined_size_dists,             # [B, L, D*(Patch*Levels)]
+#             combined_num_mx,                 # [B, L, D*(Patch*Levels)]
+#             combined_size_mx                 # [B, L, D*(Patch*Levels)]
+#         ], axis=-1)
+
+#     # Create the Model
+#     model = Model(inputs=input_layer, outputs=final_output)
+
+#     # Set attribute for metrics (indicates reconstruction is present)
+#     model._is_classification_only = False
+#     hori_shift = 0 # Set horizon shift for metrics
+#     loss_weight = params.get('LOSS_WEIGHT', 1.0) # Default to 1.0 if not specified
+#     loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params)
+#     # loss_fn = combined_mse_fbfce_loss(params)
+#     # Compile the model
+#     # Ensure `combined_mse_fbfce_loss` is adapted for this output structure
+#     model.compile(
+#         optimizer=tf.keras.optimizers.Adam(params.get('LEARNING_RATE', 1e-3)),
+#         # loss=combined_mse_fbfce_loss(params), # Use the updated loss function below
+#         loss = loss_fn,
+#         metrics=[MaxF1MetricHorizon(model=model),
+#                  EventAwareF1(model=model),
+#                  EventFalsePositiveRateMetric(model=model)]
+#     )
+
+#     return model
+
+# def build_CAD_Downsampler(input_shape=(1536*2, 8), target_length=128*2, embed_dim=32):
+#     """
+#     Causal Context-Aware Downsampler with ELU activations and residual connections.
+#     Downsamples from 1024 → 128 timepoints.
+#     """
+#     inputs = Input(shape=input_shape, name="highfreq_input")
+#     x = inputs
+
+#     num_blocks = int(tf.math.log(float(input_shape[0]) / target_length) / tf.math.log(2.0))
+#     for i in range(num_blocks):
+#         # Store the input before processing for skip connection
+#         input_layer = x
+
+#         # Apply convolution with downsampling (stride=2)
+#         x = layers.Conv1D(embed_dim,
+#                           kernel_size=5 if i == 0 else 3,
+#                           strides=3 if i == 0 else 2,
+#                           padding="causal",
+#                           activation=None,
+#                         name=f"conv_block_{i}")(x)
+#         x = layers.LayerNormalization()(x)
+#         x = layers.ELU()(x)
+
+#         # Use average pooling to downsample the input to match conv output dimensions
+#         pooled_input = layers.AveragePooling1D(pool_size=2, strides=2, padding="same")(input_layer)
+
+#         # Project channels if needed (regardless of sequence length)
+#         if pooled_input.shape[-1] != embed_dim:
+#             pooled_input = layers.Conv1D(embed_dim, kernel_size=1, padding="same")(pooled_input)
+
+#         # Always trim pooled_input to match x's length using a Lambda layer
+#         # This avoids comparing symbolic tensors directly
+#         pooled_input = layers.Lambda(
+#             lambda tensors: tensors[0][:, :tf.shape(tensors[1])[1], :],
+#             name=f"trim_skip_{i}"
+#         )([pooled_input, x])
+
+#         # Add the transformed input as a skip connection
+#         x = layers.Add()([x, pooled_input])
+
+#     # Final projection to match original channel dim (8)
+#     x = layers.Conv1D(input_shape[1], kernel_size=1, activation="elu")(x)
+
+#     return Model(inputs, x, name="CAD_Downsampler")
+
+# def build_DBI_TCN_CADMixerOnly(input_timepoints, input_chans=8, params=None, pretrained_tcn=None):
+#     print('Input Timepoints', input_timepoints)
+#     # optimizer
+#     if params['TYPE_REG'].find('AdamW')>-1:
+#         # Increase initial learning rate for better exploration
+#         initial_lr = params['LEARNING_RATE'] * 2.0
+#         this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, clipnorm=1.0)
+#     elif params['TYPE_REG'].find('Adam')>-1:
+#         this_optimizer = tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE'])
+#     elif params['TYPE_REG'].find('SGD')>-1:
+#         this_optimizer = tf.keras.optimizers.SGD(learning_rate=params['LEARNING_RATE'], momentum=0.9)
+
+#     downsample_dim = params['NO_FILTERS']
+#     # horizontal shift
+#     hori_shift = 0
+#     if params['TYPE_ARCH'].find('Only')>-1:
+#         hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Only')+4:params['TYPE_ARCH'].find('Only')+6])/1000*2500)
+#         print('Using Horizon Timesteps:', hori_shift)
+
+#     print('Using Loss Weight:', params['LOSS_WEIGHT'])
+#     loss_weight = params['LOSS_WEIGHT']
+#     # model to be trained
+#     # with K.name_scope('CAD'):  # name scope used to make sure weights get unique names
+#     # CAD = build_CAD_Downsampler(input_shape=(None, 8), target_length=input_timepoints, embed_dim=downsample_dim)  # CAD module
+#     CAD = build_CAD_Downsampler(input_shape=(1104, 8), target_length=92, embed_dim=downsample_dim)  # CAD module
+
+#     # Inputs
+#     X_highfreq = Input(shape=(None, 8), name="X_highfreq")     # 30 kHz input
+#     # y_label = Input(shape=(T,), name="y_label")                # label for classification (same T as TCN output)
+
+#     # CAD module
+#     X_downsampled = CAD(X_highfreq)                            # Output shape: (96, 8)
+
+#     # Frozen TCN
+#     TCN_output = pretrained_tcn(X_downsampled)
+#     # pdb.set_trace()
+#     TCN_output = Lambda(lambda x: x[:, -1:, :], name='Last_Output')(TCN_output)  # Output shape: (128, 8)
+#     # TCN_output = Lambda(lambda x: x[:, -input_timepoints:, :], name='Last_Output')(TCN_output)  # Output shape: (128, 8)
+
+
+#     model = Model(inputs=X_highfreq, outputs=TCN_output)
+#     model._is_classification_only = True
+#     # model._is_cad = True
+
+#     f1_metric = MaxF1MetricHorizon(model=model)
+#     event_f1_metric = EventAwareF1(model=model)
+#     fp_event_metric = EventFalsePositiveRateMetric(model=model)
+
+#     # Create loss function without calling it
+#     loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+
+#     model.compile(optimizer=this_optimizer,
+#                   loss=loss_fn,
+#                   metrics=[f1_metric, event_f1_metric, fp_event_metric])
+
+#     if params['WEIGHT_FILE']:
+#         print('load model')
+#         model.load_weights(params['WEIGHT_FILE'])
+
+#     return model
+
