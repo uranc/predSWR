@@ -946,14 +946,14 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         lr_schedule = WarmStableCool(
             base_lr=params['LEARNING_RATE'],
             total_steps=total_steps,
-            warmup_ratio=params.get('LR_WARMUP_RATIO', 0.04),
-            cool_ratio=params.get('LR_COOL_RATIO', 0.60),
-            final_scale=params.get('LR_FINAL_SCALE', 0.06),
+            warmup_ratio=params.get('LR_WARMUP_RATIO', 0.1),
+            cool_ratio=params.get('LR_COOL_RATIO', 0.50),
+            final_scale=params.get('LR_FINAL_SCALE', 0.08),
         )
         this_optimizer = tf.keras.optimizers.AdamW(
             learning_rate=(lr_schedule if params.get('USE_LR_SCHEDULE', True) else params['LEARNING_RATE']),
             weight_decay=params.get('WEIGHT_DECAY', 1e-4),
-            clipnorm=float(params.get('CLIP_NORM', 1.5)),
+            clipnorm=float(params.get('CLIP_NORM', 1.0)),
             epsilon=1e-8
         )
                
@@ -1009,7 +1009,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
                 scales=((7,1),(7,2),(11,4)),                   # RFs: 7, 13, 41 (all ≤ 43)
                 groups=groups,
                 gate_bias=(-3.0 if params['mode']=="train" else -2.0),  # tighter in pretrain
-                l1_gate=1e-5,                                   # mild sparsity on gate logits (reduces FP)
+                l1_gate=params.get("l1_gate", 1e-5), 
                 use_residual_mix=True,
                 name="ms_causal_gate"
             )(inputs_nets)            
@@ -1096,7 +1096,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         cls_logits = Conv1D(1, 1,
                         kernel_initializer='glorot_uniform',
                         kernel_regularizer=tf.keras.regularizers.L1(1e-4),
-                        bias_initializer='zeros',
+                        bias_initializer=tf.keras.initializers.Constant(-2.0),  # was zeros
                         activation=None, name='cls_logits')(cls_in)
         cls_prob = Activation('sigmoid', name='cls_prob')(cls_logits)
 
@@ -1890,6 +1890,9 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         loss_vec = -tf.reduce_sum(pos * log_prob, axis=1) / (pos_cnt + 1e-8)
         return tf.reduce_mean(loss_vec)
 
+    ema_metric = tf.Variable(1.0, trainable=False, dtype=tf.float32, name="ema_metric_loss")
+    ema_clf    = tf.Variable(1.0, trainable=False, dtype=tf.float32, name="ema_clf_loss")
+
     @tf.function
     def loss_fn(y_true, y_pred):
         # --- triplet split ---
@@ -1978,14 +1981,21 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         classification_loss = classification_loss + (lam_tv * r_tv) * tpen
 
         # --- ratio trick + mild throttle (names unchanged) ---
-        ratio = tf.stop_gradient(
-            (tf.reduce_mean(L_circle_raw + L_sup_raw)) /
-            (tf.reduce_mean(classification_loss) + 1e-6)
-        )
-        ratio = tf.clip_by_value(ratio, 0.1, 10.0)
-        clf_scale = tf.cast(params.get("CLF_SCALE", 0.30), tf.float32)
+        alpha = tf.constant(0.01, tf.float32)  # slow & stable
+        ema_metric.assign((1.0 - alpha) * ema_metric + alpha * tf.stop_gradient(L_circle_raw + L_sup_raw))
+        ema_clf.assign(   (1.0 - alpha) * ema_clf    + alpha * tf.stop_gradient(classification_loss))
 
-        total = tf.reduce_mean(metric_loss) + clf_scale * ratio * tf.reduce_mean(classification_loss)
+        ratio = tf.clip_by_value(ema_metric / (ema_clf + 1e-6), 0.1, 1.0)  # never > 1
+
+
+        # classfication 
+        clf_scale = tf.cast(params.get("CLF_SCALE", 0.30), tf.float32)
+        clf_delay = float(params.get("CLF_RAMP_DELAY", params.get("RAMP_DELAY", 0.01 * total_steps)))
+        clf_dur   = float(params.get("CLF_RAMP_STEPS", params.get("RAMP_STEPS", 0.25 * total_steps)))
+        r_clf     = _ramp(it, clf_delay, clf_dur)   # 0 → 1
+        w_clf     = clf_scale * r_clf
+
+        total = tf.reduce_mean(metric_loss) + (w_clf * ratio) * tf.reduce_mean(classification_loss)
         return total
 
     return loss_fn

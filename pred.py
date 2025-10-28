@@ -148,8 +148,8 @@ def objective_triplet(trial):
         "RAMP_STEPS": 0.30 * params.get("TOTAL_STEPS", 100000),
         "NEG_RAMP_DELAY": 0.10 * params.get("TOTAL_STEPS", 100000),
         "NEG_RAMP_STEPS": 0.60 * params.get("TOTAL_STEPS", 100000),
-        "TV_DELAY": 0.25 * params.get("TOTAL_STEPS", 100000),
-        "TV_DUR":   0.40 * params.get("TOTAL_STEPS", 100000),
+        "TV_DELAY": 0.08 * params.get("TOTAL_STEPS", 100000),
+        "TV_DUR":   0.35 * params.get("TOTAL_STEPS", 100000),
     })
 
     # ---- Metric: Circle + SupCon (time-averaged sims) ----
@@ -178,19 +178,13 @@ def objective_triplet(trial):
     params["l1_gate"] = trial.suggest_categorical("l1_gate", [1e-5, 3e-5, 1e-4])
 
     # =====================  FIXED RIDGE / CONSTANTS  =====================
-    # Optimizer / schedule
+    params["USE_LR_SCHEDULE"] = True
     params["LEARNING_RATE"] = 1e-2
+    params["LR_WARMUP_RATIO"] = 0.10
+    params["LR_COOL_RATIO"] = 0.50
+    params["LR_FINAL_SCALE"] = 0.08
     params["WEIGHT_DECAY"]  = 1e-4
-    params["CLIP_NORM"]     = 1.5
-
-    # Ramps (keep constant for stability this round)
-    ts = float(params.get("TOTAL_STEPS", 150000))
-    params["RAMP_DELAY"]     = 0.01 * ts
-    params["RAMP_STEPS"]     = 0.25 * ts
-    params["NEG_RAMP_DELAY"] = 0.05 * ts
-    params["NEG_RAMP_STEPS"] = 0.45 * ts
-    params["TV_DELAY"]       = 0.10 * ts
-    params["TV_DUR"]         = 0.30 * ts
+    params["CLIP_NORM"]     = 1.0
 
 
     ax = 25#trial.suggest_int('AX', 25, 85, step=20)
@@ -333,10 +327,21 @@ def objective_triplet(trial):
         else:
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
 
-    params = dataset_params
+    params.update(dataset_params)   # merge, don't overwrite
     total_steps     = float(params['steps_per_epoch'] * int(params['NO_EPOCHS']) * 0.8)
     print('Total Steps: ', total_steps)
     params['TOTAL_STEPS'] = total_steps
+
+    # Ramps (keep constant for stability this round)
+    ts = float(params.get("TOTAL_STEPS", 150000))
+    params["RAMP_DELAY"]     = 0.02 * ts
+    params["RAMP_STEPS"]     = 0.30 * ts
+    params["NEG_RAMP_DELAY"] = 0.1 * ts
+    params["NEG_RAMP_STEPS"] = 0.6 * ts
+    params["TV_DELAY"]       = 0.25 * ts
+    params["TV_DUR"]         = 0.40 * ts
+    params['CLF_RAMP_DELAY']  = params['RAMP_DELAY']
+    params['CLF_RAMP_STEPS']  = params['RAMP_STEPS']
 
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     # Early stopping with tunable patience
@@ -363,6 +368,7 @@ def objective_triplet(trial):
                     _ramp(it, self.p["NEG_RAMP_DELAY"], self.p["NEG_RAMP_STEPS"]), step=it)
                 tf.summary.scalar("ramp/tv",
                     _ramp(it, self.p["TV_DELAY"], self.p["TV_DUR"]), step=it)
+                tf.summary.scalar("ramp/clf", _ramp(it, self.p["CLF_RAMP_DELAY"], self.p["CLF_RAMP_STEPS"]), step=it)
                 self.writer.flush()
 
     # pdb.set_trace()
@@ -371,7 +377,7 @@ def objective_triplet(trial):
 
         RampDebug(params, f"{study_dir}/"),
         # Early-stop on the most stable maximization metric
-        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=30, min_delta=1e-4, mode='max',
+        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=50, min_delta=1e-4, mode='max',
                         verbose=1, restore_best_weights=True),
 
         # Save best by F1 (max)
