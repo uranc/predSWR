@@ -347,38 +347,8 @@ def objective_triplet(trial):
     # Early stopping with tunable patience
     model.summary()
 
-    # log rhe ramps
-    def _ramp(step, delay, dur):
-        step = tf.cast(step, tf.float32)
-        w = (step - delay) / tf.maximum(1.0, dur)
-        return tf.clip_by_value(w, 0.0, 1.0)
-
-    class RampDebug(cb.Callback):
-        def __init__(self, params, logdir):
-            super().__init__()
-            self.p = params
-            self.writer = tf.summary.create_file_writer(logdir)
-
-        def on_train_batch_end(self, batch, logs=None):
-            it = tf.cast(self.model.optimizer.iterations, tf.float32)
-            with self.writer.as_default():
-                tf.summary.scalar("ramp/main",
-                    _ramp(it, self.p["RAMP_DELAY"], self.p["RAMP_STEPS"]), step=it)
-                tf.summary.scalar("ramp/neg",
-                    _ramp(it, self.p["NEG_RAMP_DELAY"], self.p["NEG_RAMP_STEPS"]), step=it)
-                tf.summary.scalar("ramp/tv",
-                    _ramp(it, self.p["TV_DELAY"], self.p["TV_DUR"]), step=it)
-                tf.summary.scalar("ramp/clf", _ramp(it, self.p["CLF_RAMP_DELAY"], self.p["CLF_RAMP_STEPS"]), step=it)
-                self.writer.flush()
-
-    # pdb.set_trace()
     callbacks = [
         cb.TensorBoard(log_dir=f"{study_dir}/", write_graph=True, write_images=True, update_freq='epoch'),
-
-        RampDebug(params, f"{study_dir}/"),
-        # Early-stop on the most stable maximization metric
-        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=50, min_delta=1e-4, mode='max',
-                        verbose=1, restore_best_weights=True),
 
         # Save best by F1 (max)
         cb.ModelCheckpoint(f"{study_dir}/mcc.weights.h5", monitor="val_sample_max_mcc",
@@ -392,9 +362,6 @@ def objective_triplet(trial):
         cb.ModelCheckpoint(f"{study_dir}/event.weights.h5", monitor='val_sample_pr_auc',
                         save_best_only=True, save_weights_only=True, mode='max', verbose=1),
 
-        # # Optional: also save best by FP/min (min)
-        # cb.ModelCheckpoint(f"{study_dir}/best_fpmin.weights.h5", monitor='val_fp_per_min',
-        #                 save_best_only=True, save_weights_only=True, mode='min', verbose=1),
     ]
     val_steps = dataset_params['VAL_STEPS']
     # pdb.set_trace()    # Train and evaluate

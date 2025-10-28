@@ -1654,7 +1654,7 @@ class SampleMaxMCC(tf.keras.metrics.Metric):
         den = tf.sqrt((self.tp + self.fp) * (self.tp + self.fn) *
                       (self.tn + self.fp) * (self.tn + self.fn) + eps)
         mcc = num / den
-        return tf.reduce_max(mcc)
+        return tf.reduce_sum(mcc)
 
     def reset_state(self):
         for v in (self.tp, self.fp, self.tn, self.fn):
@@ -1688,7 +1688,7 @@ class SampleMaxF1(tf.keras.metrics.Metric):
         prec = self.tp / (self.tp + self.fp + eps)
         reca = self.tp / (self.tp + self.fn + eps)
         f1   = 2.0 * prec * reca / (prec + reca + eps)
-        return tf.reduce_max(f1)
+        return tf.reduce_sum(f1)
 
     def reset_state(self):
         for v in (self.tp, self.fp, self.fn): v.assign(tf.zeros_like(v))
