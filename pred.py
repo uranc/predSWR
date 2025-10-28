@@ -61,7 +61,6 @@ def objective_triplet(trial):
     # ...rest of existing objective function code...
 
     # Base parameters
-    params['TOTAL_STEPS'] = 100 * 1000  # Assuming 1000 steps per epoch for 300 epochs
     params['SRATE'] = 2500
     params['NO_EPOCHS'] = 500
     params['TYPE_MODEL'] = 'Base'
@@ -145,12 +144,12 @@ def objective_triplet(trial):
         "LOSS_TV": 0.30, "SMOOTH_TYPE": "tMSE", "SMOOTH_SPACE": "logit", "SMOOTH_TAU": 3.5,
         "CLF_SCALE": 0.30,
         # ramps — keep as you had; no tuning needed
-        "RAMP_DELAY": 0.01 * params.get("TOTAL_STEPS", 100000),
-        "RAMP_STEPS": 0.25 * params.get("TOTAL_STEPS", 100000),
-        "NEG_RAMP_DELAY": 0.05 * params.get("TOTAL_STEPS", 100000),
-        "NEG_RAMP_STEPS": 0.45 * params.get("TOTAL_STEPS", 100000),
-        "TV_DELAY": 0.10 * params.get("TOTAL_STEPS", 100000),
-        "TV_DUR":   0.30 * params.get("TOTAL_STEPS", 100000),
+        "RAMP_DELAY": 0.02 * params.get("TOTAL_STEPS", 100000),
+        "RAMP_STEPS": 0.30 * params.get("TOTAL_STEPS", 100000),
+        "NEG_RAMP_DELAY": 0.10 * params.get("TOTAL_STEPS", 100000),
+        "NEG_RAMP_STEPS": 0.60 * params.get("TOTAL_STEPS", 100000),
+        "TV_DELAY": 0.25 * params.get("TOTAL_STEPS", 100000),
+        "TV_DUR":   0.40 * params.get("TOTAL_STEPS", 100000),
     })
 
     # ---- Metric: Circle + SupCon (time-averaged sims) ----
@@ -334,15 +333,45 @@ def objective_triplet(trial):
         else:
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
 
+    params = dataset_params
+    total_steps     = float(params['steps_per_epoch'] * int(params['NO_EPOCHS']) * 0.8)
+    print('Total Steps: ', total_steps)
+    params['TOTAL_STEPS'] = total_steps
+
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     # Early stopping with tunable patience
     model.summary()
+
+    # log rhe ramps
+    def _ramp(step, delay, dur):
+        step = tf.cast(step, tf.float32)
+        w = (step - delay) / tf.maximum(1.0, dur)
+        return tf.clip_by_value(w, 0.0, 1.0)
+
+    class RampDebug(cb.Callback):
+        def __init__(self, params, logdir):
+            super().__init__()
+            self.p = params
+            self.writer = tf.summary.create_file_writer(logdir)
+
+        def on_train_batch_end(self, batch, logs=None):
+            it = tf.cast(self.model.optimizer.iterations, tf.float32)
+            with self.writer.as_default():
+                tf.summary.scalar("ramp/main",
+                    _ramp(it, self.p["RAMP_DELAY"], self.p["RAMP_STEPS"]), step=it)
+                tf.summary.scalar("ramp/neg",
+                    _ramp(it, self.p["NEG_RAMP_DELAY"], self.p["NEG_RAMP_STEPS"]), step=it)
+                tf.summary.scalar("ramp/tv",
+                    _ramp(it, self.p["TV_DELAY"], self.p["TV_DUR"]), step=it)
+                self.writer.flush()
+
     # pdb.set_trace()
     callbacks = [
         cb.TensorBoard(log_dir=f"{study_dir}/", write_graph=True, write_images=True, update_freq='epoch'),
 
+        RampDebug(params, f"{study_dir}/"),
         # Early-stop on the most stable maximization metric
-        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=60, mode='max',
+        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=30, min_delta=1e-4, mode='max',
                         verbose=1, restore_best_weights=True),
 
         # Save best by F1 (max)
