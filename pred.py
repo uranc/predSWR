@@ -153,29 +153,47 @@ def objective_triplet(trial):
     })
 
     # ---- Metric: Circle + SupCon (time-averaged sims) ----
-    params["CIRCLE_m"]     = trial.suggest_categorical("CIRCLE_m",     [0.30, 0.33, 0.36])
-    params["CIRCLE_gamma"] = trial.suggest_categorical("CIRCLE_gamma", [18, 21, 24])
-    params["LOSS_Circle"]  = trial.suggest_categorical("LOSS_Circle",  [40.0, 60.0, 80.0])
+    # params["CIRCLE_m"]     = trial.suggest_categorical("CIRCLE_m",     [0.30, 0.33, 0.36])
+    # params["CIRCLE_gamma"] = trial.suggest_categorical("CIRCLE_gamma", [18, 21, 24])
+    # params["LOSS_Circle"]  = trial.suggest_categorical("LOSS_Circle",  [40.0, 60.0, 80.0])
+    params["CIRCLE_m"]     = trial.suggest_float("CIRCLE_m", 0.30, 0.36)
+    params["CIRCLE_gamma"] = trial.suggest_int("CIRCLE_gamma", 14, 28, step=2)
+    params["LOSS_Circle"]  = trial.suggest_float("LOSS_Circle", 40.0, 90.0)
 
     # SupCon kept as a stabilizer; grid chosen so (LOSS_SupCon / SUPCON_T) ≤ 10
-    params["LOSS_SupCon"]  = trial.suggest_categorical("LOSS_SupCon",  [0.25, 0.50, 1.00])
-    params["SUPCON_T"]     = trial.suggest_categorical("SUPCON_T",     [0.10, 0.15])
-
+    # params["LOSS_SupCon"]  = trial.suggest_categorical("LOSS_SupCon",  [0.25, 0.50, 1.00])
+    # params["SUPCON_T"]     = trial.suggest_categorical("SUPCON_T",     [0.10, 0.15])
+    params["SUPCON_T"] = trial.suggest_float("SUPCON_T", 0.08, 0.15)
+    sup_ratio = trial.suggest_float("SUPCON_RATIO", 2.0, 8.0)
+    params["LOSS_SupCon"] = sup_ratio * params["SUPCON_T"]
+    
     # ---- Classifier weights + FP pressure ----
-    params["BCE_ANC_ALPHA"]      = trial.suggest_categorical("BCE_ANC_ALPHA", [1.0, 10.0])
-    params["BCE_POS_ALPHA"]      = trial.suggest_categorical("BCE_POS_ALPHA", [1.0, 10.0])
-    params["LOSS_NEGATIVES_MIN"] = 2.0 #trial.suggest_categorical("LOSS_NEGATIVES_MIN", [2.0, 4.0])
-    params["LOSS_NEGATIVES"]     = trial.suggest_categorical("LOSS_NEGATIVES",     [24.0, 28.0])
-    params["CLF_SCALE"]          = trial.suggest_categorical("CLF_SCALE",          [0.25, 0.35, 0.45])
+    # params["BCE_ANC_ALPHA"]      = trial.suggest_categorical("BCE_ANC_ALPHA", [1.0, 10.0])
+    # params["BCE_POS_ALPHA"]      = trial.suggest_categorical("BCE_POS_ALPHA", [1.0, 10.0])
+    # params["LOSS_NEGATIVES_MIN"] = 2.0 #trial.suggest_categorical("LOSS_NEGATIVES_MIN", [2.0, 4.0])
+    # params["LOSS_NEGATIVES"]     = trial.suggest_categorical("LOSS_NEGATIVES",     [24.0, 28.0])
+    # params["CLF_SCALE"]          = trial.suggest_categorical("CLF_SCALE",          [0.25, 0.35, 0.45])
+    bce_alpha = trial.suggest_float("BCE_ALPHA", 1.0, 4.0)
+    params["BCE_ANC_ALPHA"] = bce_alpha
+    params["BCE_POS_ALPHA"] = bce_alpha
+
+    params["LOSS_NEGATIVES_MIN"] = 2.0  # fixed floor of the ramp
+    params["LOSS_NEGATIVES"]     = trial.suggest_int("LOSS_NEGATIVES", 22, 30, step=2)
+
+    params["CLF_SCALE"] = trial.suggest_float("CLF_SCALE", 0.20, 0.45)
 
     # ---- Temporal smoothing (truncated |Δlogit|) ----
-    params["LOSS_TV"]     = trial.suggest_categorical("LOSS_TV",  [0.20, 0.30, 0.40])
-    params["SMOOTH_TAU"]  = 3.5#trial.suggest_categorical("SMOOTH_TAU", [3.0, 3.5, 4.0])
+    # params["LOSS_TV"]     = trial.suggest_categorical("LOSS_TV",  [0.20, 0.30, 0.40])
+    # params["SMOOTH_TAU"]  = 3.5#trial.suggest_categorical("SMOOTH_TAU", [3.0, 3.5, 4.0])
+    # params["SMOOTH_TYPE"] = "tMSE"
+    # params["SMOOTH_SPACE"]= "logit"
+    params["LOSS_TV"] = trial.suggest_float("LOSS_TV", 0.05, 0.50, log=True)
+    params["SMOOTH_TAU"]  = 3.5   # keep fixed this round
     params["SMOOTH_TYPE"] = "tMSE"
     params["SMOOTH_SPACE"]= "logit"
-
+    
     # ---- Gate sparsity (keeps dead/noisy channels closed) ----
-    params["l1_gate"] = trial.suggest_categorical("l1_gate", [1e-5, 3e-5, 1e-4])
+    params["l1_gate"] = trial.suggest_float("l1_gate", 1e-6, 3e-4, log=True)
 
     # =====================  FIXED RIDGE / CONSTANTS  =====================
     params["USE_LR_SCHEDULE"] = True
@@ -2529,17 +2547,26 @@ elif mode == 'tune_server':
         },
     )
 
-    from optuna.samplers import TPESampler  # <- use MOTPE via TPESampler
+    # from optuna.samplers import TPESampler  # <- use MOTPE via TPESampler
 
-    sampler = TPESampler(
-        multivariate=True,      # joint modeling across params
-        group=True,             # handles conditional/subspace grouping
-        constant_liar=True,     # parallel-friendly; avoids collisions
-        n_startup_trials=64,    # pure random warmup (bump if your space is large)
-        n_ei_candidates=64,     # more candidate draws for better proposals
+    # sampler = TPESampler(
+    #     multivariate=True,      # joint modeling across params
+    #     group=True,             # handles conditional/subspace grouping
+    #     constant_liar=True,     # parallel-friendly; avoids collisions
+    #     n_startup_trials=64,    # pure random warmup (bump if your space is large)
+    #     n_ei_candidates=64,     # more candidate draws for better proposals
+    #     seed=1337,
+    # )
+    from optuna.samplers import TPESampler
+
+    sampler = optuna.samplers.TPESampler(
+        multivariate=True,
+        group=True,
+        constant_liar=True,
+        n_startup_trials=64,
+        n_ei_candidates=64,
         seed=1337,
     )
-
     study = optuna.create_study(
         study_name=param_dir,
         storage=storage,
@@ -2569,13 +2596,23 @@ elif mode == 'tune_worker':
     logger = logging.getLogger(__name__)
 
 
+    # from optuna.samplers import TPESampler
+
+    # sampler = TPESampler(
+    #     multivariate=True, group=True, constant_liar=True,
+    #     n_startup_trials=64, n_ei_candidates=64, seed=1337
+    # )
     from optuna.samplers import TPESampler
 
-    sampler = TPESampler(
-        multivariate=True, group=True, constant_liar=True,
-        n_startup_trials=64, n_ei_candidates=64, seed=1337
+    sampler = optuna.samplers.TPESampler(
+        multivariate=True,
+        group=True,
+        constant_liar=True,
+        n_startup_trials=64,
+        n_ei_candidates=64,
+        seed=1337,
     )
-
+    
     study = optuna.load_study(
         study_name=param_dir,
         storage=f"sqlite:///studies/{param_dir}/{param_dir}.db",
