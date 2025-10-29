@@ -1594,7 +1594,7 @@ def _pred_prob_timepoints(y_pred, model):
 
 # ---------- Sample-level PR-AUC (timepoint-wise) ----------
 class SamplePRAUC(tf.keras.metrics.Metric):
-    def __init__(self, thresholds=tf.linspace(0., 1., 51),
+    def __init__(self, thresholds=tf.linspace(0., 1., 11),
                  name="sample_pr_auc", model=None, **kw):
         super().__init__(name=name, **kw)
         k = int(thresholds.shape[0])
@@ -1640,7 +1640,7 @@ class SampleMaxMCC(tf.keras.metrics.Metric):
     Timepoint-wise MCC computed across a threshold grid; returns max MCC.
     Robust to class imbalance; no voting or event logic.
     """
-    def __init__(self, thresholds=tf.linspace(0., 1., 101),
+    def __init__(self, thresholds=tf.linspace(0., 1., 11),
                  name="sample_max_mcc", model=None, **kw):
         super().__init__(name=name, **kw)
         k = int(thresholds.shape[0])
@@ -1680,7 +1680,7 @@ class SampleMaxMCC(tf.keras.metrics.Metric):
 
 
 class SampleMaxF1(tf.keras.metrics.Metric):
-    def __init__(self, thresholds=tf.linspace(0., 1., 101), name="sample_max_f1", model=None, **kw):
+    def __init__(self, thresholds=tf.linspace(0., 1., 11), name="sample_max_f1", model=None, **kw):
         super().__init__(name=name, **kw)
         k = int(thresholds.shape[0])  # OK for tf.linspace
         self.tau = tf.cast(thresholds, tf.float32)
@@ -1720,7 +1720,7 @@ class LatencyScore(tf.keras.metrics.Metric):
     - Uses thresholds in (0,1) to avoid the 'always 1' degeneracy.
     - Optional min_run to ignore single-frame spikes.
     """
-    def __init__(self, thresholds=tf.linspace(0.05, 0.95, 19),
+    def __init__(self, thresholds=tf.linspace(0.05, 0.95, 11),
                  tau=16.0, min_run=1, name="latency_score", model=None, **kw):
         super().__init__(name=name, **kw)
         self.tau = tf.constant(float(tau), tf.float32)      # in samples
