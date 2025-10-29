@@ -2642,7 +2642,7 @@ elif mode == 'tune_worker':
 
     study.optimize(
         objective,
-        n_trials=48,
+        n_trials=1,
         gc_after_trial=True,
         show_progress_bar=True,
         callbacks=[lambda study, trial: logger.info(f"Trial {trial.number} finished")]
