@@ -62,7 +62,7 @@ def objective_triplet(trial):
 
     # Base parameters
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 500
+    params['NO_EPOCHS'] = 600
     params['TYPE_MODEL'] = 'Base'
 
     arch_lib = ['MixerOnly', 'MixerHori',
@@ -153,8 +153,8 @@ def objective_triplet(trial):
     })
 
     # ---- Metric: Circle + SupCon (time-averaged sims) ----
-    params["CIRCLE_m"]     = trial.suggest_categorical("CIRCLE_m",     [0.30, 0.32, 0.34, 0.36])
-    params["CIRCLE_gamma"] = trial.suggest_categorical("CIRCLE_gamma", [18, 20, 22, 24])
+    params["CIRCLE_m"]     = trial.suggest_categorical("CIRCLE_m",     [0.30, 0.33, 0.36])
+    params["CIRCLE_gamma"] = trial.suggest_categorical("CIRCLE_gamma", [18, 21, 24])
     params["LOSS_Circle"]  = trial.suggest_categorical("LOSS_Circle",  [40.0, 60.0, 80.0])
 
     # SupCon kept as a stabilizer; grid chosen so (LOSS_SupCon / SUPCON_T) ≤ 10
@@ -162,11 +162,11 @@ def objective_triplet(trial):
     params["SUPCON_T"]     = trial.suggest_categorical("SUPCON_T",     [0.10, 0.15])
 
     # ---- Classifier weights + FP pressure ----
-    params["BCE_ANC_ALPHA"]      = trial.suggest_categorical("BCE_ANC_ALPHA", [1.0, 2.0, 4.0])
-    params["BCE_POS_ALPHA"]      = trial.suggest_categorical("BCE_POS_ALPHA", [1.0, 2.0, 4.0])
-    params["LOSS_NEGATIVES_MIN"] = trial.suggest_categorical("LOSS_NEGATIVES_MIN", [2.0, 4.0])
-    params["LOSS_NEGATIVES"]     = trial.suggest_categorical("LOSS_NEGATIVES",     [24.0, 26.0, 28.0])
-    params["CLF_SCALE"]          = trial.suggest_categorical("CLF_SCALE",          [0.25, 0.30, 0.35])
+    params["BCE_ANC_ALPHA"]      = trial.suggest_categorical("BCE_ANC_ALPHA", [1.0, 10.0])
+    params["BCE_POS_ALPHA"]      = trial.suggest_categorical("BCE_POS_ALPHA", [1.0, 10.0])
+    params["LOSS_NEGATIVES_MIN"] = 2.0 #trial.suggest_categorical("LOSS_NEGATIVES_MIN", [2.0, 4.0])
+    params["LOSS_NEGATIVES"]     = trial.suggest_categorical("LOSS_NEGATIVES",     [24.0, 28.0])
+    params["CLF_SCALE"]          = trial.suggest_categorical("CLF_SCALE",          [0.25, 0.35, 0.45])
 
     # ---- Temporal smoothing (truncated |Δlogit|) ----
     params["LOSS_TV"]     = trial.suggest_categorical("LOSS_TV",  [0.20, 0.30, 0.40])
@@ -361,6 +361,11 @@ def objective_triplet(trial):
         # Save best by PR-AUC (max)
         cb.ModelCheckpoint(f"{study_dir}/event.weights.h5", monitor='val_sample_pr_auc',
                         save_best_only=True, save_weights_only=True, mode='max', verbose=1),
+        
+        # New: operating-point checkpoints
+        cb.ModelCheckpoint(f"{study_dir}/rec07.weights.h5",
+                        monitor="val_recall_at_0p7", mode="max",
+                        save_best_only=True, save_weights_only=True, verbose=1),
 
     ]
     val_steps = dataset_params['VAL_STEPS']
@@ -376,48 +381,81 @@ def objective_triplet(trial):
         max_queue_size=4)       # how many batches to keep ready
     hist = history.history
 
-    def _best(xs, mode="max"):
-        if not xs:  # empty list guard
-            return float('nan')
-        return (np.nanmax(xs) if mode == "max" else np.nanmin(xs))
+    # --- helper: safe history picker (never crashes on missing/short arrays)
+    def hist_pick(hist, key, idx, default=np.nan):
+        arr = hist.get(key, None)
+        if arr is None:
+            return float(default)
+        if idx is None:
+            return float(default)
+        # guard negative or out-of-bounds
+        if idx < 0 or idx >= len(arr):
+            return float(default)
+        try:
+            return float(arr[idx])
+        except (TypeError, ValueError):
+            return float(default)
 
-    best_pr_auc = _best(hist.get('val_sample_pr_auc', []),  "max")
-    best_mcc    = _best(hist.get('val_sample_max_mcc', []), "max")
-    best_f1     = _best(hist.get('val_sample_max_f1', []),  "max")
-    best_fp_min = _best(hist.get('val_fp_per_min', []),     "min")
-    best_latency = _best(hist.get('val_latency_score', []),     "max")
+    # ---- choose the epoch by YOUR selector (max PR-AUC)
+    pr_list = np.asarray(hist.get("val_sample_pr_auc", []), dtype=np.float64)
+    if pr_list.size == 0 or np.all(np.isnan(pr_list)):
+        raise optuna.TrialPruned("No valid PR-AUC history; pruning trial.")
 
+    idx = int(np.nanargmax(pr_list))
+    epoch_sel = idx  # for logging
 
-    # attrs for constraints/analysis
-    trial.set_user_attr("prauc",   float(best_pr_auc))
-    trial.set_user_attr("fpmin",   float(best_fp_min))
-    trial.set_user_attr("latency", float(best_latency))
+    # ---- pick all requested metrics from that epoch
+    prauc_sel = hist_pick(hist, "val_sample_pr_auc",     idx)        # selector metric itself
+    rec07_sel = hist_pick(hist, "val_recall_at_0p7",     idx)        # recall@0.7 (sample-level)
+    fpmin_sel = hist_pick(hist, "val_fp_per_min",        idx)        # FP/min (batch-level, thresh=0.3 in your current FP metric)
+    lat_sel   = hist_pick(hist, "val_latency_score",     idx)        # latency score (↑)
 
-    logger.info(
-        f"Trial {trial.number} bests — PRAUC: {best_pr_auc:.4f} | "
-        f"MCC: {best_mcc:.4f} | F1: {best_f1:.4f} | FP/min: {best_fp_min:.3f} | Latency: {best_latency:.4f}"
+    # also: F1 / MCC at that epoch
+    f1_sel    = hist_pick(hist, "val_sample_max_f1",     idx)
+    mcc_sel   = hist_pick(hist, "val_sample_max_mcc",    idx)
+
+    # ---- quick sanity filter to kill obviously bad/degenerate runs (same signatures you used)
+    bad = (
+        (not np.isfinite(prauc_sel)) or (prauc_sel <= 1e-4) or
+        (not np.isfinite(rec07_sel)) or (rec07_sel <= 1e-4) or
+        (not np.isfinite(fpmin_sel)) or (fpmin_sel <= 1e-4) or   # fp≈0 → meaningless flat model
+        (not np.isfinite(lat_sel))   or (lat_sel >= 0.9999)      # latency≈1 → bug signature
     )
-    
-    # prune obvious bug runs
-    if (best_fp_min is not None and best_fp_min <= 0.0) or (best_latency is not None and best_latency >= 0.99):
-        raise optuna.TrialPruned("Bug signature (fp==0 or latency≈1).")
+    if bad:
+        raise optuna.TrialPruned("Bug signature at selected epoch (prauc/rec≈0, fp≈0, or latency≈1).")
 
-    # Save trial information
-    trial_info = {
-        'parameters': params,
-        'metrics': {
-        'val_sample_pr_auc': best_pr_auc,
-        'val_sample_max_mcc': best_mcc,
-        'val_sample_max_f1': best_f1,
-        'val_fp_per_min': best_fp_min,   
-        'val_latency_score': best_latency     
-        }
-    }
+    # ---- log both the across-epochs bests and the selected-epoch snapshot
+    logger.info(
+        f"Trial {trial.number} SELECTED@epoch[{epoch_sel}] — PRAUC: {prauc_sel:.4f} | "
+        f"Recall@0.7: {rec07_sel:.4f} | FP/min@0.3: {fpmin_sel:.3f} | Latency: {lat_sel:.4f} | "
+        f"MaxF1: {f1_sel:.4f} | MaxMCC: {mcc_sel:.4f}"
+    )
 
+    # ---- stash into trial attrs for downstream viz/filtering
+    trial.set_user_attr("sel_epoch",           int(epoch_sel))
+    trial.set_user_attr("sel_prauc",           float(prauc_sel))
+    trial.set_user_attr("sel_recall_at_0p7",   float(rec07_sel))
+    trial.set_user_attr("sel_fp_per_min",      float(fpmin_sel))
+    trial.set_user_attr("sel_latency_score",   float(lat_sel))
+    trial.set_user_attr("sel_max_f1",          float(f1_sel))
+    trial.set_user_attr("sel_max_mcc",         float(mcc_sel))
+
+    # ---- also expand your saved JSON
+    trial_info.setdefault("selected_epoch", int(epoch_sel))
+    trial_info.setdefault("selected_epoch_metrics", {
+        'val_sample_pr_auc':    float(prauc_sel),
+        'val_recall_at_0p7':    float(rec07_sel),
+        'val_fp_per_min':       float(fpmin_sel),
+        'val_latency_score':    float(lat_sel),
+        'val_sample_max_f1':    float(f1_sel),
+        'val_sample_max_mcc':   float(mcc_sel),
+    })
     with open(f"{study_dir}/trial_info.json", 'w') as f:
         json.dump(trial_info, f, indent=4)
 
-    return best_pr_auc, best_fp_min
+    # ---- finally: report to Optuna as 2-objective (prauc, fp/min@0.3)
+    return float(prauc_sel), float(fpmin_sel)
+
 
 # tf.config.run_functions_eagerly(True)
 parser = argparse.ArgumentParser(

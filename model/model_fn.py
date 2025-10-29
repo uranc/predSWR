@@ -1096,7 +1096,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         cls_logits = Conv1D(1, 1,
                         kernel_initializer='glorot_uniform',
                         kernel_regularizer=tf.keras.regularizers.L1(1e-4),
-                        bias_initializer=tf.keras.initializers.Constant(-2.0),  # was zeros
+                        bias_initializer=tf.keras.initializers.Constant(-1.0),  # was zeros
                         activation=None, name='cls_logits')(cls_in)
         cls_prob = Activation('sigmoid', name='cls_prob')(cls_logits)
 
@@ -1171,18 +1171,30 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         #     FPperMinMetric(thresh=0.5, win_sec=64/2500,
         #                 mode="consec", consec_k=3, model=model),  # keep this for realism
         # ] 
+        # metrics = [
+        #     SamplePRAUC(model=model),                  # timepoint PR-AUC
+        #     SampleMaxMCC(model=model),                 # timepoint max MCC
+        #     SampleMaxF1(model=model),                  # timepoint max F1
+        #     LatencyScore(thresholds=tf.linspace(0.5, 0.99, 6), min_run = 5, tau=16.0, model=model),    
+        #     FPperMinMetric(
+        #         thresh=0.3,
+        #         win_sec=params['NO_STRIDES']/params['SRATE'],  # <- stride/fs (NOT window)
+        #         mode="consec", consec_k=3,
+        #         model=model
+        #     ),
+        # ]      
         metrics = [
-            SamplePRAUC(model=model),                  # timepoint PR-AUC
-            SampleMaxMCC(model=model),                 # timepoint max MCC
-            SampleMaxF1(model=model),                  # timepoint max F1
-            LatencyScore(thresholds=tf.linspace(0.5, 0.99, 6), min_run = 5, tau=16.0, model=model),    
-            FPperMinMetric(
-                thresh=0.3,
-                win_sec=params['NO_STRIDES']/params['SRATE'],  # <- stride/fs (NOT window)
+            SamplePRAUC(model=model),
+            SampleMaxMCC(model=model),
+            SampleMaxF1(model=model),
+            LatencyScore(thresholds=tf.linspace(0.5, 0.99, 6), min_run=5, tau=16.0, model=model),
+            RecallAt0p7(model=model),  # <-- new
+            FPperMinAt0p3(
+                win_sec=params['NO_STRIDES']/params['SRATE'],
                 mode="consec", consec_k=3,
                 model=model
-            ),
-        ]        
+            ),                          # <-- new (name default 'fp_per_min')
+        ]          
         # metrics = [
         #     EventPRAUC(consec_k=5, model=model),          # consecutive rule
         #     LatencyWeightedF1Metric(tau=16,                # τ in samples
@@ -1240,11 +1252,17 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         #     FPperMinMetric(thresh=0.5, win_sec=64/2500, mode="consec", consec_k=3, model=model),
         # ]  
         metrics = [
-                    EventPRAUC(mode="consec", consec_k=5, model=model),
-                    MaxF1MetricHorizon(model=model),
-                    # LatencyWeightedF1Metric(tau=16, mode="consec", consec_k=3, model=model),
-                    FPperMinMetric(thresh=0.5, win_sec=64/2500, mode="consec", consec_k=3, model=model),
-                ]              
+            SamplePRAUC(model=model),
+            SampleMaxMCC(model=model),
+            SampleMaxF1(model=model),
+            LatencyScore(thresholds=tf.linspace(0.5, 0.99, 6), min_run=5, tau=16.0, model=model),
+            RecallAt0p7(model=model),  # <-- new
+            FPperMinAt0p3(
+                win_sec=params['NO_STRIDES']/params['SRATE'],
+                mode="consec", consec_k=3,
+                model=model
+            ),                          # <-- new (name default 'fp_per_min')
+        ]         
         # Create loss function and compile model
         # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
@@ -1654,7 +1672,7 @@ class SampleMaxMCC(tf.keras.metrics.Metric):
         den = tf.sqrt((self.tp + self.fp) * (self.tp + self.fn) *
                       (self.tn + self.fp) * (self.tn + self.fn) + eps)
         mcc = num / den
-        return tf.reduce_sum(mcc)
+        return tf.reduce_mean(mcc)
 
     def reset_state(self):
         for v in (self.tp, self.fp, self.tn, self.fn):
@@ -1688,7 +1706,7 @@ class SampleMaxF1(tf.keras.metrics.Metric):
         prec = self.tp / (self.tp + self.fp + eps)
         reca = self.tp / (self.tp + self.fn + eps)
         f1   = 2.0 * prec * reca / (prec + reca + eps)
-        return tf.reduce_sum(f1)
+        return tf.reduce_mean(f1)
 
     def reset_state(self):
         for v in (self.tp, self.fp, self.fn): v.assign(tf.zeros_like(v))
@@ -1802,7 +1820,96 @@ class FPperMinMetric(tf.keras.metrics.Metric):
     def reset_state(self):
         self.fp.assign(0.); self.nwin.assign(0.)
 
+# ================= Recall @ τ = 0.7 (sample-level) =================
+class RecallAt0p7(tf.keras.metrics.Metric):
+    """
+    Sample-level recall at fixed threshold τ=0.7.
+    Uses your helpers `_yt_bt` and `_yp_bt` and model._cls_prob_index.
+    Monitored name: 'recall_at_0p7' -> 'val_recall_at_0p7'
+    """
+    def __init__(self, tau=0.7, name="recall_at_0p7", model=None, **kw):
+        super().__init__(name=name, **kw)
+        self.tau = float(tau)
+        self.tp  = self.add_weight("tp", initializer="zeros", dtype=tf.float32)
+        self.fn  = self.add_weight("fn", initializer="zeros", dtype=tf.float32)
+        self.model = model
 
+    def update_state(self, y_true, y_pred, **_):
+        yt = _yt_bt(y_true)                     # [B,T] labels
+        yp = _yp_bt(y_pred, self.model)         # [B,T] probs
+        yt_pos  = yt >= 0.5
+        predpos = yp >= self.tau
+        tp = tf.reduce_sum(tf.cast(predpos & yt_pos, tf.float32))
+        fn = tf.reduce_sum(tf.cast(~predpos & yt_pos, tf.float32))
+        self.tp.assign_add(tp)
+        self.fn.assign_add(fn)
+
+    def result(self):
+        eps = tf.keras.backend.epsilon()
+        return self.tp / (self.tp + self.fn + eps)
+
+    def reset_state(self):
+        self.tp.assign(0.0); self.fn.assign(0.0)
+
+
+# ============ FP per minute @ τ = 0.3 (window-level on negatives) ============
+class FPperMinAt0p3(tf.keras.metrics.Metric):
+    """
+    False positives per minute at fixed threshold τ=0.3.
+    Drop-in twin of your FPperMinMetric, using your helpers:
+      - _ch_lab, _ch (to extract [B,T] labels/probs for classification)
+      - _has_run_k / _has_majority (to enforce detection rule)
+    Count a window as FP if any detection (per your rule) occurs in a negative window.
+    Monitored name default: 'fp_per_min' -> 'val_fp_per_min'
+    If you prefer a different monitor key, set name="fp_per_min_at_0p3".
+    """
+    def __init__(self,
+                 win_sec,
+                 name="fp_per_min",
+                 model=None,
+                 consec_k=3,
+                 majority_ratio=0.0,
+                 mode="consec",
+                 tau=0.3,
+                 **kw):
+        super().__init__(name=name, **kw)
+        self.tau  = float(tau)
+        self.wsec = tf.constant(float(win_sec), tf.float32)
+        self.fp   = self.add_weight("fp",   initializer="zeros", dtype=tf.float32)
+        self.nwin = self.add_weight("nwin", initializer="zeros", dtype=tf.float32)
+        self.model = model
+        self.mode = str(mode)
+        self.consec_k = int(consec_k)
+        self.maj_ratio = float(majority_ratio)
+        self.eps = tf.keras.backend.epsilon()
+
+    def update_state(self, y_true, y_pred, **_):
+        # Extract [B,T] labels/probs via your classification helpers.
+        is_cls = getattr(self.model, "_is_classification_only", True)
+        yt = _ch_lab(y_true, is_cls)   # [B,T]
+        yp = _ch(y_pred, is_cls)       # [B,T]
+
+        neg_win  = tf.reduce_max(yt, axis=1) < 0.5       # [B] windows with no positives
+        pred_bin = yp >= self.tau                         # [B,T] binarized at τ=0.3
+
+        if self.mode == "consec":
+            has_det = _has_run_k(pred_bin, self.consec_k)     # [B]
+        elif self.mode == "majority":
+            has_det = _has_majority(pred_bin, self.maj_ratio) # [B]
+        else:
+            has_det = tf.reduce_any(pred_bin, axis=1)         # [B]
+
+        # Count FP windows among negatives
+        self.fp.assign_add(tf.reduce_sum(tf.cast(has_det & neg_win, tf.float32)))
+        self.nwin.assign_add(tf.cast(tf.shape(yt)[0], tf.float32))
+
+    def result(self):
+        minutes = (self.nwin * self.wsec) / 60.0 + self.eps
+        return self.fp / minutes
+
+    def reset_state(self):
+        self.fp.assign(0.0); self.nwin.assign(0.0)
+        
 # --------------------------------------------------------------------- #
 # LOSS FN 
 # --------------------------------------------------------------------- #

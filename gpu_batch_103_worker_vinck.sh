@@ -5,7 +5,7 @@
 #SBATCH --gpus=rtx2080:1
 #SBATCH --cpus-per-gpu=4
 #SBATCH --mem-per-cpu=5800
-#SBATCH --time=0-23:59:00
+#SBATCH --time=1-23:59:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cem.uran@esi-frankfurt.de
 
