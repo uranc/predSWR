@@ -953,7 +953,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         this_optimizer = tf.keras.optimizers.AdamW(
             learning_rate=(lr_schedule if params.get('USE_LR_SCHEDULE', True) else params['LEARNING_RATE']),
             weight_decay=params.get('WEIGHT_DECAY', 1e-4),
-            clipnorm=float(params.get('CLIP_NORM', 1.0)),
+            clipnorm=float(params.get('CLIP_NORM', 1.5)),
             epsilon=1e-8
         )
                
@@ -1008,7 +1008,8 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             inputs_nets = MultiScaleCausalGate(
                 scales=((7,1),(7,2),(11,4)),                   # RFs: 7, 13, 41 (all ≤ 43)
                 groups=groups,
-                gate_bias=(-3.0 if params['mode']=="train" else -2.0),  # tighter in pretrain
+                gate_bias=(-3.0),  # tighter in pretrain
+                # gate_bias=(-3.0 if params['mode']=="train" else -2.0),  # tighter in pretrain
                 l1_gate=params.get("l1_gate", 1e-5), 
                 use_residual_mix=True,
                 name="ms_causal_gate"
@@ -1088,15 +1089,16 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         h = Conv1D(64, 
                     1, 
                     kernel_initializer='glorot_uniform', 
-                    kernel_regularizer=tf.keras.regularizers.L1(1e-4), 
+                    kernel_regularizer=tf.keras.regularizers.L1(1e-4),
+                    bias_initializer=tf.keras.initializers.Constant(0.0),  # was zeros 
                     name="cls_pw1")(h)
         h = Activation('gelu')(h)
-        cls_in = Dropout(0.1)(h)
-        # cls_in = h
+        # cls_in = Dropout(0.1)(h)
+        cls_in = h
         cls_logits = Conv1D(1, 1,
                         kernel_initializer='glorot_uniform',
                         kernel_regularizer=tf.keras.regularizers.L1(1e-4),
-                        bias_initializer=tf.keras.initializers.Constant(-1.0),  # was zeros
+                        bias_initializer=tf.keras.initializers.Constant(0.0),  # was zeros
                         activation=None, name='cls_logits')(cls_in)
         cls_prob = Activation('sigmoid', name='cls_prob')(cls_logits)
 
@@ -1207,7 +1209,9 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # ]
         # Create loss function and compile model
         # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-        loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        # loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        loss_fn = mixed_mpn_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+
 
         model.compile(
             optimizer=this_optimizer,
@@ -1265,8 +1269,8 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         ]         
         # Create loss function and compile model
         # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-        loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-
+        # loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        loss_fn = class_finetune(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         model.compile(
             optimizer=this_optimizer,
             loss=loss_fn,
@@ -1291,7 +1295,9 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         if params['mode']=='embedding':
             all_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(anchor_output)
         elif params['mode']=='predict':
-            all_outputs = Lambda(lambda tt: tt[:, -1:, 1], name='Last_Output')(anchor_output)
+            # all_outputs = Lambda(lambda tt: tt[:, -1:, 0], name='Last_Output')(anchor_output)
+            all_outputs = Lambda(lambda tt: tt[:, -1:, tcn_backbone._cls_prob_index], name='Last_Output')(anchor_output)
+
 
         # all_outputs = Concatenate(axis=0)([anchor_output, positive_output, negative_output])
         # Create the training model with dictionary inputs and outputs
@@ -2108,6 +2114,44 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
     return loss_fn
 
 
+
+
+def class_finetune(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+
+    @tf.function
+    def loss_fn(y_true, y_pred):
+        # --- triplet split ---
+        a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
+        a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+
+        # --- heads ---
+        logit_idx = getattr(model, '_cls_logit_index', 0)
+        prob_idx  = getattr(model, '_cls_prob_index',  1)
+        emb_start = getattr(model, '_emb_start_index', 2)
+
+        a_logit = a_out[..., logit_idx];  p_logit = p_out[..., logit_idx];  n_logit = n_out[..., logit_idx]  # [B,T]
+        a_prob  = a_out[..., prob_idx];   p_prob  = p_out[..., prob_idx];   n_prob  = n_out[..., prob_idx]   # [B,T]
+        a_emb   = a_out[..., emb_start:]; p_emb   = p_out[..., emb_start:]; n_emb   = n_out[..., emb_start:] # [B,T,D]
+
+        a_lab = tf.cast(a_true[..., 0], tf.float32)
+        p_lab = tf.cast(p_true[..., 0], tf.float32)
+        n_lab = tf.cast(n_true[..., 0], tf.float32)
+
+
+        # --- BCE (separate A/P/N weights) ---
+        def bce_logits(y, z):
+            return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
+
+        w_a = float(params.get('BCE_ANC_ALPHA', 2.0))   # anchor
+        w_p = float(params.get('BCE_POS_ALPHA', 2.0))   # positive
+        cls_a = bce_logits(a_lab, a_logit)
+        cls_p = bce_logits(p_lab, p_logit)
+        cls_n = bce_logits(n_lab, n_logit)
+        classification_loss = cls_a + 2.0 * cls_p + 26.0 * cls_n
+        return tf.reduce_mean(classification_loss)
+
+    return loss_fn
+
 # def custom_fbfce(loss_weight=1, horizon=0, params=None, model=None, this_op=None):
 #     flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
 #     is_classification_only = 'Only' in  params['TYPE_ARCH']
@@ -2678,313 +2722,313 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 #         return total_loss
 #     return loss_fn
 
-# # def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
-# #     # ----- helpers -----
-# #     def _mean_pool(x): return tf.reduce_mean(x, axis=1)
+def mixed_mpn_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+    # ----- helpers -----
+    def _mean_pool(x): return tf.reduce_mean(x, axis=1)
 
-# #     # cosine ramp in [0,1]
-# #     def _ramp(step, delay, dur):
-# #         step  = tf.cast(step, tf.float32)
-# #         delay = tf.cast(delay, tf.float32)
-# #         dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
-# #         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
-# #         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)  # 0→1
+    # cosine ramp in [0,1]
+    def _ramp(step, delay, dur):
+        step  = tf.cast(step, tf.float32)
+        delay = tf.cast(delay, tf.float32)
+        dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+        x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
+        return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)  # 0→1
 
-# #     def tv_on_logits(z):  # z: [B,T]
-# #         return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
+    def tv_on_logits(z):  # z: [B,T]
+        return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
 
-# #     # ----- metric losses (unchanged math) -----
-# #     def mpn_tuple_loss(z_a_raw, z_p_raw, z_n_raw, *, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1, exclude_self=True):
-# #         z_a = tf.reduce_mean(tf.cast(z_a_raw, tf.float32), axis=1)
-# #         z_p = tf.reduce_mean(tf.cast(z_p_raw, tf.float32), axis=1)
-# #         z_n = tf.reduce_mean(tf.cast(z_n_raw, tf.float32), axis=1)
-# #         B   = tf.shape(z_a)[0]
+    # ----- metric losses (unchanged math) -----
+    def mpn_tuple_loss(z_a_raw, z_p_raw, z_n_raw, *, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1, exclude_self=True):
+        z_a = tf.reduce_mean(tf.cast(z_a_raw, tf.float32), axis=1)
+        z_p = tf.reduce_mean(tf.cast(z_p_raw, tf.float32), axis=1)
+        z_n = tf.reduce_mean(tf.cast(z_n_raw, tf.float32), axis=1)
+        B   = tf.shape(z_a)[0]
 
-# #         # pull
-# #         d_pair = tf.reduce_sum(tf.square(z_a - z_p), axis=1) + 1e-8
-# #         L_pull = lambda_pull * d_pair
+        # pull
+        d_pair = tf.reduce_sum(tf.square(z_a - z_p), axis=1) + 1e-8
+        L_pull = lambda_pull * d_pair
 
-# #         def _mask_self(mat):
-# #             if exclude_self:
-# #                 mask = tf.eye(B, dtype=tf.bool)
-# #                 return tf.where(mask, tf.fill(tf.shape(mat), tf.constant(1e9, tf.float32)), mat)
-# #             return mat
+        def _mask_self(mat):
+            if exclude_self:
+                mask = tf.eye(B, dtype=tf.bool)
+                return tf.where(mask, tf.fill(tf.shape(mat), tf.constant(1e9, tf.float32)), mat)
+            return mat
 
-# #         d_ap = tf.reduce_sum(tf.square(z_a[:,None,:] - z_p[None,:,:]), axis=2) + 1e-8
-# #         d_ap = _mask_self(d_ap)
-# #         L_weak = tf.reduce_mean(tf.nn.relu(margin_weak + d_pair[:,None] - d_ap))
-# #         d_an = tf.reduce_sum(tf.square(z_a[:,None,:] - z_n[None,:,:]), axis=2) + 1e-8
-# #         d_an = _mask_self(d_an)
-# #         lifted = tf.reduce_logsumexp(margin_hard - d_an, axis=1)
-# #         L_hard = tf.nn.relu(d_pair + lifted)
+        d_ap = tf.reduce_sum(tf.square(z_a[:,None,:] - z_p[None,:,:]), axis=2) + 1e-8
+        d_ap = _mask_self(d_ap)
+        L_weak = tf.reduce_mean(tf.nn.relu(margin_weak + d_pair[:,None] - d_ap))
+        d_an = tf.reduce_sum(tf.square(z_a[:,None,:] - z_n[None,:,:]), axis=2) + 1e-8
+        d_an = _mask_self(d_an)
+        lifted = tf.reduce_logsumexp(margin_hard - d_an, axis=1)
+        L_hard = tf.nn.relu(d_pair + lifted)
 
-# #         return tf.reduce_mean(L_pull + L_weak + L_hard)
+        return tf.reduce_mean(L_pull + L_weak + L_hard)
 
-# #     def supcon_ripple(z_a_raw, z_p_raw, z_n_raw, *, temperature=0.1):
-# #         z_a = _mean_pool(z_a_raw); z_p = _mean_pool(z_p_raw); z_n = _mean_pool(z_n_raw)
-# #         z_all = tf.math.l2_normalize(tf.concat([z_a, z_p, z_n], axis=0), axis=1)
-# #         M = tf.shape(z_all)[0]
-# #         sim = tf.matmul(z_all, z_all, transpose_b=True) / temperature
+    def supcon_ripple(z_a_raw, z_p_raw, z_n_raw, *, temperature=0.1):
+        z_a = _mean_pool(z_a_raw); z_p = _mean_pool(z_p_raw); z_n = _mean_pool(z_n_raw)
+        z_all = tf.math.l2_normalize(tf.concat([z_a, z_p, z_n], axis=0), axis=1)
+        M = tf.shape(z_all)[0]
+        sim = tf.matmul(z_all, z_all, transpose_b=True) / temperature
 
-# #         B = tf.shape(z_a)[0]
-# #         labels = tf.concat([tf.ones(2*B, tf.int32), tf.zeros(B, tf.int32)], axis=0)
-# #         pos = tf.cast(tf.equal(labels[:,None], labels[None,:]), tf.float32) - tf.eye(M, dtype=tf.float32)
+        B = tf.shape(z_a)[0]
+        labels = tf.concat([tf.ones(2*B, tf.int32), tf.zeros(B, tf.int32)], axis=0)
+        pos = tf.cast(tf.equal(labels[:,None], labels[None,:]), tf.float32) - tf.eye(M, dtype=tf.float32)
 
-# #         logits = sim - 1e9 * tf.eye(M)
-# #         log_prob = logits - tf.reduce_logsumexp(logits, axis=1, keepdims=True)
+        logits = sim - 1e9 * tf.eye(M)
+        log_prob = logits - tf.reduce_logsumexp(logits, axis=1, keepdims=True)
 
-# #         pos_cnt = tf.reduce_sum(pos, axis=1)
-# #         loss_vec = -tf.reduce_sum(pos * log_prob, axis=1) / (pos_cnt + 1e-8)
-# #         return tf.reduce_mean(loss_vec)
+        pos_cnt = tf.reduce_sum(pos, axis=1)
+        loss_vec = -tf.reduce_sum(pos * log_prob, axis=1) / (pos_cnt + 1e-8)
+        return tf.reduce_mean(loss_vec)
 
-# #     @tf.function
-# #     def loss_fn(y_true, y_pred):
-# #         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
-# #         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+    @tf.function
+    def loss_fn(y_true, y_pred):
+        a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
+        a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
 
-# #         logit_idx = getattr(model, '_cls_logit_index', 0)
-# #         prob_idx  = getattr(model, '_cls_prob_index',  1)
-# #         emb_start = getattr(model, '_emb_start_index', 2)
+        logit_idx = getattr(model, '_cls_logit_index', 0)
+        prob_idx  = getattr(model, '_cls_prob_index',  1)
+        emb_start = getattr(model, '_emb_start_index', 2)
 
-# #         a_logit = a_out[..., logit_idx];  p_logit = p_out[..., logit_idx];  n_logit = n_out[..., logit_idx]
-# #         a_prob  = a_out[..., prob_idx];   p_prob  = p_out[..., prob_idx];   n_prob  = n_out[..., prob_idx]
-# #         a_emb   = a_out[..., emb_start:]; p_emb   = p_out[..., emb_start:]; n_emb   = n_out[..., emb_start:]
+        a_logit = a_out[..., logit_idx];  p_logit = p_out[..., logit_idx];  n_logit = n_out[..., logit_idx]
+        a_prob  = a_out[..., prob_idx];   p_prob  = p_out[..., prob_idx];   n_prob  = n_out[..., prob_idx]
+        a_emb   = a_out[..., emb_start:]; p_emb   = p_out[..., emb_start:]; n_emb   = n_out[..., emb_start:]
 
-# #         a_lab = tf.cast(a_true[..., 0], tf.float32)
-# #         p_lab = tf.cast(p_true[..., 0], tf.float32)
-# #         n_lab = tf.cast(n_true[..., 0], tf.float32)
+        a_lab = tf.cast(a_true[..., 0], tf.float32)
+        p_lab = tf.cast(p_true[..., 0], tf.float32)
+        n_lab = tf.cast(n_true[..., 0], tf.float32)
 
-# #         # --------- ramps (READ-ONLY) ----------
-# #         it = tf.cast(model.optimizer.iterations, tf.float32)
+        # --------- ramps (READ-ONLY) ----------
+        it = tf.cast(model.optimizer.iterations, tf.float32)
+        total_steps = float(params.get('TOTAL_STEPS', 100000))
 
-# #         total_steps = 100*1000
-# #         # Metric ramps
-# #         ramp_delay = tf.cast(params.get('RAMP_DELAY', int(0.01*total_steps)), tf.float32)
-# #         ramp_steps = tf.cast(params.get('RAMP_STEPS', int(0.25*total_steps)), tf.float32)
+        # Metric ramps
+        ramp_delay = tf.cast(params.get('RAMP_DELAY', int(0.01*total_steps)), tf.float32)
+        ramp_steps = tf.cast(params.get('RAMP_STEPS', int(0.25*total_steps)), tf.float32)
 
-# #         w_sup_tgt = tf.cast(params.get('LOSS_SupCon', 1.0), tf.float32)
-# #         w_mpn_tgt = tf.cast(params.get('LOSS_TupMPN', 1.0), tf.float32)
-# #         w_neg_tgt = tf.cast(params.get('LOSS_NEGATIVES', 2.0), tf.float32)
+        w_sup_tgt = tf.cast(params.get('LOSS_SupCon', 1.0), tf.float32)
+        w_mpn_tgt = tf.cast(params.get('LOSS_TupMPN', 1.0), tf.float32)
+        w_neg_tgt = tf.cast(params.get('LOSS_NEGATIVES', 2.0), tf.float32)
         
-# #         r = _ramp(it, ramp_delay, ramp_steps)  # 0→1 after delay
-# #         w_supcon = r * w_sup_tgt
-# #         w_tupMPN = r * w_mpn_tgt
+        r = _ramp(it, ramp_delay, ramp_steps)  # 0→1 after delay
+        w_supcon = r * w_sup_tgt
+        w_tupMPN = r * w_mpn_tgt
 
-# #         # Negatives ramp (MIN → target)
-# #         # Negatives ramp: gentle 25–40% of run
-# #         neg_min = params.setdefault('LOSS_NEGATIVES_MIN', 4.0)  # softer start to reduce FP early
-# #         neg_delay = params.setdefault('NEG_RAMP_DELAY', int(0.05* total_steps))
-# #         neg_steps = params.setdefault('NEG_RAMP_STEPS', int(0.45 * total_steps))
-# #         neg_steps = tf.cast(neg_steps if neg_steps is not None else params.get('RAMP_STEPS', 1), tf.float32)
-# #         neg_steps = tf.maximum(neg_steps, 1.0)
+        # Negatives ramp (MIN → target)
+        # Negatives ramp: gentle 25–40% of run
+        neg_min = params.setdefault('LOSS_NEGATIVES_MIN', 4.0)  # softer start to reduce FP early
+        neg_delay = params.setdefault('NEG_RAMP_DELAY', int(0.05* total_steps))
+        neg_steps = params.setdefault('NEG_RAMP_STEPS', int(0.45 * total_steps))
+        neg_steps = tf.cast(neg_steps if neg_steps is not None else params.get('RAMP_STEPS', 1), tf.float32)
+        neg_steps = tf.maximum(neg_steps, 1.0)
 
-# #         r_neg = _ramp(it, neg_delay, neg_steps)
-# #         loss_fp_weight = neg_min + r_neg * tf.maximum(0.0, w_neg_tgt - neg_min)
+        r_neg = _ramp(it, neg_delay, neg_steps)
+        loss_fp_weight = neg_min + r_neg * tf.maximum(0.0, w_neg_tgt - neg_min)
 
-# #         # --------- metric learning ----------
-# #         L_mpn_raw = mpn_tuple_loss(a_emb, p_emb, n_emb, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1)
-# #         L_sup_raw = supcon_ripple(a_emb, p_emb, n_emb, temperature=0.1)
-# #         metric_loss = w_tupMPN * L_mpn_raw + w_supcon * L_sup_raw
+        # --------- metric learning ----------
+        L_mpn_raw = mpn_tuple_loss(a_emb, p_emb, n_emb, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1)
+        L_sup_raw = supcon_ripple(a_emb, p_emb, n_emb, temperature=params.get('SUPCON_T', 0.1))
+        metric_loss = w_tupMPN * L_mpn_raw + w_supcon * L_sup_raw
 
-# #         # --------- BCE on logits ----------
-# #         def bce_logits(y, z):
-# #             return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
+        # --------- BCE on logits ----------
+        def bce_logits(y, z):
+            return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
 
-# #         cls_a = bce_logits(a_lab, a_logit)
-# #         cls_p = bce_logits(p_lab, p_logit)
-# #         cls_n = bce_logits(n_lab, n_logit)
+        cls_a = bce_logits(a_lab, a_logit)
+        cls_p = bce_logits(p_lab, p_logit)
+        cls_n = bce_logits(n_lab, n_logit)
 
-# #         alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
-# #         classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
+        alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
+        classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
 
-# #         # --------- logit-TV smoothing ----------
-# #         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
-# #         print(f"TV weight: {lam_tv}")
-# #         tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
-# #         classification_loss = classification_loss + lam_tv * tv_term
+        # --------- logit-TV smoothing ----------
+        lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
+        print(f"TV weight: {lam_tv}")
+        tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
+        classification_loss = classification_loss + lam_tv * tv_term
 
-# #         # --------- re-scaling (ratio trick) ----------
-# #         ratio = tf.stop_gradient(
-# #             (tf.reduce_mean(L_mpn_raw + L_sup_raw)) /
-# #             (tf.reduce_mean(classification_loss) + 1e-6)
-# #         )
-# #         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
+        # --------- re-scaling (ratio trick) ----------
+        ratio = tf.stop_gradient(
+            (tf.reduce_mean(L_mpn_raw + L_sup_raw)) /
+            (tf.reduce_mean(classification_loss) + 1e-6)
+        )
+        ratio = tf.clip_by_value(ratio, 0.1, 10.0)
 
-# #         total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
+        total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
 
-# #         # Optional entropy term
-# #         if ('Entropy' in params.get('TYPE_LOSS','')) and ('HYPER_ENTROPY' in params):
-# #             eps = tf.constant(1e-8, tf.float32)
-# #             ent_w = tf.cast(params['HYPER_ENTROPY'], tf.float32)
-# #             y_prob_all = tf.concat([a_prob, p_prob, n_prob], axis=0)
-# #             y_true_all = tf.concat([a_lab,  p_lab,  n_lab],  axis=0)
-# #             entropy = -y_prob_all*tf.math.log(y_prob_all+eps) -(1. - y_prob_all)*tf.math.log(1.-y_prob_all+eps)
-# #             conf = tf.abs(y_true_all - y_prob_all) + 0.1
-# #             total += ent_w * tf.reduce_mean(entropy * conf)
-# #         return total
-# #     return loss_fn
+        # Optional entropy term
+        if ('Entropy' in params.get('TYPE_LOSS','')) and ('HYPER_ENTROPY' in params):
+            eps = tf.constant(1e-8, tf.float32)
+            ent_w = tf.cast(params['HYPER_ENTROPY'], tf.float32)
+            y_prob_all = tf.concat([a_prob, p_prob, n_prob], axis=0)
+            y_true_all = tf.concat([a_lab,  p_lab,  n_lab],  axis=0)
+            entropy = -y_prob_all*tf.math.log(y_prob_all+eps) -(1. - y_prob_all)*tf.math.log(1.-y_prob_all+eps)
+            conf = tf.abs(y_true_all - y_prob_all) + 0.1
+            total += ent_w * tf.reduce_mean(entropy * conf)
+        return total
+    return loss_fn
 
-# # def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
-# #     import math
-# #     import tensorflow as tf
+# def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+#     import math
+#     import tensorflow as tf
 
-# #     # ---------- helpers ----------
-# #     def _mean_pool_bt(x):               # [B,T,D] -> [B,D]
-# #         return tf.reduce_mean(tf.cast(x, tf.float32), axis=1)
+#     # ---------- helpers ----------
+#     def _mean_pool_bt(x):               # [B,T,D] -> [B,D]
+#         return tf.reduce_mean(tf.cast(x, tf.float32), axis=1)
 
-# #     def _ramp(step, delay, dur):        # cosine 0→1
-# #         step  = tf.cast(step,  tf.float32)
-# #         delay = tf.cast(delay, tf.float32)
-# #         dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
-# #         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
-# #         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
+#     def _ramp(step, delay, dur):        # cosine 0→1
+#         step  = tf.cast(step,  tf.float32)
+#         delay = tf.cast(delay, tf.float32)
+#         dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+#         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
+#         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
 
-# #     def tv_on_logits(z_bt):             # z: [B,T]
-# #         return tf.reduce_mean(tf.abs(z_bt[:, 1:] - z_bt[:, :-1]))
+#     def tv_on_logits(z_bt):             # z: [B,T]
+#         return tf.reduce_mean(tf.abs(z_bt[:, 1:] - z_bt[:, :-1]))
 
-# #     # --- post-onset mask for A/P (fixes dtype mismatch robustly) ---
-# #     def post_onset_mask(y_bt):
-# #         """
-# #         y_bt: [B,T] float in {0,1}
-# #         returns: [B,T] float mask in {0,1}
-# #         - For windows with any positive (>=0.5): mask=1 from onset onward, else 0 before.
-# #         - For windows with no positive: return all ones (do NOT drop them).
-# #         """
-# #         yb = y_bt >= 0.5                        # bool [B,T]
-# #         # First positive index and has-event flag
-# #         idx = tf.argmax(tf.cast(yb, tf.int32), axis=1, output_type=tf.int32)   # [B] int32
-# #         has = tf.reduce_any(yb, axis=1)                                        # [B] bool
+#     # --- post-onset mask for A/P (fixes dtype mismatch robustly) ---
+#     def post_onset_mask(y_bt):
+#         """
+#         y_bt: [B,T] float in {0,1}
+#         returns: [B,T] float mask in {0,1}
+#         - For windows with any positive (>=0.5): mask=1 from onset onward, else 0 before.
+#         - For windows with no positive: return all ones (do NOT drop them).
+#         """
+#         yb = y_bt >= 0.5                        # bool [B,T]
+#         # First positive index and has-event flag
+#         idx = tf.argmax(tf.cast(yb, tf.int32), axis=1, output_type=tf.int32)   # [B] int32
+#         has = tf.reduce_any(yb, axis=1)                                        # [B] bool
 
-# #         B = tf.shape(y_bt)[0]
-# #         T = tf.shape(y_bt)[1]
-# #         rng = tf.range(T, dtype=tf.int32)[None, :]                              # [1,T] int32
-# #         mpos = tf.cast(rng >= idx[:, None], tf.float32)                         # [B,T] 1 from onset onward
+#         B = tf.shape(y_bt)[0]
+#         T = tf.shape(y_bt)[1]
+#         rng = tf.range(T, dtype=tf.int32)[None, :]                              # [1,T] int32
+#         mpos = tf.cast(rng >= idx[:, None], tf.float32)                         # [B,T] 1 from onset onward
 
-# #         # no-onset windows -> keep whole window (all ones)
-# #         return tf.where(has[:, None], mpos, tf.ones((B, T), tf.float32))
+#         # no-onset windows -> keep whole window (all ones)
+#         return tf.where(has[:, None], mpos, tf.ones((B, T), tf.float32))
 
-# #     # --- weighted BCE (time-masked), safe reduction ---
-# #     def bce_logits_weighted(y_bt, logit_bt, w_bt):
-# #         # per-timepoint BCE
-# #         bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_bt, logits=logit_bt)  # [B,T]
-# #         w   = tf.cast(w_bt, tf.float32)
-# #         num = tf.reduce_sum(bce * w)
-# #         den = tf.reduce_sum(w) + tf.keras.backend.epsilon()
-# #         return num / den
+#     # --- weighted BCE (time-masked), safe reduction ---
+#     def bce_logits_weighted(y_bt, logit_bt, w_bt):
+#         # per-timepoint BCE
+#         bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_bt, logits=logit_bt)  # [B,T]
+#         w   = tf.cast(w_bt, tf.float32)
+#         num = tf.reduce_sum(bce * w)
+#         den = tf.reduce_sum(w) + tf.keras.backend.epsilon()
+#         return num / den
 
-# #     # --- Circle loss (pooled, cosine sim, all negatives per anchor) ---
-# #     def circle_loss(z_a_bt, z_p_bt, z_n_bt, m=0.25, gamma=32.0):
-# #         """
-# #         z_*_bt: [B,T,D] -> pooled to [B,D]
-# #         Standard Circle loss (Sun et al., CVPR 2020):
-# #           L_a = softplus( logsumexp(gamma * alpha_n * (s_an - m)) + gamma * alpha_p * (s_ap - (1-m)) )
-# #           (and symmetric p-branch), averaged over batch and branches.
-# #         """
-# #         za = tf.math.l2_normalize(_mean_pool_bt(z_a_bt), axis=1)  # [B,D]
-# #         zp = tf.math.l2_normalize(_mean_pool_bt(z_p_bt), axis=1)  # [B,D]
-# #         zn = tf.math.l2_normalize(_mean_pool_bt(z_n_bt), axis=1)  # [B,D]
+#     # --- Circle loss (pooled, cosine sim, all negatives per anchor) ---
+#     def circle_loss(z_a_bt, z_p_bt, z_n_bt, m=0.25, gamma=32.0):
+#         """
+#         z_*_bt: [B,T,D] -> pooled to [B,D]
+#         Standard Circle loss (Sun et al., CVPR 2020):
+#           L_a = softplus( logsumexp(gamma * alpha_n * (s_an - m)) + gamma * alpha_p * (s_ap - (1-m)) )
+#           (and symmetric p-branch), averaged over batch and branches.
+#         """
+#         za = tf.math.l2_normalize(_mean_pool_bt(z_a_bt), axis=1)  # [B,D]
+#         zp = tf.math.l2_normalize(_mean_pool_bt(z_p_bt), axis=1)  # [B,D]
+#         zn = tf.math.l2_normalize(_mean_pool_bt(z_n_bt), axis=1)  # [B,D]
 
-# #         # Similarities
-# #         s_ap = tf.reduce_sum(za * zp, axis=1)                     # [B]
-# #         s_an = tf.matmul(za, zn, transpose_b=True)                # [B,B]
-# #         s_pn = tf.matmul(zp, zn, transpose_b=True)                # [B,B]
+#         # Similarities
+#         s_ap = tf.reduce_sum(za * zp, axis=1)                     # [B]
+#         s_an = tf.matmul(za, zn, transpose_b=True)                # [B,B]
+#         s_pn = tf.matmul(zp, zn, transpose_b=True)                # [B,B]
 
-# #         # Circle weights
-# #         ap = tf.nn.relu(m + s_ap)                                 # [B]
-# #         an = tf.nn.relu(s_an + m)                                 # [B,B]
-# #         pn = tf.nn.relu(s_pn + m)                                 # [B,B]
-# #         delta_p = 1.0 - m
+#         # Circle weights
+#         ap = tf.nn.relu(m + s_ap)                                 # [B]
+#         an = tf.nn.relu(s_an + m)                                 # [B,B]
+#         pn = tf.nn.relu(s_pn + m)                                 # [B,B]
+#         delta_p = 1.0 - m
 
-# #         # Anchor branch
-# #         neg_part_a = tf.reduce_logsumexp(gamma * an * (s_an - m), axis=1)      # [B]
-# #         pos_part_a = gamma * ap * (s_ap - delta_p)                              # [B]
-# #         L_a = tf.nn.softplus(neg_part_a + pos_part_a)                           # [B]
+#         # Anchor branch
+#         neg_part_a = tf.reduce_logsumexp(gamma * an * (s_an - m), axis=1)      # [B]
+#         pos_part_a = gamma * ap * (s_ap - delta_p)                              # [B]
+#         L_a = tf.nn.softplus(neg_part_a + pos_part_a)                           # [B]
 
-# #         # Positive-as-anchor branch (symmetry)
-# #         neg_part_p = tf.reduce_logsumexp(gamma * pn * (s_pn - m), axis=1)      # [B]
-# #         pos_part_p = gamma * ap * (s_ap - delta_p)                              # [B] (same s_ap)
-# #         L_p = tf.nn.softplus(neg_part_p + pos_part_p)
+#         # Positive-as-anchor branch (symmetry)
+#         neg_part_p = tf.reduce_logsumexp(gamma * pn * (s_pn - m), axis=1)      # [B]
+#         pos_part_p = gamma * ap * (s_ap - delta_p)                              # [B] (same s_ap)
+#         L_p = tf.nn.softplus(neg_part_p + pos_part_p)
 
-# #         return tf.reduce_mean(0.5 * (L_a + L_p))
+#         return tf.reduce_mean(0.5 * (L_a + L_p))
 
-# #     @tf.function
-# #     def loss_fn(y_true, y_pred):
-# #         # ---- split triplet on batch axis ----
-# #         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
-# #         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+#     @tf.function
+#     def loss_fn(y_true, y_pred):
+#         # ---- split triplet on batch axis ----
+#         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
+#         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
 
-# #         # ---- head indices from model ----
-# #         logit_idx = getattr(model, '_cls_logit_index', 0)
-# #         emb_start = getattr(model, '_emb_start_index', 2)
+#         # ---- head indices from model ----
+#         logit_idx = getattr(model, '_cls_logit_index', 0)
+#         emb_start = getattr(model, '_emb_start_index', 2)
 
-# #         # ---- slice logits / embeddings ----
-# #         a_logit = a_out[..., logit_idx]      # [B,T]
-# #         p_logit = p_out[..., logit_idx]      # [B,T]
-# #         n_logit = n_out[..., logit_idx]      # [B,T]
-# #         a_emb   = a_out[..., emb_start:]     # [B,T,D]
-# #         p_emb   = p_out[..., emb_start:]     # [B,T,D]
-# #         n_emb   = n_out[..., emb_start:]     # [B,T,D]
+#         # ---- slice logits / embeddings ----
+#         a_logit = a_out[..., logit_idx]      # [B,T]
+#         p_logit = p_out[..., logit_idx]      # [B,T]
+#         n_logit = n_out[..., logit_idx]      # [B,T]
+#         a_emb   = a_out[..., emb_start:]     # [B,T,D]
+#         p_emb   = p_out[..., emb_start:]     # [B,T,D]
+#         n_emb   = n_out[..., emb_start:]     # [B,T,D]
 
-# #         # ---- labels ----
-# #         a_lab = tf.cast(a_true[..., 0], tf.float32)  # [B,T] (0/1)
-# #         p_lab = tf.cast(p_true[..., 0], tf.float32)  # [B,T]
-# #         n_lab = tf.cast(n_true[..., 0], tf.float32)  # [B,T] (all zeros by design)
+#         # ---- labels ----
+#         a_lab = tf.cast(a_true[..., 0], tf.float32)  # [B,T] (0/1)
+#         p_lab = tf.cast(p_true[..., 0], tf.float32)  # [B,T]
+#         n_lab = tf.cast(n_true[..., 0], tf.float32)  # [B,T] (all zeros by design)
 
-# #         # ---- ramps ----
-# #         it = tf.cast(model.optimizer.iterations, tf.float32)
-# #         total_steps = float(params.get('TOTAL_STEPS', 100000))
+#         # ---- ramps ----
+#         it = tf.cast(model.optimizer.iterations, tf.float32)
+#         total_steps = float(params.get('TOTAL_STEPS', 100000))
 
-# #         ramp_delay = float(params.get('RAMP_DELAY', 0.01 * total_steps))
-# #         ramp_steps = float(params.get('RAMP_STEPS', 0.25 * total_steps))
-# #         r = _ramp(it, ramp_delay, ramp_steps)                       # 0→1
+#         ramp_delay = float(params.get('RAMP_DELAY', 0.01 * total_steps))
+#         ramp_steps = float(params.get('RAMP_STEPS', 0.25 * total_steps))
+#         r = _ramp(it, ramp_delay, ramp_steps)                       # 0→1
 
-# #         # Circle weight (use LOSS_Circle if present; else fall back to your old TupMPN weight)
-# #         w_circle_tgt = tf.cast(params.get('LOSS_Circle',
-# #                                    params.get('LOSS_TupMPN', 30.0)), tf.float32)
-# #         w_circle = r * w_circle_tgt
+#         # Circle weight (use LOSS_Circle if present; else fall back to your old TupMPN weight)
+#         w_circle_tgt = tf.cast(params.get('LOSS_Circle',
+#                                    params.get('LOSS_TupMPN', 30.0)), tf.float32)
+#         w_circle = r * w_circle_tgt
 
-# #         # Negatives ramp (controls FP/min pressure)
-# #         neg_min    = float(params.get('LOSS_NEGATIVES_MIN', 4.0))
-# #         neg_target = float(params.get('LOSS_NEGATIVES', 20.0))
-# #         neg_delay  = float(params.get('NEG_RAMP_DELAY', 0.05 * total_steps))
-# #         neg_steps  = float(params.get('NEG_RAMP_STEPS', 0.45 * total_steps))
-# #         r_neg = _ramp(it, neg_delay, max(1.0, neg_steps))
-# #         loss_fp_weight = tf.cast(neg_min + r_neg * max(0.0, neg_target - neg_min), tf.float32)
+#         # Negatives ramp (controls FP/min pressure)
+#         neg_min    = float(params.get('LOSS_NEGATIVES_MIN', 4.0))
+#         neg_target = float(params.get('LOSS_NEGATIVES', 20.0))
+#         neg_delay  = float(params.get('NEG_RAMP_DELAY', 0.05 * total_steps))
+#         neg_steps  = float(params.get('NEG_RAMP_STEPS', 0.45 * total_steps))
+#         r_neg = _ramp(it, neg_delay, max(1.0, neg_steps))
+#         loss_fp_weight = tf.cast(neg_min + r_neg * max(0.0, neg_target - neg_min), tf.float32)
 
-# #         # ---- Circle metric loss ----
-# #         m     = float(params.get('CIRCLE_m', 0.25))
-# #         gamma = float(params.get('CIRCLE_gamma', 32.0))
-# #         L_circle_raw = circle_loss(a_emb, p_emb, n_emb, m=m, gamma=gamma)
-# #         metric_loss  = w_circle * L_circle_raw
+#         # ---- Circle metric loss ----
+#         m     = float(params.get('CIRCLE_m', 0.25))
+#         gamma = float(params.get('CIRCLE_gamma', 32.0))
+#         L_circle_raw = circle_loss(a_emb, p_emb, n_emb, m=m, gamma=gamma)
+#         metric_loss  = w_circle * L_circle_raw
 
-# #         # ---- Classification BCE with post-onset masking ----
-# #         a_mask = post_onset_mask(a_lab)                 # [B,T]
-# #         p_mask = post_onset_mask(p_lab)                 # [B,T]
-# #         n_mask = tf.ones_like(n_lab, tf.float32)        # keep all negatives
+#         # ---- Classification BCE with post-onset masking ----
+#         a_mask = post_onset_mask(a_lab)                 # [B,T]
+#         p_mask = post_onset_mask(p_lab)                 # [B,T]
+#         n_mask = tf.ones_like(n_lab, tf.float32)        # keep all negatives
 
-# #         alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
+#         alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
 
-# #         cls_a = bce_logits_weighted(a_lab, a_logit, a_mask)
-# #         cls_p = bce_logits_weighted(p_lab, p_logit, p_mask)
-# #         cls_n = bce_logits_weighted(n_lab, n_logit, n_mask)
+#         cls_a = bce_logits_weighted(a_lab, a_logit, a_mask)
+#         cls_p = bce_logits_weighted(p_lab, p_logit, p_mask)
+#         cls_n = bce_logits_weighted(n_lab, n_logit, n_mask)
 
-# #         classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
+#         classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
 
-# #         # ---- TV smoothing on logits ----
-# #         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
-# #         tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
-# #         classification_loss = classification_loss + lam_tv * tv_term
+#         # ---- TV smoothing on logits ----
+#         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
+#         tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
+#         classification_loss = classification_loss + lam_tv * tv_term
 
-# #         # ---- magnitude balancing (same idea as before) ----
-# #         ratio = tf.stop_gradient(
-# #             tf.reduce_mean(metric_loss) / (tf.reduce_mean(classification_loss) + 1e-6)
-# #         )
-# #         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
+#         # ---- magnitude balancing (same idea as before) ----
+#         ratio = tf.stop_gradient(
+#             tf.reduce_mean(metric_loss) / (tf.reduce_mean(classification_loss) + 1e-6)
+#         )
+#         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
 
-# #         total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
-# #         return total
+#         total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
+#         return total
 
-# #     return loss_fn
+#     return loss_fn
 
 
 # def combined_mse_fbfce_loss(params):

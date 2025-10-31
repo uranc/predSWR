@@ -137,7 +137,6 @@ def objective_triplet(trial):
     # # params['LOSS_WEIGHT'] = 7.5e-4
 
     # params['LOSS_WEIGHT'] = 1.0
-    # params['LOSS_SupCon']    = 1.0#trial.suggest_float("LOSS_SupCon",    2.0, 40.0, log=True)
     # # params['LOSS_TupMPN']    = trial.suggest_float("LOSS_TupMPN",    10.0, 80.0, log=True)
 
     # # params['SG_START_RATIO'] = 0.00
@@ -147,7 +146,7 @@ def objective_triplet(trial):
     # params['CIRCLE_gamma'] = trial.suggest_float('CIRCLE_gamma',  8.0, 64.0, log=True)
 
     # # Circle loss global weight (keep your old name for continuity if you want)
-    # params['LOSS_TupMPN']  = trial.suggest_float("LOSS_TupMPN", 10.0, 300.0, log=True)
+    
     # params['LOSS_Circle']  = params['LOSS_TupMPN']  # alias, circle-only study    
     # params['LOSS_NEGATIVES'] = trial.suggest_float("LOSS_NEGATIVES", 20.0, 30.0, log=True)
     # params['LOSS_TV'] = trial.suggest_float("LOSS_TV", 1e-3, 8e-1, log=True)
@@ -173,41 +172,43 @@ def objective_triplet(trial):
     # params["CIRCLE_m"]     = trial.suggest_categorical("CIRCLE_m",     [0.30, 0.33, 0.36])
     # params["CIRCLE_gamma"] = trial.suggest_categorical("CIRCLE_gamma", [18, 21, 24])
     # params["LOSS_Circle"]  = trial.suggest_categorical("LOSS_Circle",  [40.0, 60.0, 80.0])
-    params["CIRCLE_m"]     = trial.suggest_float("CIRCLE_m", 0.30, 0.36)
-    params["CIRCLE_gamma"] = trial.suggest_int("CIRCLE_gamma", 14, 28, step=2)
-    params["LOSS_Circle"]  = trial.suggest_float("LOSS_Circle", 40.0, 90.0)
+    # params["CIRCLE_m"]     = trial.suggest_float("CIRCLE_m", 0.30, 0.36)
+    # params["CIRCLE_gamma"] = trial.suggest_int("CIRCLE_gamma", 14, 28, step=2)
+    # params["LOSS_Circle"]  = trial.suggest_float("LOSS_Circle", 40.0, 90.0)
 
     # SupCon kept as a stabilizer; grid chosen so (LOSS_SupCon / SUPCON_T) ≤ 10
     # params["LOSS_SupCon"]  = trial.suggest_categorical("LOSS_SupCon",  [0.25, 0.50, 1.00])
     # params["SUPCON_T"]     = trial.suggest_categorical("SUPCON_T",     [0.10, 0.15])
     params["SUPCON_T"] = trial.suggest_float("SUPCON_T", 0.08, 0.15)
-    sup_ratio = trial.suggest_float("SUPCON_RATIO", 2.0, 8.0)
-    params["LOSS_SupCon"] = sup_ratio * params["SUPCON_T"]
-    
+    # sup_ratio = trial.suggest_float("SUPCON_RATIO", 2.0, 8.0)
+    # params["LOSS_SupCon"] = sup_ratio * params["SUPCON_T"]
+    params['LOSS_TupMPN']  = trial.suggest_float("LOSS_TupMPN", 10.0, 300.0, log=True)
+    params['LOSS_SupCon']    = trial.suggest_float("LOSS_SupCon",    2.0, 40.0, log=True)
+
     # ---- Classifier weights + FP pressure ----
     # params["BCE_ANC_ALPHA"]      = trial.suggest_categorical("BCE_ANC_ALPHA", [1.0, 10.0])
     # params["BCE_POS_ALPHA"]      = trial.suggest_categorical("BCE_POS_ALPHA", [1.0, 10.0])
     # params["LOSS_NEGATIVES_MIN"] = 2.0 #trial.suggest_categorical("LOSS_NEGATIVES_MIN", [2.0, 4.0])
     # params["LOSS_NEGATIVES"]     = trial.suggest_categorical("LOSS_NEGATIVES",     [24.0, 28.0])
     # params["CLF_SCALE"]          = trial.suggest_categorical("CLF_SCALE",          [0.25, 0.35, 0.45])
-    bce_alpha = trial.suggest_float("BCE_ALPHA", 1.0, 4.0)
-    params["BCE_ANC_ALPHA"] = bce_alpha
-    params["BCE_POS_ALPHA"] = bce_alpha
+    # bce_alpha = trial.suggest_float("BCE_ALPHA", 1.0, 4.0)
+    # params["BCE_ANC_ALPHA"] = bce_alpha
+    # params["BCE_POS_ALPHA"] = bce_alpha
 
     params["LOSS_NEGATIVES_MIN"] = 2.0  # fixed floor of the ramp
     params["LOSS_NEGATIVES"]     = trial.suggest_int("LOSS_NEGATIVES", 22, 30, step=2)
 
-    params["CLF_SCALE"] = trial.suggest_float("CLF_SCALE", 0.20, 0.45)
+    # params["CLF_SCALE"] = trial.suggest_float("CLF_SCALE", 0.20, 0.45)
 
     # ---- Temporal smoothing (truncated |Δlogit|) ----
     # params["LOSS_TV"]     = trial.suggest_categorical("LOSS_TV",  [0.20, 0.30, 0.40])
     # params["SMOOTH_TAU"]  = 3.5#trial.suggest_categorical("SMOOTH_TAU", [3.0, 3.5, 4.0])
     # params["SMOOTH_TYPE"] = "tMSE"
     # params["SMOOTH_SPACE"]= "logit"
-    params["LOSS_TV"] = trial.suggest_float("LOSS_TV", 0.05, 0.50, log=True)
-    params["SMOOTH_TAU"]  = 3.5   # keep fixed this round
-    params["SMOOTH_TYPE"] = "tMSE"
-    params["SMOOTH_SPACE"]= "logit"
+    # params["LOSS_TV"] = trial.suggest_float("LOSS_TV", 0.05, 0.50, log=True)
+    # params["SMOOTH_TAU"]  = 3.5   # keep fixed this round
+    # params["SMOOTH_TYPE"] = "tMSE"
+    # params["SMOOTH_SPACE"]= "logit"
     
     # ---- Gate sparsity (keeps dead/noisy channels closed) ----
     params["l1_gate"] = trial.suggest_float("l1_gate", 1e-6, 3e-4, log=True)
@@ -216,10 +217,10 @@ def objective_triplet(trial):
     params["USE_LR_SCHEDULE"] = True
     params["LEARNING_RATE"] = 1e-2
     params["LR_WARMUP_RATIO"] = 0.10
-    params["LR_COOL_RATIO"] = 0.50
+    params["LR_COOL_RATIO"] = 0.80
     params["LR_FINAL_SCALE"] = 0.08
     params["WEIGHT_DECAY"]  = 1e-4
-    params["CLIP_NORM"]     = 1.0
+    params["CLIP_NORM"]     = 1.5
 
 
     ax = 25#trial.suggest_int('AX', 25, 85, step=20)
@@ -289,7 +290,7 @@ def objective_triplet(trial):
     # params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
     # if params['USE_Aug']:
     #     params['TYPE_ARCH'] += 'Aug'
-    params['TYPE_ARCH'] += 'Aug'
+    # params['TYPE_ARCH'] += 'Aug'
 
 
     # params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
@@ -967,16 +968,17 @@ elif mode == 'predict':
             build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
         elif 'TripletOnly' in params['TYPE_ARCH']:
             # pdb.set_trace()
-            from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
             # pdb.set_trace()
-            # import importlib.util
-            # # spec = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/study_{2211}_*')[0]
-            # # spec = importlib.util.spec_from_file_location("model_fn", f"{tmp_dir}/model/model_fn.py")
-            # spec = importlib.util.spec_f  rom_file_location("model_fn", f"{study_dir}/model/model_fn.py")
-            # spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
-            # model_module = importlib.util.module_from_spec(spec)
-            # spec.loader.exec_module(model_module)
-            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+            import importlib.util
+            # spec = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/study_{2211}_*')[0]
+            # spec = importlib.util.spec_from_file_location("model_fn", f"{tmp_dir}/model/model_fn.py")
+            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+
         elif 'Patch' in params['TYPE_ARCH']:
             tf.config.run_functions_eagerly(True)
             from model.input_augment_weighted import rippleAI_load_dataset
@@ -1001,6 +1003,7 @@ elif mode == 'predict':
             max_weights = f"{pretrained_dir}/max.weights.h5"
             mcc_weights = f"{pretrained_dir}/mcc.weights.h5"
 
+            
             if os.path.exists(event_weights) and os.path.exists(max_weights):
                 # Both files exist, select the most recently modified one
                 event_mtime = os.path.getmtime(event_weights)
@@ -1046,6 +1049,12 @@ elif mode == 'predict':
         event_weights = f"{study_dir}/event.weights.h5"
         max_weights = f"{study_dir}/max.weights.h5"
         mcc_weights = f"{study_dir}/mcc.weights.h5"
+
+
+        # event_weights = f"{study_dir}/rec07.weights.h5"
+        # max_weights = f"{study_dir}/rec07.weights.h5"
+        # mcc_weights = f"{study_dir}/rec07.weights.h5"
+        
         # event_weights = f"{study_dir}/event.tuned.weights.h5"
         # max_weights = f"{study_dir}/max.tuned.weights.h5"
         # event_weights = f"{study_dir}/event.mpntuned.weights.h5"
@@ -1098,9 +1107,11 @@ elif mode == 'predict':
         elif 'Patch' in params['TYPE_ARCH']:
             model = build_DBI_TCN(params=params) # Pass only the params dictionary
         else:
+            params["WEIGHT_FILE"] = weight_file
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         try:
             model.load_weights(weight_file)
+            print('Loaded weights successfully')
         except:
             try:
                 print('Load weights failed trying to match')
@@ -1239,7 +1250,7 @@ elif mode == 'predict':
     # inference parameters
     squence_stride = 1
     # params['BATCH_SIZE'] = 512*4*3
-    params['NO_TIMEPOINTS'] = 44
+    params['NO_TIMEPOINTS'] = 64
     params["BATCH_SIZE"] = 1024*4
     # pdb.set_trace()
     # from model.input_augment_weighted import rippleAI_load_dataset
@@ -1463,12 +1474,12 @@ elif mode == 'fine_tune':
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
         elif 'TripletOnly' in params['TYPE_ARCH']:
-            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
-            import importlib.util
-            spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
-            model_module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(model_module)
-            build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+            from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            # import importlib.util
+            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            # model_module = importlib.util.module_from_spec(spec)
+            # spec.loader.exec_module(model_module)
+            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
 
             # spec_inp = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/input_proto_new.py")
             # inp_module = importlib.util.module_from_spec(spec_inp)
@@ -1572,16 +1583,19 @@ elif mode == 'fine_tune':
         elif 'Patch' in params['TYPE_ARCH']:
             model = build_DBI_TCN(params=params) # Pass only the params dictionary
         else:
-            params['LOSS_NEGATIVES'] = 30
+            # pdb.set_trace()
+            params['TYPE_ARCH'] = params['TYPE_ARCH'].replace("StopGrad", "")
+            # params['LOSS_NEGATIVES'] = 30
             # params['LOSS_WEIGHT'] = 0.25
             params['LEARNING_RATE'] = 0.00003
-            params['BATCH_SIZE'] = 32
+            params['BATCH_SIZE'] = 128
             # params['HYPER_ENTROPY'] = 3.0
             # params['LOSS_TupMPN'] = 10.0
             params['mode'] = 'fine_tune'
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+        
         model.load_weights(weight_file)
-
+        print(params)
         # get sampling rate # little dangerous assumes 4 digits
         if 'Samp' in params['TYPE_LOSS']:
             sind = params['TYPE_LOSS'].find('Samp')
@@ -1590,7 +1604,7 @@ elif mode == 'fine_tune':
             params['SRATE'] = 1250
 
     model.summary()
-    params['BATCH_SIZE'] = 32
+    params['BATCH_SIZE'] = 128
     # input
     if 'NOZ' in params['TYPE_LOSS']:
         print('Not pre-processing')
@@ -1635,21 +1649,20 @@ elif mode == 'fine_tune':
     #                         save_best_only=True,
     #                         save_weights_only=True,
     #                         mode='max')]
-    patience = 50
-    callbacks = [cb.EarlyStopping(monitor='val_event_pr_auc',  # Change monitor
-                        patience=patience,
+    callbacks = [cb.EarlyStopping(monitor='val_sample_pr_auc',  # Change monitor
+                        patience=30,
                         mode='max',
                         verbose=1,
                         restore_best_weights=True),
         cb.ModelCheckpoint(f"{study_dir}/max.finetune.weights.h5",
-                            monitor='val_latency_weighted_f1',
+                            monitor='val_sample_max_f1',
                             verbose=1,
                             save_best_only=True,
                             save_weights_only=True,
                             mode='max'),
                             cb.ModelCheckpoint(
                             f"{study_dir}/event.finetune.weights.h5",
-                            monitor='val_event_pr_auc',  # Change monitor
+                            monitor='val_sample_pr_auc',  # Change monitor
                             verbose=1,
                             save_best_only=True,
                             save_weights_only=True,
