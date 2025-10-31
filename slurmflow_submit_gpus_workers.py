@@ -46,8 +46,8 @@ for model_name in range(18):
         subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
     elif ijob < 18:
         subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    if ijob == 0:
-        pdb.set_trace()
+    # if ijob == 0:
+    #     pdb.set_trace()
     # else:
     #     subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
     # elif ijob < 24:

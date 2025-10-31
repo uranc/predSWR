@@ -30,6 +30,23 @@ import importlib, random
 from tensorflow.keras import callbacks as cb
 import ctypes, h5py
 
+# --- early snapshot: params & setup (BEFORE data/model/fit) ---
+import datetime, sys, json, os
+import numpy as np
+import tensorflow as tf
+
+def _to_serializable(obj):
+    # make numpy / sets / arrays JSON-safe
+    if isinstance(obj, (np.floating, np.integer)): return obj.item()
+    if isinstance(obj, (np.ndarray,)):            return obj.tolist()
+    if isinstance(obj, (set,)):                    return list(obj)
+    return obj
+
+def _atomic_write_json(path, payload):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(payload, f, indent=2, default=_to_serializable)
+    os.replace(tmp, path)
 
 def objective_triplet(trial):
     ctypes.CDLL("libcuda.so.1")
@@ -62,7 +79,7 @@ def objective_triplet(trial):
 
     # Base parameters
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 600
+    params['NO_EPOCHS'] = 640
     params['TYPE_MODEL'] = 'Base'
 
     arch_lib = ['MixerOnly', 'MixerHori',
@@ -329,6 +346,42 @@ def objective_triplet(trial):
     #     shutil.rmtree(f"{study_dir}/model")
     shutil.copytree(model_dir, f"{study_dir}/model")
     preproc = True
+    
+    
+    
+    # minimal trial_info skeleton so later code can safely update it
+    trial_info = {
+        "study_name": (study.study_name if "study" in globals() else param_dir),
+        "trial_number": int(trial.number),
+        "start_time": datetime.datetime.now().isoformat(),
+        "study_dir": study_dir,
+        "run_name": run_name,
+        "parameters": dict(params),   # snapshot NOW, before any mutation
+        "dataset": {},                # will fill after dataset is built
+        "environment": {
+            "python": sys.version,
+            "tensorflow": tf.__version__,
+            "optuna": optuna.__version__,
+            "numpy": np.__version__,
+            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+            "gpus": [d.name for d in tf.config.list_physical_devices("GPU")],
+        },
+        "selected_epoch": None,
+        "selection_metric": None,
+        "metrics": {}                 # will fill after training/selection
+    }
+
+    # write immediately so the trial is traceable even if it prunes/crashes
+    _atomic_write_json(os.path.join(study_dir, "trial_info.json"), trial_info)
+
+        
+    # (optional but handy for dashboards)
+    try:
+        trial.set_user_attr("study_dir", study_dir)
+        trial.set_user_attr("run_name", run_name)
+    except Exception:
+        pass
+    
     # Load data and build model
     print(params['TYPE_LOSS'])
     if 'FiltL' in params['TYPE_LOSS']:
@@ -361,11 +414,29 @@ def objective_triplet(trial):
     params['CLF_RAMP_DELAY']  = params['RAMP_DELAY']
     params['CLF_RAMP_STEPS']  = params['RAMP_STEPS']
 
+
+    # after: train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(...)
+    trial_info["dataset"] = {
+        "estimated_steps_per_epoch": int(params.get("ESTIMATED_STEPS_PER_EPOCH",
+                                params.get("steps_per_epoch", 0))),
+        "val_steps": int(params.get("VAL_STEPS", 0)),
+        "label_ratio": float(label_ratio) if "label_ratio" in locals() else None,
+        "no_timepoints": int(params.get("NO_TIMEPOINTS", 0)),
+        "stride": int(params.get("NO_STRIDES", 0)),
+        "srate": int(params.get("SRATE", 0)),
+    }    
+    trial_info["parameters_final"] = dict(params)
+
+    _atomic_write_json(os.path.join(study_dir, "trial_info.json"), trial_info)
+    
+    # load model
     model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    
     # Early stopping with tunable patience
     model.summary()
 
-    callbacks = [
+    callbacks = [cb.EarlyStopping(monitor='val_sample_pr_auc', patience=30,mode='max',verbose=1,restore_best_weights=True),        
+                 
         cb.TensorBoard(log_dir=f"{study_dir}/", write_graph=True, write_images=True, update_freq='epoch'),
 
         # Save best by F1 (max)
@@ -387,7 +458,8 @@ def objective_triplet(trial):
 
     ]
     val_steps = dataset_params['VAL_STEPS']
-    # pdb.set_trace()    # Train and evaluate
+    
+    # Train and evaluate
     history = model.fit(
         train_dataset,
         steps_per_epoch=dataset_params['ESTIMATED_STEPS_PER_EPOCH'],
@@ -396,7 +468,7 @@ def objective_triplet(trial):
         epochs=params['NO_EPOCHS'],
         callbacks=callbacks,
         verbose=1,
-        max_queue_size=4)       # how many batches to keep ready
+        max_queue_size=16)       # how many batches to keep ready
     hist = history.history
 
     # --- helper: safe history picker (never crashes on missing/short arrays)
@@ -432,16 +504,6 @@ def objective_triplet(trial):
     f1_sel    = hist_pick(hist, "val_sample_max_f1",     idx)
     mcc_sel   = hist_pick(hist, "val_sample_max_mcc",    idx)
 
-    # ---- quick sanity filter to kill obviously bad/degenerate runs (same signatures you used)
-    bad = (
-        (not np.isfinite(prauc_sel)) or (prauc_sel <= 1e-4) or
-        (not np.isfinite(rec07_sel)) or (rec07_sel <= 1e-4) or
-        (not np.isfinite(fpmin_sel)) or (fpmin_sel <= 1e-4) or   # fp≈0 → meaningless flat model
-        (not np.isfinite(lat_sel))   or (lat_sel >= 0.9999)      # latency≈1 → bug signature
-    )
-    if bad:
-        raise optuna.TrialPruned("Bug signature at selected epoch (prauc/rec≈0, fp≈0, or latency≈1).")
-
     # ---- log both the across-epochs bests and the selected-epoch snapshot
     logger.info(
         f"Trial {trial.number} SELECTED@epoch[{epoch_sel}] — PRAUC: {prauc_sel:.4f} | "
@@ -459,17 +521,27 @@ def objective_triplet(trial):
     trial.set_user_attr("sel_max_mcc",         float(mcc_sel))
 
     # ---- also expand your saved JSON
-    trial_info.setdefault("selected_epoch", int(epoch_sel))
-    trial_info.setdefault("selected_epoch_metrics", {
-        'val_sample_pr_auc':    float(prauc_sel),
-        'val_recall_at_0p7':    float(rec07_sel),
-        'val_fp_per_min':       float(fpmin_sel),
-        'val_latency_score':    float(lat_sel),
-        'val_sample_max_f1':    float(f1_sel),
-        'val_sample_max_mcc':   float(mcc_sel),
-    })
-    with open(f"{study_dir}/trial_info.json", 'w') as f:
-        json.dump(trial_info, f, indent=4)
+    trial_info["selected_epoch"] = int(epoch_sel)
+    trial_info["selection_metric"] = "val_sample_pr_auc"
+    trial_info["selected_epoch_metrics"] = {
+        'val_sample_pr_auc':  float(prauc_sel),
+        'val_recall_at_0p7':  float(rec07_sel),
+        'val_fp_per_min':     float(fpmin_sel),
+        'val_latency_score':  float(lat_sel),
+        'val_sample_max_f1':  float(f1_sel),
+        'val_sample_max_mcc': float(mcc_sel),
+    }
+    _atomic_write_json(os.path.join(study_dir, "trial_info.json"), trial_info)
+
+    # ---- quick sanity filter to kill obviously bad/degenerate runs (same signatures you used)
+    bad = (
+        (not np.isfinite(prauc_sel)) or (prauc_sel <= 1e-4) or
+        (not np.isfinite(rec07_sel)) or (rec07_sel <= 1e-4) or
+        (not np.isfinite(fpmin_sel)) or (fpmin_sel <= 1e-6) or   # fp≈0 → meaningless flat model
+        (not np.isfinite(lat_sel))   or (lat_sel >= 0.9999)      # latency≈1 → bug signature
+    )
+    if bad:
+        raise optuna.TrialPruned("Bug signature at selected epoch (prauc/rec≈0, fp≈0, or latency≈1).")
 
     # ---- finally: report to Optuna as 2-objective (prauc, fp/min@0.3)
     return float(prauc_sel), float(fpmin_sel)
