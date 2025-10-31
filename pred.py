@@ -171,9 +171,9 @@ def objective_triplet(trial):
     # ---- Metric: Circle + SupCon (time-averaged sims) ----
     # params["CIRCLE_m"]     = trial.suggest_categorical("CIRCLE_m",     [0.30, 0.33, 0.36])
     # params["CIRCLE_gamma"] = trial.suggest_categorical("CIRCLE_gamma", [18, 21, 24])
-    # params["LOSS_Circle"]  = trial.suggest_categorical("LOSS_Circle",  [40.0, 60.0, 80.0])
-    # params["CIRCLE_m"]     = trial.suggest_float("CIRCLE_m", 0.30, 0.36)
-    # params["CIRCLE_gamma"] = trial.suggest_int("CIRCLE_gamma", 14, 28, step=2)
+    params["LOSS_Circle"]  = trial.suggest_categorical("LOSS_Circle",  [40.0, 60.0, 80.0])
+    params["CIRCLE_m"]     = trial.suggest_float("CIRCLE_m", 0.30, 0.36)
+    params["CIRCLE_gamma"] = trial.suggest_int("CIRCLE_gamma", 14, 28, step=2)
     # params["LOSS_Circle"]  = trial.suggest_float("LOSS_Circle", 40.0, 90.0)
 
     # SupCon kept as a stabilizer; grid chosen so (LOSS_SupCon / SUPCON_T) ≤ 10
@@ -182,7 +182,7 @@ def objective_triplet(trial):
     params["SUPCON_T"] = trial.suggest_float("SUPCON_T", 0.08, 0.15)
     # sup_ratio = trial.suggest_float("SUPCON_RATIO", 2.0, 8.0)
     # params["LOSS_SupCon"] = sup_ratio * params["SUPCON_T"]
-    params['LOSS_TupMPN']  = trial.suggest_float("LOSS_TupMPN", 10.0, 300.0, log=True)
+    # params['LOSS_TupMPN']  = trial.suggest_float("LOSS_TupMPN", 10.0, 300.0, log=True)
     params['LOSS_SupCon']    = trial.suggest_float("LOSS_SupCon",    2.0, 40.0, log=True)
 
     # ---- Classifier weights + FP pressure ----
@@ -191,9 +191,9 @@ def objective_triplet(trial):
     # params["LOSS_NEGATIVES_MIN"] = 2.0 #trial.suggest_categorical("LOSS_NEGATIVES_MIN", [2.0, 4.0])
     # params["LOSS_NEGATIVES"]     = trial.suggest_categorical("LOSS_NEGATIVES",     [24.0, 28.0])
     # params["CLF_SCALE"]          = trial.suggest_categorical("CLF_SCALE",          [0.25, 0.35, 0.45])
-    # bce_alpha = trial.suggest_float("BCE_ALPHA", 1.0, 4.0)
+    bce_alpha = trial.suggest_float("BCE_POS_ALPHA", 1.0, 4.0)
     # params["BCE_ANC_ALPHA"] = bce_alpha
-    # params["BCE_POS_ALPHA"] = bce_alpha
+    params["BCE_POS_ALPHA"] = bce_alpha
 
     params["LOSS_NEGATIVES_MIN"] = 2.0  # fixed floor of the ramp
     params["LOSS_NEGATIVES"]     = trial.suggest_int("LOSS_NEGATIVES", 22, 30, step=2)
@@ -205,7 +205,7 @@ def objective_triplet(trial):
     # params["SMOOTH_TAU"]  = 3.5#trial.suggest_categorical("SMOOTH_TAU", [3.0, 3.5, 4.0])
     # params["SMOOTH_TYPE"] = "tMSE"
     # params["SMOOTH_SPACE"]= "logit"
-    # params["LOSS_TV"] = trial.suggest_float("LOSS_TV", 0.05, 0.50, log=True)
+    params["LOSS_TV"] = trial.suggest_float("LOSS_TV", 0.01, 5.00, log=True)
     # params["SMOOTH_TAU"]  = 3.5   # keep fixed this round
     # params["SMOOTH_TYPE"] = "tMSE"
     # params["SMOOTH_SPACE"]= "logit"
@@ -274,9 +274,9 @@ def objective_triplet(trial):
     par_opt = 'AdamWA'
     # par_opt = opt_lib[trial.suggest_int('IND_OPT', 0, len(opt_lib)-1)]
 
-    reg_lib = ['LOne',  'None'] #'LTwo',
-    par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
-    # par_reg = 'LOne'
+    # reg_lib = ['LOne',  'None'] #'LTwo',
+    # par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
+    par_reg = 'LOne'
     # par_reg = 'None'  # No regularization for now
 
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
@@ -297,7 +297,7 @@ def objective_triplet(trial):
     # if params['USE_StopGrad']:
     #     print('Using Stop Gradient for Class. Branch')
     #     params['TYPE_ARCH'] += 'StopGrad'
-    params['TYPE_ARCH'] += 'StopGrad'
+    # params['TYPE_ARCH'] += 'StopGrad'
 
     # # ensure StopGrad ON via architecture token you already use
     # if 'StopGrad' not in params.get('TYPE_ARCH', ''):
@@ -306,7 +306,7 @@ def objective_triplet(trial):
     # if params['USE_Attention']:
     #     print('Using Attention')
     #     params['TYPE_ARCH'] += 'Att'
-    params['TYPE_ARCH'] += 'Att'
+    # params['TYPE_ARCH'] += 'Att'
         
     params['TYPE_ARCH'] += 'Online'
 
@@ -436,7 +436,7 @@ def objective_triplet(trial):
     # Early stopping with tunable patience
     model.summary()
 
-    callbacks = [cb.EarlyStopping(monitor='val_sample_pr_auc', patience=30,mode='max',verbose=1,restore_best_weights=True),        
+    callbacks = [cb.EarlyStopping(monitor='val_recall_at_0p7', patience=30,mode='max',verbose=1,restore_best_weights=True),        
                  
         cb.TensorBoard(log_dir=f"{study_dir}/", write_graph=True, write_images=True, update_freq='epoch'),
 
@@ -2727,7 +2727,7 @@ elif mode == 'tune_worker':
 
     study.optimize(
         objective,
-        n_trials=1,
+        n_trials=10,
         gc_after_trial=True,
         show_progress_bar=True,
         callbacks=[lambda study, trial: logger.info(f"Trial {trial.number} finished")]
