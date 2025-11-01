@@ -79,7 +79,7 @@ def objective_triplet(trial):
 
     # Base parameters
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 640
+    params['NO_EPOCHS'] = 250
     params['TYPE_MODEL'] = 'Base'
 
     arch_lib = ['MixerOnly', 'MixerHori',
@@ -171,9 +171,10 @@ def objective_triplet(trial):
     # ---- Metric: Circle + SupCon (time-averaged sims) ----
     # params["CIRCLE_m"]     = trial.suggest_categorical("CIRCLE_m",     [0.30, 0.33, 0.36])
     # params["CIRCLE_gamma"] = trial.suggest_categorical("CIRCLE_gamma", [18, 21, 24])
-    params["LOSS_Circle"]  = trial.suggest_categorical("LOSS_Circle",  [40.0, 60.0, 80.0])
-    params["CIRCLE_m"]     = trial.suggest_float("CIRCLE_m", 0.30, 0.36)
-    params["CIRCLE_gamma"] = trial.suggest_int("CIRCLE_gamma", 14, 28, step=2)
+    params["LOSS_Circle"]  =  trial.suggest_float("LOSS_TupMPN", 10.0, 300.0, log=True)
+    params["CIRCLE_m"]     = trial.suggest_float("CIRCLE_m", 0.20, 0.45)
+    params['CIRCLE_gamma'] = trial.suggest_float('CIRCLE_gamma',  8.0, 64.0, log=True)
+
     # params["LOSS_Circle"]  = trial.suggest_float("LOSS_Circle", 40.0, 90.0)
 
     # SupCon kept as a stabilizer; grid chosen so (LOSS_SupCon / SUPCON_T) ≤ 10
@@ -183,7 +184,7 @@ def objective_triplet(trial):
     # sup_ratio = trial.suggest_float("SUPCON_RATIO", 2.0, 8.0)
     # params["LOSS_SupCon"] = sup_ratio * params["SUPCON_T"]
     # params['LOSS_TupMPN']  = trial.suggest_float("LOSS_TupMPN", 10.0, 300.0, log=True)
-    params['LOSS_SupCon']    = trial.suggest_float("LOSS_SupCon",    2.0, 40.0, log=True)
+    params['LOSS_SupCon']    = trial.suggest_float("LOSS_SupCon",    0.1, 40.0, log=True)
 
     # ---- Classifier weights + FP pressure ----
     # params["BCE_ANC_ALPHA"]      = trial.suggest_categorical("BCE_ANC_ALPHA", [1.0, 10.0])
@@ -268,7 +269,7 @@ def objective_triplet(trial):
 
     # act_lib = ['ELU', 'GELU'] # 'RELU',
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    par_act = 'GELU'
+    par_act = 'RELU'
 
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'AdamWA'
@@ -276,8 +277,8 @@ def objective_triplet(trial):
 
     # reg_lib = ['LOne',  'None'] #'LTwo',
     # par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
-    par_reg = 'LOne'
-    # par_reg = 'None'  # No regularization for now
+    # par_reg = 'LOne'
+    par_reg = 'None'  # No regularization for now
 
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
     # Build architecture string with timing parameters (adjust format)
@@ -442,7 +443,7 @@ def objective_triplet(trial):
 
         # Save best by F1 (max)
         cb.ModelCheckpoint(f"{study_dir}/mcc.weights.h5", monitor="val_sample_max_mcc",
-                        mode="max", save_best_only=True, save_weights_only=False, verbose=1),
+                        mode="max", save_best_only=True, save_weights_only=True, verbose=1),
         
         # Save best by F1 (max)
         cb.ModelCheckpoint(f"{study_dir}/max.weights.h5", monitor='val_sample_max_f1',
@@ -545,7 +546,7 @@ def objective_triplet(trial):
         raise optuna.TrialPruned("Bug signature at selected epoch (prauc/rec≈0, fp≈0, or latency≈1).")
 
     # ---- finally: report to Optuna as 2-objective (prauc, fp/min@0.3)
-    return float(prauc_sel), float(fpmin_sel)
+    return float(rec07_sel), float(fpmin_sel)
 
 
 # tf.config.run_functions_eagerly(True)
@@ -1107,49 +1108,30 @@ elif mode == 'predict':
         elif 'Patch' in params['TYPE_ARCH']:
             model = build_DBI_TCN(params=params) # Pass only the params dictionary
         else:
-            params["WEIGHT_FILE"] = weight_file
+            # params["WEIGHT_FILE"] = weight_file
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         try:
             model.load_weights(weight_file)
             print('Loaded weights successfully')
         except:
-            try:
-                print('Load weights failed trying to match')
-                
-                model.load_weights(weight_file, by_name=True, skip_mismatch=True)  # tf.keras 2.x  
-                # 2) force-load the two LNs from the legacy H5
-                aa = h5py.File(weight_file)
-                model.layers[1].get_layer('emb_ln').set_weights([aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['layer_normalization_2']['vars']['0'][:], 
-                                                                aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['layer_normalization_2']['vars']['1'][:]])
-
-                model.layers[1].get_layer('emb_p2').set_weights([aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['dense_2']['vars']['0'][:], 
-                                                                aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['dense_2']['vars']['1'][:]])
-
-                model.layers[1].get_layer('cls_logits').set_weights([aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['conv1d_2']['vars']['0'][:], 
-                                                                aa['_layer_checkpoint_dependencies']['functional']['_layer_checkpoint_dependencies']['conv1d_2']['vars']['1'][:]])                 
-                print(np.mean(model.layers[1].get_layer('emb_ln').weights[1]))
-                print(np.mean(model.layers[1].get_layer('emb_p2').weights[1]))
-                print(np.mean(model.layers[1].get_layer('cls_logits').weights[1]))
-
-            except:
-                from tcn import TCN
-                from tensorflow.keras.regularizers import L1
-                from model.model_fn import WarmStableCool, mixed_latent_loss, MultiScaleCausalGate
-                from model.model_fn import SampleMaxF1, SampleMaxMCC, SamplePRAUC, LatencyScore, FPperMinMetric
-                with tf.keras.utils.custom_object_scope({'TCN': TCN, 
-                                                        'L1': L1,
-                                                        'WarmStableCool': WarmStableCool,
-                                                        'loss_fn': 'mse',
-                                                        'SampleMaxF1': SampleMaxF1,
-                                                        'SampleMaxMCC': SampleMaxMCC, 
-                                                        'SamplePRAUC': SamplePRAUC,
-                                                        'LatencyScore': LatencyScore,
-                                                        'FPperMinMetric': FPperMinMetric,
-                                                        'MultiScaleCausalGate': MultiScaleCausalGate
-                                                        }):
-                    trained_model = load_model(weight_file, compile=False)
-                    trained_model.save_weights(weight_file[:-2]+'weightsOnly.h5')
-                    model.load_weights(weight_file[:-2]+'weightsOnly.h5')
+            from tcn import TCN
+            from tensorflow.keras.regularizers import L1
+            from model.model_fn import WarmStableCool, mixed_latent_loss, MultiScaleCausalGate
+            from model.model_fn import SampleMaxF1, SampleMaxMCC, SamplePRAUC, LatencyScore, FPperMinMetric
+            with tf.keras.utils.custom_object_scope({'TCN': TCN, 
+                                                    'L1': L1,
+                                                    'WarmStableCool': WarmStableCool,
+                                                    'loss_fn': 'mse',
+                                                    'SampleMaxF1': SampleMaxF1,
+                                                    'SampleMaxMCC': SampleMaxMCC, 
+                                                    'SamplePRAUC': SamplePRAUC,
+                                                    'LatencyScore': LatencyScore,
+                                                    'FPperMinMetric': FPperMinMetric,
+                                                    'MultiScaleCausalGate': MultiScaleCausalGate
+                                                    }):
+                trained_model = load_model(weight_file, compile=False)
+                trained_model.save_weights(weight_file[:-2]+'weightsOnly.h5')
+                model.load_weights(weight_file[:-2]+'weightsOnly.h5')
     elif model_name == 'RippleNet':
         import sys, pickle, keras, h5py
         # load info on best model (path, threhsold settings)
@@ -1247,10 +1229,11 @@ elif mode == 'predict':
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
 
+    model.layers[1].get_layer('cls_logits').bias.assign(tf.constant(0.))[None,]
     # inference parameters
     squence_stride = 1
     # params['BATCH_SIZE'] = 512*4*3
-    params['NO_TIMEPOINTS'] = 64
+    params['NO_TIMEPOINTS'] = 43
     params["BATCH_SIZE"] = 1024*4
     # pdb.set_trace()
     # from model.input_augment_weighted import rippleAI_load_dataset
@@ -2727,7 +2710,7 @@ elif mode == 'tune_worker':
 
     study.optimize(
         objective,
-        n_trials=10,
+        n_trials=40,
         gc_after_trial=True,
         show_progress_bar=True,
         callbacks=[lambda study, trial: logger.info(f"Trial {trial.number} finished")]

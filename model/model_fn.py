@@ -16,6 +16,7 @@ from tensorflow.keras.layers import Layer, Input, Flatten, Dense, Dropout, Repea
 from tensorflow.keras.models import Model
 from tensorflow.keras.activations import gelu 
 import pdb, math
+import numpy as np
 
 
 def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
@@ -946,9 +947,9 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         lr_schedule = WarmStableCool(
             base_lr=params['LEARNING_RATE'],
             total_steps=total_steps,
-            warmup_ratio=params.get('LR_WARMUP_RATIO', 0.1),
-            cool_ratio=params.get('LR_COOL_RATIO', 0.80),
-            final_scale=params.get('LR_FINAL_SCALE', 0.08),
+            warmup_ratio=params.get('LR_WARMUP_RATIO', 0.04),
+            cool_ratio=params.get('LR_COOL_RATIO', 0.60),
+            final_scale=params.get('LR_FINAL_SCALE', 0.06),
         )
         this_optimizer = tf.keras.optimizers.AdamW(
             learning_rate=(lr_schedule if params.get('USE_LR_SCHEDULE', True) else params['LEARNING_RATE']),
@@ -1036,8 +1037,8 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
                         go_backwards=False,
                         return_state=False)
             print(tcn_op.receptive_field)
-            feats = tcn_op(inputs_nets)  # [B, T, C_tcn]
-            feats = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='slice_last_T')(feats)
+            nets = tcn_op(inputs_nets)  # [B, T, C_tcn]
+            feats = Lambda(lambda tt: tt[:, -input_timepoints:, :], name='slice_last_T')(nets)
         elif model_type=='SingleCh':
             print('Using Single Channel TCN')
             from tcn import TCN
@@ -1083,27 +1084,66 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
 
         # ---- Classification head ----
-        h = tf.stop_gradient(feats) if 'StopGrad' in params['TYPE_ARCH'] else feats
-        h = LayerNormalization(name='emb_class')(h)
-        # h = LayerNormalization()(h)
-        h = Conv1D(64, 
-                    1, 
-                    kernel_initializer='glorot_uniform', 
-                    kernel_regularizer=tf.keras.regularizers.L1(1e-4),
-                    use_bias=True,
-                    bias_initializer=tf.keras.initializers.Constant(0.0),  # was zeros 
-                    name="cls_pw1")(h)
-        h = Activation('gelu')(h)
-        # cls_in = Dropout(0.1)(h)
-        cls_in = h
-        cls_logits = Conv1D(1, 1,
-                        kernel_initializer='glorot_uniform',
-                        kernel_regularizer=tf.keras.regularizers.L1(1e-4),
-                        use_bias=True,
-                        bias_initializer=tf.keras.initializers.Constant(0.0),  # was zeros
-                        activation=None, name='cls_logits')(cls_in)
-        cls_prob = Activation('sigmoid', name='cls_prob')(cls_logits)
+        # h = tf.stop_gradient(feats) if 'StopGrad' in params['TYPE_ARCH'] else feats
+        # h = LayerNormalization(name='emb_class')(h)
+        # # h = LayerNormalization()(h)
+        # h = Conv1D(64, 
+        #             1, 
+        #             kernel_initializer='glorot_uniform', 
+        #             kernel_regularizer=tf.keras.regularizers.L1(1e-4),
+        #             name="cls_pw1")(h)
+        # h = Activation('gelu')(h)
+        # # cls_in = Dropout(0.1)(h)
+        # cls_in = h
+        # cls_logits = Conv1D(1, 1,
+        #                 kernel_initializer='glorot_uniform',
+        #                 kernel_regularizer=tf.keras.regularizers.L1(1e-4),
+        #                 bias_initializer='zeros',
+        #                 activation=None, name='cls_logits')(cls_in)
+        # cls_prob = Activation('sigmoid', name='cls_prob')(cls_logits)
+        T = int(input_timepoints) # 64
+        print('TCN input timepoints:', T)
+        R = tcn_op.receptive_field # 43
+        print('TCN receptive field:', R)
+        K_MAX = max(1, T - R + 1)  # must be <=22 with T=64,R=43
 
+        # 
+        feats_tail_in = Lambda(lambda tt: tt[:, -(input_timepoints+K_MAX):, :], name='slice_tail_T_plus_K')(nets)        
+        feats_tail_in = tf.stop_gradient(feats_tail_in) if 'StopGrad' in params['TYPE_ARCH'] else feats_tail_in
+
+        # 2) Tail (all causal)
+        k_list = [4,8,16]  # later filter by <=K_MAX
+        C = n_filters
+        
+        branches = [
+            tf.keras.layers.SeparableConv1D(
+                filters=C, kernel_size=k, padding='causal',
+                depth_multiplier=1, use_bias=False, name=f'tail_dw_k{k:02d}'
+            )(feats_tail_in) for k in k_list
+        ]
+        tail = tf.keras.layers.Concatenate(axis=-1, name='tail_ms_concat')(branches)
+        tail = tf.keras.layers.LayerNormalization(name='tail_ln')(tail)
+
+        glu = tf.keras.layers.Conv1D(256, 1, use_bias=True, name='tail_glu_in')(tail)
+        lin, gate = tf.split(glu, 2, axis=-1)
+        h_tail = tf.keras.layers.Multiply(name='tail_glu_mul')(
+            [lin, tf.keras.layers.Activation('sigmoid', name='tail_glu_sig')(gate)]
+        )
+
+        prior_p = float(params.get('RIPPLE_RATIO', 0.05))
+        prior_logit = np.log(prior_p / max(1e-6, 1.0 - prior_p)).astype('float32')
+
+        cls_logits_full = tf.keras.layers.Conv1D(
+            1, 1, use_bias=True,
+            bias_initializer=tf.keras.initializers.Constant(prior_logit),
+            name='cls_logits'
+        )(h_tail)
+        cls_prob_full = tf.keras.layers.Activation('sigmoid', name='cls_prob')(cls_logits_full)
+
+        # Crop to last T so the classifier head is length T (aligns with emb)
+        cls_logits = cls_logits_full[:, -input_timepoints:, :]
+        cls_prob   = cls_prob_full[:,   -input_timepoints:, :]
+        
         # ---- projection head for contrastive (L2N ONLY here) ----
         emb = LayerNormalization(name='emb_ln')(feats)
         emb = Dense(n_filters * 2, activation='gelu',
@@ -2114,9 +2154,6 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 
     return loss_fn
 
-
-
-
 def class_finetune(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
 
     @tf.function
@@ -2889,6 +2926,14 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
     def tv_on_logits(z_bt):             # z: [B,T]
         return tf.reduce_mean(tf.abs(z_bt[:, 1:] - z_bt[:, :-1]))
 
+    # TV on logits, masked as well
+    def tv_on_logits_masked(z_bt, m_bt):
+        z  = z_bt[:, 1:] - z_bt[:, :-1]      # [B,T-1]
+        m  = tf.minimum(m_bt[:, 1:], m_bt[:, :-1])
+        num = tf.reduce_sum(tf.abs(z) * m)
+        den = tf.reduce_sum(m) + tf.keras.backend.epsilon()
+        return num / den
+    
     # --- post-onset mask for A/P (fixes dtype mismatch robustly) ---
     def post_onset_mask(y_bt):
         """
@@ -3022,7 +3067,6 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 
         L_sup_raw = supcon_ripple(a_emb, p_emb, n_emb, temperature=params.get('SUPCON_T', 0.1))
         metric_loss = w_circle_tgt * L_circle_raw + w_supcon * L_sup_raw
-        w_sup_tgt = tf.cast(params.get('LOSS_SupCon', 1.0), tf.float32)
 
 
         # ---- Classification BCE with post-onset masking ----
@@ -3040,14 +3084,10 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 
         # ---- TV smoothing on logits ----
         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
-        tv_term = tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit)
+        tv_term = (tv_on_logits_masked(a_logit, a_mask) +
+           tv_on_logits_masked(p_logit, p_mask) +
+           tv_on_logits_masked(n_logit, n_mask))
         classification_loss = classification_loss + lam_tv * tv_term
-
-        # ---- magnitude balancing (same idea as before) ----
-        # ratio = tf.stop_gradient(
-        #     tf.reduce_mean(metric_loss) / (tf.reduce_mean(classification_loss) + 1e-6)
-        # )
-        # ratio = tf.clip_by_value(ratio, 0.1, 10.0)
 
         total = tf.reduce_mean(metric_loss) + 0.5 * tf.reduce_mean(classification_loss)
         return total

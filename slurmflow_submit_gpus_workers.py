@@ -12,11 +12,11 @@ import time, pdb
 # tag = 'tripletOnlyAug2500'
 # tag = 'tripletOnlyAttAug2500'
 # tag = 'tripletOnlyRemake2500'
-tag = 'tripletOnlyCircle2500'
+tag = 'tripletOnlyTail2500'
 
 # Rest of script remains unchanged
 ijob = -1
-for model_name in range(19):
+for model_name in range(26):
     # exp_dir = 'experiments/' + model_name
     # pr = exp_dir + '/model/'
     # if not path.exists(pr):
@@ -36,18 +36,18 @@ for model_name in range(19):
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
     # pdb.set_trace()
-    if ijob < 7:
+    if ijob < 14:
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
         subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    elif ijob < 15:
+    elif ijob < 22:
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_power_test.sh', tag])
         subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
-    elif ijob < 19:
+    elif ijob < 26:
         subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    # if ijob == 0:
-    #     pdb.set_trace()
+    if ijob == 0:
+        pdb.set_trace()
     # else:
     #     subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
     # elif ijob < 24:
