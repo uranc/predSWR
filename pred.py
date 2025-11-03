@@ -1229,11 +1229,11 @@ elif mode == 'predict':
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
     model.summary()
 
-    model.layers[1].get_layer('cls_logits').bias.assign(tf.constant(0.))[None,]
+    # model.layers[1].get_layer('cls_logits').bias.assign(tf.constant(0.))[None,]
     # inference parameters
     squence_stride = 1
     # params['BATCH_SIZE'] = 512*4*3
-    params['NO_TIMEPOINTS'] = 43
+    params['NO_TIMEPOINTS'] = 64
     params["BATCH_SIZE"] = 1024*4
     # pdb.set_trace()
     # from model.input_augment_weighted import rippleAI_load_dataset
@@ -2710,7 +2710,7 @@ elif mode == 'tune_worker':
 
     study.optimize(
         objective,
-        n_trials=40,
+        n_trials=80,
         gc_after_trial=True,
         show_progress_bar=True,
         callbacks=[lambda study, trial: logger.info(f"Trial {trial.number} finished")]

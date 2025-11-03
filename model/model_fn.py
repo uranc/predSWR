@@ -1130,8 +1130,8 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             [lin, tf.keras.layers.Activation('sigmoid', name='tail_glu_sig')(gate)]
         )
 
-        prior_p = float(params.get('RIPPLE_RATIO', 0.05))
-        prior_logit = np.log(prior_p / max(1e-6, 1.0 - prior_p)).astype('float32')
+        # prior_p = float(params.get('RIPPLE_RATIO', 0.05))
+        prior_logit = 0 #np.log(prior_p / max(1e-6, 1.0 - prior_p)).astype('float32')
 
         cls_logits_full = tf.keras.layers.Conv1D(
             1, 1, use_bias=True,
