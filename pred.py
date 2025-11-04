@@ -78,7 +78,7 @@ def objective_triplet(trial):
     # ...rest of existing objective function code...
 
     # Base parameters
-    params['SRATE'] = 2500
+    params['SRATE'] = 1250
     params['NO_EPOCHS'] = 250
     params['TYPE_MODEL'] = 'Base'
 
@@ -171,20 +171,20 @@ def objective_triplet(trial):
     # ---- Metric: Circle + SupCon (time-averaged sims) ----
     # params["CIRCLE_m"]     = trial.suggest_categorical("CIRCLE_m",     [0.30, 0.33, 0.36])
     # params["CIRCLE_gamma"] = trial.suggest_categorical("CIRCLE_gamma", [18, 21, 24])
-    params["LOSS_Circle"]  =  trial.suggest_float("LOSS_TupMPN", 10.0, 300.0, log=True)
-    params["CIRCLE_m"]     = trial.suggest_float("CIRCLE_m", 0.20, 0.45)
-    params['CIRCLE_gamma'] = trial.suggest_float('CIRCLE_gamma',  8.0, 64.0, log=True)
+    params["LOSS_Circle"]  =  trial.suggest_int("LOSS_Circle", 40, 120.0, step=20)
+    params["CIRCLE_m"]     = trial.suggest_float("CIRCLE_m", 0.28, 0.36)
+    params['CIRCLE_gamma'] = trial.suggest_float('CIRCLE_gamma',  18.0, 28.0, log=True)
 
     # params["LOSS_Circle"]  = trial.suggest_float("LOSS_Circle", 40.0, 90.0)
 
     # SupCon kept as a stabilizer; grid chosen so (LOSS_SupCon / SUPCON_T) ≤ 10
     # params["LOSS_SupCon"]  = trial.suggest_categorical("LOSS_SupCon",  [0.25, 0.50, 1.00])
     # params["SUPCON_T"]     = trial.suggest_categorical("SUPCON_T",     [0.10, 0.15])
-    params["SUPCON_T"] = trial.suggest_float("SUPCON_T", 0.08, 0.15)
+    params["SUPCON_T"] = trial.suggest_float("SUPCON_T", 0.10, 0.12)
     # sup_ratio = trial.suggest_float("SUPCON_RATIO", 2.0, 8.0)
     # params["LOSS_SupCon"] = sup_ratio * params["SUPCON_T"]
     # params['LOSS_TupMPN']  = trial.suggest_float("LOSS_TupMPN", 10.0, 300.0, log=True)
-    params['LOSS_SupCon']    = trial.suggest_float("LOSS_SupCon",    0.1, 40.0, log=True)
+    params['LOSS_SupCon']    = trial.suggest_float("LOSS_SupCon",    0.25, 2.0, log=True)
 
     # ---- Classifier weights + FP pressure ----
     # params["BCE_ANC_ALPHA"]      = trial.suggest_categorical("BCE_ANC_ALPHA", [1.0, 10.0])
@@ -192,12 +192,12 @@ def objective_triplet(trial):
     # params["LOSS_NEGATIVES_MIN"] = 2.0 #trial.suggest_categorical("LOSS_NEGATIVES_MIN", [2.0, 4.0])
     # params["LOSS_NEGATIVES"]     = trial.suggest_categorical("LOSS_NEGATIVES",     [24.0, 28.0])
     # params["CLF_SCALE"]          = trial.suggest_categorical("CLF_SCALE",          [0.25, 0.35, 0.45])
-    bce_alpha = trial.suggest_float("BCE_POS_ALPHA", 1.0, 4.0)
+    bce_alpha = trial.suggest_float("BCE_POS_ALPHA", 2.0, 3.5)
     # params["BCE_ANC_ALPHA"] = bce_alpha
     params["BCE_POS_ALPHA"] = bce_alpha
 
     params["LOSS_NEGATIVES_MIN"] = 2.0  # fixed floor of the ramp
-    params["LOSS_NEGATIVES"]     = trial.suggest_int("LOSS_NEGATIVES", 22, 30, step=2)
+    params["LOSS_NEGATIVES"]     = trial.suggest_int("LOSS_NEGATIVES", 24, 28, step=3)
 
     # params["CLF_SCALE"] = trial.suggest_float("CLF_SCALE", 0.20, 0.45)
 
@@ -206,13 +206,13 @@ def objective_triplet(trial):
     # params["SMOOTH_TAU"]  = 3.5#trial.suggest_categorical("SMOOTH_TAU", [3.0, 3.5, 4.0])
     # params["SMOOTH_TYPE"] = "tMSE"
     # params["SMOOTH_SPACE"]= "logit"
-    params["LOSS_TV"] = trial.suggest_float("LOSS_TV", 0.01, 5.00, log=True)
+    params["LOSS_TV"] = trial.suggest_float("LOSS_TV", 0.08, 0.3, log=True)
     # params["SMOOTH_TAU"]  = 3.5   # keep fixed this round
     # params["SMOOTH_TYPE"] = "tMSE"
     # params["SMOOTH_SPACE"]= "logit"
     
     # ---- Gate sparsity (keeps dead/noisy channels closed) ----
-    params["l1_gate"] = trial.suggest_float("l1_gate", 1e-6, 3e-4, log=True)
+    # params["l1_gate"] = trial.suggest_float("l1_gate", 1e-6, 3e-4, log=True)
 
     # =====================  FIXED RIDGE / CONSTANTS  =====================
     params["USE_LR_SCHEDULE"] = True
@@ -249,7 +249,7 @@ def objective_triplet(trial):
         dil_lib = [8,7,6,6,6]           # for kernels 2,3,4,5,6
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_DILATIONS'] = trial.suggest_int('NO_DILATIONS', 2, 6)
-    params['NO_FILTERS'] = trial.suggest_categorical('NO_FILTERS', [24, 32, 48])
+    params['NO_FILTERS'] = 32#trial.suggest_categorical('NO_FILTERS', [24, 32, 48])
     # params['NO_FILTERS'] = 64
 
     # Remove the hardcoded use_freq and derive it from tag instead
@@ -269,7 +269,7 @@ def objective_triplet(trial):
 
     # act_lib = ['ELU', 'GELU'] # 'RELU',
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    par_act = 'RELU'
+    par_act = 'GELU'
 
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'AdamWA'
@@ -294,10 +294,10 @@ def objective_triplet(trial):
     # params['TYPE_ARCH'] += 'Aug'
 
 
-    # params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
-    # if params['USE_StopGrad']:
-    #     print('Using Stop Gradient for Class. Branch')
-    #     params['TYPE_ARCH'] += 'StopGrad'
+    params['USE_StopGrad'] = trial.suggest_categorical('USE_StopGrad', [True, False])
+    if params['USE_StopGrad']:
+        print('Using Stop Gradient for Class. Branch')
+        params['TYPE_ARCH'] += 'StopGrad'
     # params['TYPE_ARCH'] += 'StopGrad'
 
     # # ensure StopGrad ON via architecture token you already use
@@ -336,12 +336,14 @@ def objective_triplet(trial):
     study_dir = f"studies/{param_dir}/study_{trial.number}_{trial.datetime_start.strftime('%Y%m%d_%H%M%S')}"
     os.makedirs(study_dir, exist_ok=True)
 
+    # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
     import importlib.util
     model_dir = f"studies/{param_dir}/base_model"
     spec = importlib.util.spec_from_file_location("model_fn", f"{model_dir}/model_fn.py")
     model_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(model_module)
     build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+    
     # Copy pred.py and model/ directory
     shutil.copy2('./pred.py', f"{study_dir}/pred.py")
     # if os.path.exists(f"{study_dir}/model"):
@@ -401,7 +403,7 @@ def objective_triplet(trial):
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
 
     params.update(dataset_params)   # merge, don't overwrite
-    total_steps     = float(params['steps_per_epoch'] * int(params['NO_EPOCHS']) * 0.8)
+    total_steps     = float(params['steps_per_epoch'] * int(params['NO_EPOCHS']) * 0.5)
     print('Total Steps: ', total_steps)
     params['TOTAL_STEPS'] = total_steps
 
@@ -460,7 +462,7 @@ def objective_triplet(trial):
 
     ]
     val_steps = dataset_params['VAL_STEPS']
-    
+    pdb.set_trace()
     # Train and evaluate
     history = model.fit(
         train_dataset,
@@ -546,7 +548,7 @@ def objective_triplet(trial):
         raise optuna.TrialPruned("Bug signature at selected epoch (prauc/rec≈0, fp≈0, or latency≈1).")
 
     # ---- finally: report to Optuna as 2-objective (prauc, fp/min@0.3)
-    return float(rec07_sel), float(fpmin_sel)
+    return float(prauc_sel), float(fpmin_sel)
 
 
 # tf.config.run_functions_eagerly(True)
@@ -573,7 +575,7 @@ print(val_id)
 # Parameters
 params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
           'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 200,
-          'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 2500,
+          'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 1250,
           'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
           }
 params['mode'] = mode
@@ -1338,7 +1340,7 @@ elif mode == 'predict':
             print('Using numpy')
             sample_length = params['NO_TIMEPOINTS']
             squence_stride = 1
-            # pdb.set_trace()
+        pdb.set_trace()
         train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=squence_stride, batch_size=params["BATCH_SIZE"])
         windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
         if flag_numpy:

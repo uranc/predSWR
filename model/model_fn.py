@@ -1112,37 +1112,37 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         feats_tail_in = tf.stop_gradient(feats_tail_in) if 'StopGrad' in params['TYPE_ARCH'] else feats_tail_in
 
         # 2) Tail (all causal)
-        k_list = [4,8,16]  # later filter by <=K_MAX
-        C = n_filters
+        k_list = [2,4,8,16]  # later filter by <=K_MAX
+        C = 16
         
         branches = [
             tf.keras.layers.SeparableConv1D(
-                filters=C, kernel_size=k, padding='causal',
+                filters=C, kernel_size=k, padding='causal', kernel_initializer=this_kernel_initializer,
                 depth_multiplier=1, use_bias=False, name=f'tail_dw_k{k:02d}'
             )(feats_tail_in) for k in k_list
         ]
         tail = tf.keras.layers.Concatenate(axis=-1, name='tail_ms_concat')(branches)
         tail = tf.keras.layers.LayerNormalization(name='tail_ln')(tail)
 
-        glu = tf.keras.layers.Conv1D(256, 1, use_bias=True, name='tail_glu_in')(tail)
+        glu = tf.keras.layers.Conv1D(64, 1, use_bias=True, kernel_initializer='glorot_uniform',
+                                       name='tail_glu_in')(tail)
         lin, gate = tf.split(glu, 2, axis=-1)
         h_tail = tf.keras.layers.Multiply(name='tail_glu_mul')(
             [lin, tf.keras.layers.Activation('sigmoid', name='tail_glu_sig')(gate)]
         )
 
-        # prior_p = float(params.get('RIPPLE_RATIO', 0.05))
-        prior_logit = 0 #np.log(prior_p / max(1e-6, 1.0 - prior_p)).astype('float32')
-
-        cls_logits_full = tf.keras.layers.Conv1D(
-            1, 1, use_bias=True,
-            bias_initializer=tf.keras.initializers.Constant(prior_logit),
-            name='cls_logits'
-        )(h_tail)
-        cls_prob_full = tf.keras.layers.Activation('sigmoid', name='cls_prob')(cls_logits_full)
 
         # Crop to last T so the classifier head is length T (aligns with emb)
-        cls_logits = cls_logits_full[:, -input_timepoints:, :]
-        cls_prob   = cls_prob_full[:,   -input_timepoints:, :]
+        cls_logits_in = Lambda(lambda tt: tt[:, -(input_timepoints):, :], name='slice_pre_logits')(h_tail)        
+
+        cls_logits = tf.keras.layers.Conv1D(
+            1, 1, use_bias=True,
+            kernel_initializer='glorot_uniform',
+            bias_initializer='zeros',
+            name='cls_logits'
+        )(cls_logits_in)
+        cls_prob = tf.keras.layers.Activation('sigmoid', name='cls_prob')(cls_logits)
+
         
         # ---- projection head for contrastive (L2N ONLY here) ----
         emb = LayerNormalization(name='emb_ln')(feats)
@@ -2934,6 +2934,32 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         den = tf.reduce_sum(m) + tf.keras.backend.epsilon()
         return num / den
     
+    def pair_mask(m_bt):                 # [B,T] -> [B,T-1], mask for adjacent pairs
+        return tf.minimum(m_bt[:,1:], m_bt[:,:-1])
+
+    def log_sigmoid(z):                  # stable log σ(z) == log-prob
+        return -tf.nn.softplus(-z)
+
+    def tv_trunc_logp_masked(p_bt, m_bt, tau=4.0):
+        """Symmetric TV on log-prob, masked, with truncation."""
+        lp = tf.math.log(tf.clip_by_value(p_bt, 1e-6, 1.0))   # [B,T]
+        d  = tf.abs(lp[:,1:] - lp[:,:-1])                     # [B,T-1]
+        d  = tf.minimum(d, tau)
+        pm = pair_mask(m_bt)
+        num = tf.reduce_sum(d * pm)
+        den = tf.reduce_sum(pm) + EPS
+        return num / den
+
+    def tv_up_logp_from_logits_masked(z_bt, m_bt, tau=4.0):
+        """Up-only TV on log-prob from logits (stable at tiny p), masked, truncated."""
+        lp = log_sigmoid(z_bt)                                 # log p(z)
+        d  = lp[:,1:] - lp[:,:-1]                              # ↑ means p going up
+        d  = tf.minimum(tf.nn.relu(d), tau)                    # up-only + trunc
+        pm = pair_mask(m_bt)
+        num = tf.reduce_sum(d * pm)
+        den = tf.reduce_sum(pm) + EPS
+        return num / den
+    
     # --- post-onset mask for A/P (fixes dtype mismatch robustly) ---
     def post_onset_mask(y_bt):
         """
@@ -2999,20 +3025,20 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         s_pn = tf.matmul(zp, zn, transpose_b=True)                # [B,B]
 
         # Circle weights
-        ap = tf.nn.relu(m + s_ap)                                 # [B]
-        an = tf.nn.relu(s_an + m)                                 # [B,B]
-        pn = tf.nn.relu(s_pn + m)                                 # [B,B]
         delta_p = 1.0 - m
+        # weights: hard pos/neg get larger weights
+        alpha_p = tf.nn.relu(delta_p - s_ap)                  # [B]
+        alpha_n_a = tf.nn.relu(s_an - m)                      # [B,B]
+        alpha_n_p = tf.nn.relu(s_pn - m)                      # [B,B]
 
-        # Anchor branch
-        neg_part_a = tf.reduce_logsumexp(gamma * an * (s_an - m), axis=1)      # [B]
-        pos_part_a = gamma * ap * (s_ap - delta_p)                              # [B]
-        L_a = tf.nn.softplus(neg_part_a + pos_part_a)                           # [B]
+        # anchor branch
+        neg_a = tf.reduce_logsumexp(gamma * alpha_n_a * (s_an - m), axis=1)   # [B]
+        pos_a = gamma * alpha_p * (s_ap - delta_p)                            # [B]
+        L_a = tf.nn.softplus(neg_a + pos_a)
 
-        # Positive-as-anchor branch (symmetry)
-        neg_part_p = tf.reduce_logsumexp(gamma * pn * (s_pn - m), axis=1)      # [B]
-        pos_part_p = gamma * ap * (s_ap - delta_p)                              # [B] (same s_ap)
-        L_p = tf.nn.softplus(neg_part_p + pos_part_p)
+        # positive-as-anchor (symmetry)
+        neg_p = tf.reduce_logsumexp(gamma * alpha_n_p * (s_pn - m), axis=1)   # [B]
+        L_p = tf.nn.softplus(neg_p + pos_a)  # pos term reuses s_ap
 
         return tf.reduce_mean(0.5 * (L_a + L_p))
 
@@ -3024,12 +3050,16 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 
         # ---- head indices from model ----
         logit_idx = getattr(model, '_cls_logit_index', 0)
+        prob_idx  = getattr(model, '_cls_prob_index',  1)
         emb_start = getattr(model, '_emb_start_index', 2)
 
         # ---- slice logits / embeddings ----
         a_logit = a_out[..., logit_idx]      # [B,T]
         p_logit = p_out[..., logit_idx]      # [B,T]
         n_logit = n_out[..., logit_idx]      # [B,T]
+        a_prob = a_out[..., prob_idx]        # [B,T]
+        p_prob = p_out[..., prob_idx]        # [B,T]
+        n_prob = n_out[..., prob_idx]        # [B,T]
         a_emb   = a_out[..., emb_start:]     # [B,T,D]
         p_emb   = p_out[..., emb_start:]     # [B,T,D]
         n_emb   = n_out[..., emb_start:]     # [B,T,D]
@@ -3084,12 +3114,22 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 
         # ---- TV smoothing on logits ----
         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
-        tv_term = (tv_on_logits_masked(a_logit, a_mask) +
-           tv_on_logits_masked(p_logit, p_mask) +
-           tv_on_logits_masked(n_logit, n_mask))
-        classification_loss = classification_loss + lam_tv * tv_term
 
-        total = tf.reduce_mean(metric_loss) + 0.5 * tf.reduce_mean(classification_loss)
+        tv_term = lam_tv * (
+            tv_trunc_logp_masked(a_prob, a_mask, tau=4.0) +         # A: smooth after onset
+            tv_trunc_logp_masked(p_prob, p_mask, tau=4.0) +         # P: same
+            2*tv_up_logp_from_logits_masked(n_logit, n_mask, tau=4.0) # N: suppress upward drift
+        )
+
+        classification_loss = classification_loss + tv_term
+
+        # ---- magnitude balancing (same idea as before) ----
+        ratio = tf.stop_gradient(
+            tf.reduce_mean(metric_loss) / (tf.reduce_mean(classification_loss) + 1e-6)
+        )
+        ratio = tf.clip_by_value(ratio, 0.1, 10.0)
+        
+        total = tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
         return total
 
     return loss_fn
