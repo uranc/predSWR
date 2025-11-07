@@ -3163,9 +3163,9 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         loss_fp_weight = tf.cast(neg_min + r_neg * max(0.0, neg_target - neg_min), tf.float32)
 
         # ---- Circle metric loss ----
-        # m     = float(params.get('CIRCLE_m', 0.25))
-        # gamma = float(params.get('CIRCLE_gamma', 32.0))
-        # L_circle_raw = circle_loss(a_emb, p_emb, n_emb, m=m, gamma=gamma)
+        m     = float(params.get('CIRCLE_m', 0.25))
+        gamma = float(params.get('CIRCLE_gamma', 32.0))
+        L_circle_raw = circle_loss(a_emb, p_emb, n_emb, m=m, gamma=gamma)
 
         # L_sup_raw = supcon_ripple(a_emb, p_emb, n_emb, temperature=params.get('SUPCON_T', 0.1))
         metric_loss = w_circle_tgt * L_circle_raw# + w_supcon * L_sup_raw
