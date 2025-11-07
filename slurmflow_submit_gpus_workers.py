@@ -12,7 +12,7 @@ import time, pdb
 # tag = 'tripletOnlyAug2500'
 # tag = 'tripletOnlyAttAug2500'
 # tag = 'tripletOnlyRemake2500'
-tag = 'tripletOnlyPolish1250'
+tag = 'tripletOnlyFinn1250'
 
 # Rest of script remains unchanged
 ijob = -1
@@ -33,17 +33,17 @@ for model_name in range(20):
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
     # subprocess.call(['sbatch', 'gpu_batch_103_worker_titan.sh', tag])
     # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
-    # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
+    # # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
+    # # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
     # pdb.set_trace()
     if ijob < 6:
-        print('skip')
+        # print('skip')
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
         subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
     elif ijob < 14:
-        # subprocess.call(['sbatch', 'gpu_batch_107_worker_power_test.sh', tag])
+        # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
         subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
     elif ijob < 18:
         subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])

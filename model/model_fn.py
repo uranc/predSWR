@@ -2156,36 +2156,108 @@ def mixed_latent_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 
 def class_finetune(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
 
+    def pair_mask(m_bt):                 # [B,T] -> [B,T-1], mask for adjacent pairs
+        return tf.minimum(m_bt[:,1:], m_bt[:,:-1])
+
+    def log_sigmoid(z):                  # stable log σ(z) == log-prob
+        return -tf.nn.softplus(-z)
+
+    def tv_trunc_logp_masked(p_bt, m_bt, tau=4.0):
+        """Symmetric TV on log-prob, masked, with truncation."""
+        lp = tf.math.log(tf.clip_by_value(p_bt, 1e-6, 1.0))   # [B,T]
+        d  = tf.abs(lp[:,1:] - lp[:,:-1])                     # [B,T-1]
+        d  = tf.minimum(d, tau)
+        pm = pair_mask(m_bt)
+        num = tf.reduce_sum(d * pm)
+        den = tf.reduce_sum(pm) + EPS
+        return num / den
+
+    def tv_up_logp_from_logits_masked(z_bt, m_bt, tau=4.0):
+        """Up-only TV on log-prob from logits (stable at tiny p), masked, truncated."""
+        lp = log_sigmoid(z_bt)                                 # log p(z)
+        d  = lp[:,1:] - lp[:,:-1]                              # ↑ means p going up
+        d  = tf.minimum(tf.nn.relu(d), tau)                    # up-only + trunc
+        pm = pair_mask(m_bt)
+        num = tf.reduce_sum(d * pm)
+        den = tf.reduce_sum(pm) + EPS
+        return num / den
+    
+    def bce_logits_weighted(y_bt, logit_bt, w_bt):
+        # per-timepoint BCE
+        bce = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_bt, logits=logit_bt)  # [B,T]
+        w   = tf.cast(w_bt, tf.float32)
+        num = tf.reduce_sum(bce * w)
+        den = tf.reduce_sum(w) + tf.keras.backend.epsilon()
+        return num / den    
+    
+    # --- post-onset mask for A/P (fixes dtype mismatch robustly) ---
+    def post_onset_mask(y_bt):
+        """
+        y_bt: [B,T] float in {0,1}
+        returns: [B,T] float mask in {0,1}
+        - For windows with any positive (>=0.5): mask=1 from onset onward, else 0 before.
+        - For windows with no positive: return all ones (do NOT drop them).
+        """
+        yb = y_bt >= 0.5                        # bool [B,T]
+        # First positive index and has-event flag
+        idx = tf.argmax(tf.cast(yb, tf.int32), axis=1, output_type=tf.int32)   # [B] int32
+        has = tf.reduce_any(yb, axis=1)                                        # [B] bool
+
+        B = tf.shape(y_bt)[0]
+        T = tf.shape(y_bt)[1]
+        rng = tf.range(T, dtype=tf.int32)[None, :]                              # [1,T] int32
+        mpos = tf.cast(rng >= idx[:, None], tf.float32)                         # [B,T] 1 from onset onward
+
+        # no-onset windows -> keep whole window (all ones)
+        return tf.where(has[:, None], mpos, tf.ones((B, T), tf.float32))
+
+
     @tf.function
     def loss_fn(y_true, y_pred):
-        # --- triplet split ---
+        # ---- split triplet on batch axis ----
         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
 
-        # --- heads ---
+        # ---- head indices from model ----
         logit_idx = getattr(model, '_cls_logit_index', 0)
         prob_idx  = getattr(model, '_cls_prob_index',  1)
         emb_start = getattr(model, '_emb_start_index', 2)
 
-        a_logit = a_out[..., logit_idx];  p_logit = p_out[..., logit_idx];  n_logit = n_out[..., logit_idx]  # [B,T]
-        a_prob  = a_out[..., prob_idx];   p_prob  = p_out[..., prob_idx];   n_prob  = n_out[..., prob_idx]   # [B,T]
-        a_emb   = a_out[..., emb_start:]; p_emb   = p_out[..., emb_start:]; n_emb   = n_out[..., emb_start:] # [B,T,D]
+        # ---- slice logits / embeddings ----
+        a_logit = a_out[..., logit_idx]      # [B,T]
+        p_logit = p_out[..., logit_idx]      # [B,T]
+        n_logit = n_out[..., logit_idx]      # [B,T]
+        a_prob = a_out[..., prob_idx]        # [B,T]
+        p_prob = p_out[..., prob_idx]        # [B,T]
+        n_prob = n_out[..., prob_idx]        # [B,T]
+        a_emb   = a_out[..., emb_start:]     # [B,T,D]
+        p_emb   = p_out[..., emb_start:]     # [B,T,D]
+        n_emb   = n_out[..., emb_start:]     # [B,T,D]
 
-        a_lab = tf.cast(a_true[..., 0], tf.float32)
-        p_lab = tf.cast(p_true[..., 0], tf.float32)
-        n_lab = tf.cast(n_true[..., 0], tf.float32)
+        # ---- labels ----
+        a_lab = tf.cast(a_true[..., 0], tf.float32)  # [B,T] (0/1)
+        p_lab = tf.cast(p_true[..., 0], tf.float32)  # [B,T]
+        n_lab = tf.cast(n_true[..., 0], tf.float32)  # [B,T] (all zeros by design)
 
+        # ---- ramps ----
+        it = tf.cast(model.optimizer.iterations, tf.float32)
+        total_steps = float(params.get('TOTAL_STEPS', 100000))
 
-        # --- BCE (separate A/P/N weights) ---
-        def bce_logits(y, z):
-            return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
+        # ---- Classification BCE with post-onset masking ----
+        a_mask = post_onset_mask(a_lab)                 # [B,T]
+        p_mask = post_onset_mask(p_lab)                 # [B,T]
+        n_mask = tf.ones_like(n_lab, tf.float32)        # keep all negatives
 
-        w_a = float(params.get('BCE_ANC_ALPHA', 2.0))   # anchor
-        w_p = float(params.get('BCE_POS_ALPHA', 2.0))   # positive
-        cls_a = bce_logits(a_lab, a_logit)
-        cls_p = bce_logits(p_lab, p_logit)
-        cls_n = bce_logits(n_lab, n_logit)
-        classification_loss = cls_a + 2.0 * cls_p + 26.0 * cls_n
+        cls_a = bce_logits_weighted(a_lab, a_logit, a_mask)
+        cls_p = bce_logits_weighted(p_lab, p_logit, p_mask)
+        cls_n = bce_logits_weighted(n_lab, n_logit, n_mask)
+
+        tv_term = 0.08 * (
+                    tv_trunc_logp_masked(a_prob, a_mask, tau=4.0) +         # A: smooth after onset
+                    tv_trunc_logp_masked(p_prob, p_mask, tau=4.0) +         # P: same
+                    2*tv_up_logp_from_logits_masked(n_logit, n_mask, tau=4.0) # N: suppress upward drift
+                )
+        classification_loss = cls_a + 2.0 * cls_p + 70.0 * cls_n + tv_term
         return tf.reduce_mean(classification_loss)
 
     return loss_fn
@@ -3091,12 +3163,12 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         loss_fp_weight = tf.cast(neg_min + r_neg * max(0.0, neg_target - neg_min), tf.float32)
 
         # ---- Circle metric loss ----
-        m     = float(params.get('CIRCLE_m', 0.25))
-        gamma = float(params.get('CIRCLE_gamma', 32.0))
-        L_circle_raw = circle_loss(a_emb, p_emb, n_emb, m=m, gamma=gamma)
+        # m     = float(params.get('CIRCLE_m', 0.25))
+        # gamma = float(params.get('CIRCLE_gamma', 32.0))
+        # L_circle_raw = circle_loss(a_emb, p_emb, n_emb, m=m, gamma=gamma)
 
-        L_sup_raw = supcon_ripple(a_emb, p_emb, n_emb, temperature=params.get('SUPCON_T', 0.1))
-        metric_loss = w_circle_tgt * L_circle_raw + w_supcon * L_sup_raw
+        # L_sup_raw = supcon_ripple(a_emb, p_emb, n_emb, temperature=params.get('SUPCON_T', 0.1))
+        metric_loss = w_circle_tgt * L_circle_raw# + w_supcon * L_sup_raw
 
 
         # ---- Classification BCE with post-onset masking ----
@@ -3116,8 +3188,8 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
 
         tv_term = lam_tv * (
-            tv_trunc_logp_masked(a_prob, a_mask, tau=4.0) +         # A: smooth after onset
-            tv_trunc_logp_masked(p_prob, p_mask, tau=4.0) +         # P: same
+            tv_trunc_logp_masked(a_prob, n_mask, tau=4.0) +         # A: smooth after onset
+            tv_trunc_logp_masked(p_prob, n_mask, tau=4.0) +         # P: same
             2*tv_up_logp_from_logits_masked(n_logit, n_mask, tau=4.0) # N: suppress upward drift
         )
 
