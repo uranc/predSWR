@@ -85,7 +85,7 @@ def train_pred(model,
                n_epoch,
                save_dir,
                steps_per_epoch=None,
-               checkpoint_metric='val_max_f1_metric_horizon',
+               checkpoint_metric='val_sample_pr_auc',
                dataset_params=None):
     """Train the model on `num_steps` batches
     Args:
@@ -109,7 +109,7 @@ def train_pred(model,
                                     write_images=True,
                                     update_freq='epoch'))
 
-    callbacks.append(cb.ModelCheckpoint(save_dir + '/last.weights.h5',
+    callbacks.append(cb.ModelCheckpoint(save_dir + '/event.weights.h5',
                                         monitor=checkpoint_metric,
                                         verbose=1,
                                         save_best_only=True,
@@ -126,6 +126,7 @@ def train_pred(model,
                         epochs=n_epoch,
                         steps_per_epoch=steps_per_epoch,
                         validation_data=valid_inputs,
+                        validation_steps=steps_per_epoch,
                         callbacks=callbacks,
                         verbose=1)
     else:

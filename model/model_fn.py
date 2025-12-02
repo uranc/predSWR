@@ -1101,40 +1101,40 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         #                 bias_initializer='zeros',
         #                 activation=None, name='cls_logits')(cls_in)
         # cls_prob = Activation('sigmoid', name='cls_prob')(cls_logits)
-        T = int(input_timepoints) # 64
-        print('TCN input timepoints:', T)
-        R = tcn_op.receptive_field # 43
-        print('TCN receptive field:', R)
-        K_MAX = max(1, T - R + 1)  # must be <=22 with T=64,R=43
+        # T = int(input_timepoints) # 64
+        # print('TCN input timepoints:', T)
+        # R = tcn_op.receptive_field # 43
+        # print('TCN receptive field:', R)
+        # K_MAX = max(1, T - R + 1)  # must be <=22 with T=64,R=43
 
         # 
-        feats_tail_in = Lambda(lambda tt: tt[:, -(input_timepoints+K_MAX):, :], name='slice_tail_T_plus_K')(nets)        
-        feats_tail_in = tf.stop_gradient(feats_tail_in) if 'StopGrad' in params['TYPE_ARCH'] else feats_tail_in
+        # feats_tail_in = Lambda(lambda tt: tt[:, -(input_timepoints+K_MAX):, :], name='slice_tail_T_plus_K')(nets)        
+        # feats_tail_in = tf.stop_gradient(feats_tail_in) if 'StopGrad' in params['TYPE_ARCH'] else feats_tail_in
 
-        # 2) Tail (all causal)
-        k_list = [2,4,8,16]  # later filter by <=K_MAX
-        C = 16
+        # # 2) Tail (all causal)
+        # k_list = [2,4,8,16]  # later filter by <=K_MAX
+        # C = 16
         
-        branches = [
-            tf.keras.layers.SeparableConv1D(
-                filters=C, kernel_size=k, padding='causal', kernel_initializer=this_kernel_initializer,
-                depth_multiplier=1, use_bias=False, name=f'tail_dw_k{k:02d}'
-            )(feats_tail_in) for k in k_list
-        ]
-        tail = tf.keras.layers.Concatenate(axis=-1, name='tail_ms_concat')(branches)
-        tail = tf.keras.layers.LayerNormalization(name='tail_ln')(tail)
+        # branches = [
+        #     tf.keras.layers.SeparableConv1D(
+        #         filters=C, kernel_size=k, padding='causal', kernel_initializer=this_kernel_initializer,
+        #         depth_multiplier=1, use_bias=False, name=f'tail_dw_k{k:02d}'
+        #     )(feats_tail_in) for k in k_list
+        # ]
+        # tail = tf.keras.layers.Concatenate(axis=-1, name='tail_ms_concat')(branches)
+        # tail = tf.keras.layers.LayerNormalization(name='tail_ln')(tail)
 
-        glu = tf.keras.layers.Conv1D(64, 1, use_bias=True, kernel_initializer='glorot_uniform',
-                                       name='tail_glu_in')(tail)
-        lin, gate = tf.split(glu, 2, axis=-1)
-        h_tail = tf.keras.layers.Multiply(name='tail_glu_mul')(
-            [lin, tf.keras.layers.Activation('sigmoid', name='tail_glu_sig')(gate)]
-        )
+        # glu = tf.keras.layers.Conv1D(64, 1, use_bias=True, kernel_initializer='glorot_uniform',
+        #                                name='tail_glu_in')(tail)
+        # lin, gate = tf.split(glu, 2, axis=-1)
+        # h_tail = tf.keras.layers.Multiply(name='tail_glu_mul')(
+        #     [lin, tf.keras.layers.Activation('sigmoid', name='tail_glu_sig')(gate)]
+        # )
 
 
-        # Crop to last T so the classifier head is length T (aligns with emb)
-        cls_logits_in = Lambda(lambda tt: tt[:, -(input_timepoints):, :], name='slice_pre_logits')(h_tail)        
-
+        # # Crop to last T so the classifier head is length T (aligns with emb)
+        # cls_logits_in = Lambda(lambda tt: tt[:, -(input_timepoints):, :], name='slice_pre_logits')(h_tail)        
+        cls_logits_in = feats
         cls_logits = tf.keras.layers.Conv1D(
             1, 1, use_bias=True,
             kernel_initializer='glorot_uniform',
@@ -1146,7 +1146,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         
         # ---- projection head for contrastive (L2N ONLY here) ----
         emb = LayerNormalization(name='emb_ln')(feats)
-        emb = Dense(n_filters * 2, activation='gelu',
+        emb = Dense(n_filters * 2, activation=this_activation,
                     kernel_initializer=this_kernel_initializer, name='emb_p1')(emb)
         emb = Dense(n_filters, activation=None,
                     kernel_initializer=this_kernel_initializer, name='emb_p2')(emb)
@@ -1307,11 +1307,13 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
                 mode="consec", consec_k=3,
                 model=model
             ),                          # <-- new (name default 'fp_per_min')
-        ]         
+        ]        
         # Create loss function and compile model
         # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         # loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         loss_fn = class_finetune(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        model.load_weights(params['WEIGHT_FILE'], by_name=True)
+        print('Loaded weights for fine-tuning from', params['WEIGHT_FILE'])
         model.compile(
             optimizer=this_optimizer,
             loss=loss_fn,
@@ -1338,6 +1340,8 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         elif params['mode']=='predict':
             # all_outputs = Lambda(lambda tt: tt[:, -1:, 0], name='Last_Output')(anchor_output)
             all_outputs = Lambda(lambda tt: tt[:, -1:, tcn_backbone._cls_prob_index], name='Last_Output')(anchor_output)
+        else:
+            all_outputs = Lambda(lambda tt: tt[:, -1:, tcn_backbone._cls_prob_index], name='Last_Output')(anchor_output)
 
 
         # all_outputs = Concatenate(axis=0)([anchor_output, positive_output, negative_output])
@@ -1363,6 +1367,504 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
     if params['WEIGHT_FILE']:
         print('load model')
         model.load_weights(params['WEIGHT_FILE'])#, skip_mismatch=False, by_name=False)
+
+    return model
+
+
+def build_DBI_TCN_TripletOnlyTranspose(input_timepoints, input_chans=8, params=None):
+    from tensorflow.keras.layers import Permute
+    # logit or sigmoid
+    flag_sigmoid = 'SigmoidFoc' in params['TYPE_LOSS']
+    print('Using Sigmoid:', flag_sigmoid)
+    # # LR schedure 
+    # def make_lr_schedule(base_lr, total_steps, warmup_ratio=0.05, min_lr_ratio=0.05):
+    #     warmup_steps = int(total_steps * warmup_ratio)
+    #     min_lr = base_lr * min_lr_ratio
+
+    #     def lr_fn(step):
+    #         step = tf.cast(step, tf.float32)
+    #         # linear warmup
+    #         lr = base_lr * step / tf.maximum(1.0, tf.cast(warmup_steps, tf.float32))
+    #         # cosine decay after warmup
+    #         progress = (step - warmup_steps) / tf.maximum(1.0, float(total_steps - warmup_steps))
+    #         progress = tf.clip_by_value(progress, 0.0, 1.0)
+    #         cosine = 0.5 * (1 + tf.cos(tf.constant(3.14159265359) * progress))
+    #         lr = tf.where(step < warmup_steps, lr, min_lr + (base_lr - min_lr) * cosine)
+    #         return lr
+
+    #     return tf.keras.optimizers.schedules.LearningRateSchedule(lr_fn)    
+
+    # params
+    use_batch_norm = params['TYPE_REG'].find('BN')>-1
+    use_weight_norm = params['TYPE_REG'].find('WN')>-1
+    use_layer_norm = params['TYPE_REG'].find('LN')>-1
+    use_group_norm = params['TYPE_REG'].find('GN')>-1
+
+    # this_activation = 'relu'
+    if params['TYPE_REG'].find('RELU')>-1:
+        this_activation = 'relu'
+    elif params['TYPE_REG'].find('GELU')>-1:
+        this_activation = gelu
+    elif params['TYPE_REG'].find('ELU')>-1:
+        this_activation = ELU(alpha=1)
+    else:
+        this_activation = 'linear'
+
+    if params['TYPE_REG'].find('LOne')>-1:
+        reg_weight = params.get('reg_weight', 1e-4)
+        this_regularizer = tf.keras.regularizers.L1(reg_weight)
+    elif params['TYPE_REG'].find('LTwo')>-1:
+        reg_weight = params.get('reg_weight', 1e-4)
+        this_regularizer = tf.keras.regularizers.L2(reg_weight)
+    else:
+        this_regularizer = None
+
+    # Force channels_first for TensorRT optimization
+    DATA_FORMAT = 'channels_first'
+    CHANNEL_AXIS = 1
+    TIME_AXIS = 2
+    
+    # optimizer
+    if params['TYPE_REG'].find('AdamW')>-1:
+
+        # --- derive total steps from dataset config ---
+        steps_per_epoch = int(params.get('ESTIMATED_STEPS_PER_EPOCH', params.get('steps_per_epoch', 1000)))
+        total_steps = float(params.get('TOTAL_STEPS', 100000))
+
+        lr_schedule = WarmStableCool(
+            base_lr=params['LEARNING_RATE'],
+            total_steps=total_steps,
+            warmup_ratio=params.get('LR_WARMUP_RATIO', 0.04),
+            cool_ratio=params.get('LR_COOL_RATIO', 0.60),
+            final_scale=params.get('LR_FINAL_SCALE', 0.06),
+        )
+        this_optimizer = tf.keras.optimizers.AdamW(
+            learning_rate=(lr_schedule if params.get('USE_LR_SCHEDULE', True) else params['LEARNING_RATE']),
+            weight_decay=params.get('WEIGHT_DECAY', 1e-4),
+            clipnorm=float(params.get('CLIP_NORM', 1.5)),
+            epsilon=1e-8
+        )
+               
+    elif params['TYPE_REG'].find('Adam')>-1:
+        this_optimizer = tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE'])
+    elif params['TYPE_REG'].find('SGD')>-1:
+        this_optimizer = tf.keras.optimizers.SGD(learning_rate=params['LEARNING_RATE'], momentum=0.9)
+
+    if params['TYPE_REG'].find('Glo')>-1:
+        print('Using Glorot')
+        this_kernel_initializer = 'glorot_uniform'
+    elif params['TYPE_REG'].find('He')>-1:
+        print('Using He')
+        this_kernel_initializer = 'he_normal'
+
+    model_type = params['TYPE_MODEL']
+    n_filters = params['NO_FILTERS']
+    n_kernels = params['NO_KERNELS']
+    n_dilations = params['NO_DILATIONS']
+
+    if params['TYPE_ARCH'].find('Drop')>-1:
+        r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
+        print('Using Dropout')
+        print(r_drop)
+    else:
+        r_drop = 0.0
+
+    hori_shift = 0
+    if params['TYPE_ARCH'].find('Only')>-1:
+        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Only')+4:params['TYPE_ARCH'].find('Only')+6])/1000*params['SRATE'])
+        print('Using Horizon Timesteps:', hori_shift)
+    is_classification_only = True
+
+    print('Using Loss Weight:', params['LOSS_WEIGHT'])
+    loss_weight = params['LOSS_WEIGHT']
+         
+    # Function to create the TCN backbone for processing LFP signals
+    def create_tcn_model(input_timepoints):
+
+        signal_input = Input(shape=(input_chans, None))
+        # Apply CSD if needed
+        if params['TYPE_ARCH'].find('CSD')>-1:
+            csd_inputs = CSDLayer()(signal_input)
+            inputs_nets = Concatenate(axis=-1)([signal_input, csd_inputs])
+        else:
+            inputs_nets = signal_input
+
+        if params['TYPE_ARCH'].find('Att')>-1:
+            # Multi-scale causal, channel-agnostic input layer (learns SNR-like gates + patterns)
+            groups = 2 if input_chans in (16, 24, 32) else 1   # e.g., (low,high) pairs per sensor
+            inputs_nets = MultiScaleCausalGate(
+                scales=((7,1),(7,2),(11,4)),                   # RFs: 7, 13, 41 (all ≤ 43)
+                groups=groups,
+                gate_bias=(-3.0),  # tighter in pretrain
+                # gate_bias=(-3.0 if params['mode']=="train" else -2.0),  # tighter in pretrain
+                l1_gate=params.get("l1_gate", 1e-5), 
+                use_residual_mix=True,
+                name="ms_causal_gate"
+            )(inputs_nets)            
+
+        # Apply TCN
+        if model_type=='Base':
+            print('Using Base TCN')
+            from model.custom_tcn import TCN
+            tcn_op = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        kernel_initializer=this_kernel_initializer,
+                        kernel_regularizer=this_regularizer,
+                        data_format=DATA_FORMAT,
+                        use_batch_norm=use_batch_norm,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+            print(tcn_op.receptive_field)
+            nets = tcn_op(inputs_nets)  # [B, T, C_tcn]
+            feats = Lambda(lambda tt: tt[:, :, -input_timepoints:], name='slice_last_T')(nets)
+        elif model_type=='SingleCh':
+            print('Using Single Channel TCN')
+            from tcn import TCN
+            tcn_op = TCN(nb_filters=n_filters,
+                        kernel_size=n_kernels,
+                        nb_stacks=1,
+                        dilations=[2 ** i for i in range(n_dilations)],
+                        padding='causal',
+                        use_skip_connections=True,
+                        dropout_rate=r_drop,
+                        return_sequences=True,
+                        activation=this_activation,
+                        data_format=DATA_FORMAT,
+                        kernel_initializer=this_kernel_initializer,
+                        use_batch_norm=use_batch_norm,
+                        use_layer_norm=use_layer_norm,
+                        use_weight_norm=use_weight_norm,
+                        go_backwards=False,
+                        return_state=False)
+            single_outputs = []
+            for c in range(input_chans):
+                ch_slice = Lambda(lambda x: x[:, :, c:c+1])(signal_input)
+                single_outputs.append(tcn_op(ch_slice))
+            nets = Concatenate(axis=-1)(single_outputs)
+            feats = Lambda(lambda tt: tt[:, :, -input_timepoints:], name='slice_last_T')(nets)
+
+        # if params['TYPE_ARCH'].find('Att')>-1:
+        #     y     = LayerNormalization(name='ln_mhsa_post')(feats)
+        #     y     = CausalMHA1D(num_heads=4, key_dim=4, use_rope=True, alibi_slope=0.15,name='mhsa_post')(y)
+        #     alpha = tf.Variable(0.0, trainable=True, name='res_scaler')  # start at 0
+        #     scaled_y = Multiply(name='scaled_y')(tf.tanh(alpha), y)
+        #     feats = Add(name='res_mhsa_post')([feats, scaled_y])
+        #     y     = LayerNormalization(name='ln_local')(feats)
+        #     y = tf.keras.layers.SeparableConv1D(
+        #             filters=feats.shape[-1], kernel_size=7, padding='causal',
+        #             depth_multiplier=1, pointwise_initializer='he_normal',
+        #             name='sep_dwconv7_causal')(y)
+        #     y     = Activation('gelu', name='gelu_local')(y)
+        #     tgate = Conv1D(1, 1, activation='sigmoid',
+        #                 kernel_initializer='glorot_uniform',
+        #                 bias_initializer=tf.keras.initializers.Constant(-2.0),
+        #                 name='time_gate')(y)
+        #     feats = Multiply(name='apply_time_gate')([feats, tgate])
+
+
+        # ---- Classification head ----
+        # h = tf.stop_gradient(feats) if 'StopGrad' in params['TYPE_ARCH'] else feats
+        # h = LayerNormalization(name='emb_class')(h)
+        # # h = LayerNormalization()(h)
+        # h = Conv1D(64, 
+        #             1, 
+        #             kernel_initializer='glorot_uniform', 
+        #             kernel_regularizer=tf.keras.regularizers.L1(1e-4),
+        #             name="cls_pw1")(h)
+        # h = Activation('gelu')(h)
+        # # cls_in = Dropout(0.1)(h)
+        # cls_in = h
+        # cls_logits = Conv1D(1, 1,
+        #                 kernel_initializer='glorot_uniform',
+        #                 kernel_regularizer=tf.keras.regularizers.L1(1e-4),
+        #                 bias_initializer='zeros',
+        #                 activation=None, name='cls_logits')(cls_in)
+        # cls_prob = Activation('sigmoid', name='cls_prob')(cls_logits)
+        # T = int(input_timepoints) # 64
+        # print('TCN input timepoints:', T)
+        # R = tcn_op.receptive_field # 43
+        # print('TCN receptive field:', R)
+        # K_MAX = max(1, T - R + 1)  # must be <=22 with T=64,R=43
+
+        # 
+        # feats_tail_in = Lambda(lambda tt: tt[:, -(input_timepoints+K_MAX):, :], name='slice_tail_T_plus_K')(nets)        
+        # feats_tail_in = tf.stop_gradient(feats_tail_in) if 'StopGrad' in params['TYPE_ARCH'] else feats_tail_in
+
+        # # 2) Tail (all causal)
+        # k_list = [2,4,8,16]  # later filter by <=K_MAX
+        # C = 16
+        
+        # branches = [
+        #     tf.keras.layers.SeparableConv1D(
+        #         filters=C, kernel_size=k, padding='causal', kernel_initializer=this_kernel_initializer,
+        #         depth_multiplier=1, use_bias=False, name=f'tail_dw_k{k:02d}'
+        #     )(feats_tail_in) for k in k_list
+        # ]
+        # tail = tf.keras.layers.Concatenate(axis=-1, name='tail_ms_concat')(branches)
+        # tail = tf.keras.layers.LayerNormalization(name='tail_ln')(tail)
+
+        # glu = tf.keras.layers.Conv1D(64, 1, use_bias=True, kernel_initializer='glorot_uniform',
+        #                                name='tail_glu_in')(tail)
+        # lin, gate = tf.split(glu, 2, axis=-1)
+        # h_tail = tf.keras.layers.Multiply(name='tail_glu_mul')(
+        #     [lin, tf.keras.layers.Activation('sigmoid', name='tail_glu_sig')(gate)]
+        # )
+
+
+        # # Crop to last T so the classifier head is length T (aligns with emb)
+        # cls_logits_in = Lambda(lambda tt: tt[:, -(input_timepoints):, :], name='slice_pre_logits')(h_tail)        
+        cls_logits_in = feats
+        cls_logits = tf.keras.layers.Conv1D(
+            1, 1, use_bias=True,
+            kernel_initializer='glorot_uniform',
+            bias_initializer='zeros',
+            name='cls_logits',
+            data_format=DATA_FORMAT,
+        )(cls_logits_in)
+        cls_prob = tf.keras.layers.Activation('sigmoid', name='cls_prob')(cls_logits)
+
+        
+        # ---- projection head for contrastive (L2N ONLY here) ----
+        emb_in = Permute((2, 1), name='permute_for_dense')(feats) # [B, T, C]
+        
+        emb = LayerNormalization(axis=-1, name='emb_ln')(emb_in)
+        emb = Dense(n_filters * 2, activation=this_activation,
+                    kernel_initializer=this_kernel_initializer, name='emb_p1')(emb)
+        emb = Dense(n_filters, activation=None,
+                    kernel_initializer=this_kernel_initializer, name='emb_p2')(emb)
+        
+        # L2 Normalize along embedding dimension
+        emb = Lambda(lambda z: tf.math.l2_normalize(z, axis=-1), name='emb_l2n')(emb)
+        
+        # Permute back to [B, Channels, Time] to match cls_logits
+        emb = Permute((2, 1), name='permute_back')(emb)
+        
+        # ---- outputs (prob first, then emb) ----
+        out = Concatenate(axis=CHANNEL_AXIS)([cls_logits, cls_prob, emb])
+        tcn_mod = Model(inputs=signal_input, outputs=out, name='tcn_triplet')
+
+        tcn_mod._cls_logit_index = 0   # channel of logits
+        tcn_mod._cls_prob_index = 1   # channel of probabilities
+        tcn_mod._emb_start_index = 2   # start of embedding slice
+        # tcn_mod.trainable = True
+        tcn_mod._is_classification_only = True
+
+        return tcn_mod
+
+    # Create the shared TCN model for triplet learning
+    tcn_backbone = create_tcn_model(input_timepoints)
+
+    # For training with triplet loss
+    if params['mode'] == 'train':
+        # Define inputs for anchor, positive, and negative samples
+        # anchor_input = Input(shape=(None, input_chans), name='anchor')
+        # positive_input = Input(shape=(None, input_chans), name='positive')
+        # negative_input = Input(shape=(None, input_chans), name='negative')
+        all_inputs = Input(shape=(None, input_chans), name='all_inputs')
+
+
+        batch_size = tf.shape(all_inputs)[0] // 3
+
+        # Split tensors using tf.split instead of unpacking
+        anchor_input, positive_input, negative_input = tf.split(all_inputs, 3, axis=0)
+        # anchor_true, positive_true, negative_true = tf.split(y_true, 3, axis=0)
+
+        # Process inputs through shared TCN model
+        anchor_output = tcn_backbone(anchor_input)
+        positive_output = tcn_backbone(positive_input)
+        negative_output = tcn_backbone(negative_input)
+
+        all_outputs = Concatenate(axis=0)([anchor_output, positive_output, negative_output])
+        # Create the training model with dictionary inputs and outputs
+        model = Model(
+            inputs = all_inputs,
+            outputs = all_outputs
+        )
+
+        # Metrics - only applied to anchor output for metric tracking
+        model._is_classification_only = True
+ 
+        # f1_metric = MaxF1MetricHorizon(model=model)
+        # # r1_metric = RobustF1Metric(model=model)
+        # # latency_metric = LatencyMetric(model=model)
+        # event_f1_metric = EventAwareF1(model=model)
+        # fp_event_metric = EventFalsePositiveRateMetric(model=model)
+        # metrics = [
+        #     EventPRAUC(mode="consec", consec_k=5, model=model),
+        #     MaxF1MetricHorizon(model=model),
+        #     # LatencyWeightedF1Metric(tau=16, mode="consec", consec_k=3, model=model),
+        #     FPperMinMetric(thresh=0.5, win_sec=64/2500, mode="consec", consec_k=3, model=model),
+        # ]       
+        # metrics = [
+        #     SamplePRAUC(model=model),             # sample-level PR-AUC
+        #     MaxF1MetricHorizon(model=model),      # your sample-level Max-F1
+        #     FPperMinMetric(thresh=0.5, win_sec=64/2500,
+        #                 mode="consec", consec_k=3, model=model),  # keep this for realism
+        # ] 
+        # metrics = [
+        #     SamplePRAUC(model=model),                  # timepoint PR-AUC
+        #     SampleMaxMCC(model=model),                 # timepoint max MCC
+        #     SampleMaxF1(model=model),                  # timepoint max F1
+        #     LatencyScore(thresholds=tf.linspace(0.5, 0.99, 6), min_run = 5, tau=16.0, model=model),    
+        #     FPperMinMetric(
+        #         thresh=0.3,
+        #         win_sec=params['NO_STRIDES']/params['SRATE'],  # <- stride/fs (NOT window)
+        #         mode="consec", consec_k=3,
+        #         model=model
+        #     ),
+        # ]      
+        metrics = [
+            SamplePRAUC(model=model),
+            SampleMaxMCC(model=model),
+            SampleMaxF1(model=model),
+            LatencyScore(thresholds=tf.linspace(0.5, 0.99, 6), min_run=5, tau=16.0, model=model),
+            RecallAt0p7(model=model),  # <-- new
+            FPperMinAt0p3(
+                win_sec=params['NO_STRIDES']/params['SRATE'],
+                mode="consec", consec_k=3,
+                model=model
+            ),                          # <-- new (name default 'fp_per_min')
+        ]          
+        # metrics = [
+        #     EventPRAUC(consec_k=5, model=model),          # consecutive rule
+        #     LatencyWeightedF1Metric(tau=16,                # τ in samples
+        #                             consec_k=5,
+        #                             model=model),
+        #     FPperMinMetric(thresh=0.5,           # your operating τ
+        #                 win_sec=64/2500,
+        #                 consec_k=3,           # or majority_ratio=0.5
+        #                 model=model),            
+        # ]
+        # Create loss function and compile model
+        # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        # loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        loss_fn = mixed_circle_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+
+        model.compile(
+            optimizer=this_optimizer,
+            loss=loss_fn,
+            metrics=metrics
+        )
+
+    elif params['mode'] == 'fine_tune':
+        
+        all_inputs = Input(shape=(None, input_chans), name='all_inputs')
+
+        batch_size = tf.shape(all_inputs)[0] // 3
+
+        # Split tensors using tf.split instead of unpacking
+        anchor_input, positive_input, negative_input = tf.split(all_inputs, 3, axis=0)
+        # anchor_true, positive_true, negative_true = tf.split(y_true, 3, axis=0)
+
+        # Process inputs through shared TCN model
+        anchor_output = tcn_backbone(anchor_input)
+        positive_output = tcn_backbone(positive_input)
+        negative_output = tcn_backbone(negative_input)
+
+        all_outputs = Concatenate(axis=0)([anchor_output, positive_output, negative_output])
+        # Create the training model with dictionary inputs and outputs
+        model = Model(
+            inputs = all_inputs,
+            outputs = all_outputs
+        )
+
+        # Metrics - only applied to anchor output for metric tracking
+        model._is_classification_only = True
+        # metrics = [
+        #     EventPRAUC(model=model),
+        #     LatencyWeightedF1Metric(tau=32, model=model),
+        #     TPRatFixedFPMetric(1., params['NO_TIMEPOINTS']/params['SRATE'],  # adjust to your sampling rate
+        #                     model=model),
+        # ]
+        # metrics = [
+        #     EventPRAUC(mode="consec", consec_k=5, model=model),
+        #     MaxF1MetricHorizon(model=model),
+        #     # LatencyWeightedF1Metric(tau=16, mode="consec", consec_k=3, model=model),
+        #     FPperMinMetric(thresh=0.5, win_sec=64/2500, mode="consec", consec_k=3, model=model),
+        # ]  
+        metrics = [
+            SamplePRAUC(model=model),
+            SampleMaxMCC(model=model),
+            SampleMaxF1(model=model),
+            LatencyScore(thresholds=tf.linspace(0.5, 0.99, 6), min_run=5, tau=16.0, model=model),
+            RecallAt0p7(model=model),  # <-- new
+            FPperMinAt0p3(
+                win_sec=params['NO_STRIDES']/params['SRATE'],
+                mode="consec", consec_k=3,
+                model=model
+            ),                          # <-- new (name default 'fp_per_min')
+        ]         
+        # Create loss function and compile model
+        # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        # loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        loss_fn = class_finetune(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        model.load_weights(params['WEIGHT_FILE'], by_name=True)
+        print('Loaded weights for fine-tuning from', params['WEIGHT_FILE'])        
+        model.compile(
+            optimizer=this_optimizer,
+            loss=loss_fn,
+            metrics=metrics
+        ) 
+    else:
+        all_inputs = Input(shape=(input_chans, None), name='all_inputs')
+
+
+        batch_size = tf.shape(all_inputs)[0] // 3
+
+        # Split tensors using tf.split instead of unpacking
+        # anchor_input, positive_input, negative_input = tf.split(all_inputs, 3, axis=0)
+        # anchor_true, positive_true, negative_true = tf.split(y_true, 3, axis=0)
+        # anchor_input = all_inputs
+        # Process inputs through shared TCN model
+        anchor_output = tcn_backbone(all_inputs)
+        # positive_output = tcn_backbone(positive_input)
+        # negative_output = tcn_backbone(negative_input)
+
+
+        if params['mode']=='embedding':
+            all_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(anchor_output)
+        elif params['mode']=='predict':
+            # all_outputs = Lambda(lambda tt: tt[:, -1:, 0], name='Last_Output')(anchor_output)
+            # all_outputs = Lambda(lambda tt: tt[:, -1:, tcn_backbone._cls_prob_index], name='Last_Output')(anchor_output)
+            idx = tcn_backbone._cls_prob_index
+            all_outputs = Lambda(lambda tt: tt[:, idx:idx+1, -1:], name='Last_Output')(anchor_output)
+        else:
+            idx = tcn_backbone._cls_prob_index
+            all_outputs = Lambda(lambda tt: tt[:, idx:idx+1, -1:], name='Last_Output')(anchor_output)
+
+
+        # all_outputs = Concatenate(axis=0)([anchor_output, positive_output, negative_output])
+        # Create the training model with dictionary inputs and outputs
+        model = Model(
+            inputs = all_inputs,
+            outputs = all_outputs
+        )
+
+        # Metrics - only applied to anchor output for metric tracking
+        model._is_classification_only = True
+
+        # f1_metric = MaxF1MetricHorizon(model=model)
+        # r1_metric = RobustF1Metric(model=model)
+        # latency_metric = LatencyMetric(model=model)
+
+        model.compile(
+            optimizer=this_optimizer,
+            loss='mse',
+            # metrics=[f1_metric, r1_metric, latency_metric]
+        )
+
+    # if params['WEIGHT_FILE']:
+    #     print('load model')
+    #     model.load_weights(params['WEIGHT_FILE'])#, skip_mismatch=False, by_name=False)
 
     return model
 
@@ -2190,6 +2692,25 @@ def class_finetune(horizon=0, loss_weight=1, params=None, model=None, this_op=No
         den = tf.reduce_sum(w) + tf.keras.backend.epsilon()
         return num / den    
     
+    def focal_logits_weighted(y_bt, logit_bt, w_bt, alpha=0.25, gamma=2.0):
+        # y_bt, logit_bt, w_bt: [B, T]
+        focal = tf.keras.losses.BinaryFocalCrossentropy(
+            alpha=alpha, gamma=gamma, from_logits=True,
+            reduction=tf.keras.losses.Reduction.NONE, axis=-1
+        )
+        # Add a singleton channel so Keras doesn't try to squeeze weird dims
+        y = tf.cast(y_bt, tf.float32)[..., None]      # [B, T, 1]
+        z = tf.cast(logit_bt, tf.float32)[..., None]  # [B, T, 1]
+        # Per-element loss -> [B, T]
+        loss_bt = focal(y, z)
+        w = tf.cast(w_bt, tf.float32)                 # [B, T]
+        
+        pdb.set_trace()
+        # Safe masked mean
+        num = tf.reduce_sum(loss_bt * w)
+        den = tf.reduce_sum(w) + tf.keras.backend.epsilon()
+        return num / den
+    
     # --- post-onset mask for A/P (fixes dtype mismatch robustly) ---
     def post_onset_mask(y_bt):
         """
@@ -2248,16 +2769,30 @@ def class_finetune(horizon=0, loss_weight=1, params=None, model=None, this_op=No
         p_mask = post_onset_mask(p_lab)                 # [B,T]
         n_mask = tf.ones_like(n_lab, tf.float32)        # keep all negatives
 
-        cls_a = bce_logits_weighted(a_lab, a_logit, a_mask)
-        cls_p = bce_logits_weighted(p_lab, p_logit, p_mask)
-        cls_n = bce_logits_weighted(n_lab, n_logit, n_mask)
+        # cls_a = bce_logits_weighted(a_lab, a_logit, a_mask)
+        # cls_p = bce_logits_weighted(p_lab, p_logit, p_mask)
+        # cls_n = bce_logits_weighted(n_lab, n_logit, n_mask)
 
-        tv_term = 0.08 * (
-                    tv_trunc_logp_masked(a_prob, a_mask, tau=4.0) +         # A: smooth after onset
-                    tv_trunc_logp_masked(p_prob, p_mask, tau=4.0) +         # P: same
-                    2*tv_up_logp_from_logits_masked(n_logit, n_mask, tau=4.0) # N: suppress upward drift
+        alpha = float(params.get('FOCAL_ALPHA', 0.25))
+        gamma = float(params.get('FOCAL_GAMMA', 2.0))
+        cls_a = focal_logits_weighted(a_lab, a_logit, a_mask,  alpha=alpha, gamma=gamma)
+        cls_p = focal_logits_weighted(p_lab, p_logit, p_mask,  alpha=alpha, gamma=gamma)
+        cls_n = focal_logits_weighted(n_lab, n_logit, n_mask,  alpha=alpha, gamma=gamma)
+
+        alpha_pos = float(params.get('BCE_POS_ALPHA', 2.0))
+        print('alpha_pos:', alpha_pos)
+        alpha_neg = float(params.get('LOSS_NEGATIVES', 20.0))
+        print('alpha_neg:', alpha_neg)
+
+        lam_tv = float(params.get('LOSS_TV', 0.3))
+        print('loss_tv:', lam_tv)
+
+        tv_term = 2 * lam_tv * (
+                    tv_trunc_logp_masked(a_prob, n_mask, tau=4.0) +         # A: smooth after onset
+                    tv_trunc_logp_masked(p_prob, n_mask, tau=4.0) +         # P: same
+                    tv_trunc_logp_masked(n_logit, n_mask, tau=4.0) # N: suppress upward drift
                 )
-        classification_loss = cls_a + 2.0 * cls_p + 70.0 * cls_n + tv_term
+        classification_loss = cls_a + alpha_pos * cls_p + alpha_neg * cls_n + tv_term
         return tf.reduce_mean(classification_loss)
 
     return loss_fn
@@ -3114,6 +3649,24 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
 
         return tf.reduce_mean(0.5 * (L_a + L_p))
 
+    def focal_logits_weighted(y_bt, logit_bt, w_bt, alpha=0.25, gamma=2.0):
+        # y_bt, logit_bt, w_bt: [B, T]
+        focal = tf.keras.losses.BinaryFocalCrossentropy(
+            alpha=alpha, gamma=gamma, apply_class_balancing=True, from_logits=True,
+            reduction=tf.keras.losses.Reduction.NONE, axis=-1
+        )
+        # Add a singleton channel so Keras doesn't try to squeeze weird dims
+        y = tf.cast(y_bt, tf.float32)[..., None]      # [B, T, 1]
+        z = tf.cast(logit_bt, tf.float32)[..., None]  # [B, T, 1]
+        # Per-element loss -> [B, T]
+        loss_bt = focal(y, z)
+        
+        w = tf.cast(w_bt, tf.float32)                 # [B, T]
+        # Safe masked mean
+        num = tf.reduce_sum(loss_bt * w)
+        den = tf.reduce_sum(w) + tf.keras.backend.epsilon()
+        return num / den
+
     @tf.function
     def loss_fn(y_true, y_pred):
         # ---- split triplet on batch axis ----
@@ -3176,11 +3729,20 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         p_mask = post_onset_mask(p_lab)                 # [B,T]
         n_mask = tf.ones_like(n_lab, tf.float32)        # keep all negatives
 
-        alpha_pos = tf.cast(params.get('BCE_POS_ALPHA', 2.0), tf.float32)
+        alpha_pos = float(params.get('BCE_POS_ALPHA', 2.0))
 
-        cls_a = bce_logits_weighted(a_lab, a_logit, a_mask)
-        cls_p = bce_logits_weighted(p_lab, p_logit, p_mask)
-        cls_n = bce_logits_weighted(n_lab, n_logit, n_mask)
+        # cls_a = bce_logits_weighted(a_lab, a_logit, a_mask)
+        # cls_p = bce_logits_weighted(p_lab, p_logit, p_mask)
+        # cls_n = bce_logits_weighted(n_lab, n_logit, n_mask)
+
+
+        alpha = float(params.get('FOCAL_ALPHA', 0.25))
+        gamma = float(params.get('FOCAL_GAMMA', 2.00))
+        
+        # print("Using Focal Loss with alpha =", alpha, "gamma =", gamma)
+        cls_a = focal_logits_weighted(a_lab, a_logit, a_mask,  alpha=alpha, gamma=gamma)
+        cls_p = focal_logits_weighted(p_lab, p_logit, p_mask,  alpha=alpha, gamma=gamma)
+        cls_n = focal_logits_weighted(n_lab, n_logit, n_mask,  alpha=alpha, gamma=gamma)
 
         classification_loss = cls_a + alpha_pos * cls_p + loss_fp_weight * cls_n
 
@@ -3190,7 +3752,7 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         tv_term = lam_tv * (
             tv_trunc_logp_masked(a_prob, n_mask, tau=4.0) +         # A: smooth after onset
             tv_trunc_logp_masked(p_prob, n_mask, tau=4.0) +         # P: same
-            2*tv_up_logp_from_logits_masked(n_logit, n_mask, tau=4.0) # N: suppress upward drift
+            tv_trunc_logp_masked(n_prob, n_mask, tau=4.0) # N: suppress upward drift
         )
 
         classification_loss = classification_loss + tv_term

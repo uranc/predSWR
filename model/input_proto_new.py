@@ -210,7 +210,6 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
     Build train / test datasets of triplets. Labels are *never* altered.
     """
     onset_params = {
-    'USE_ONSET_SHIFTED_LABELS': False,
 
     # Windowing
     'WINDOW_MULTIPLIER': 2,      # nT (n=2)
@@ -219,8 +218,8 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
 
     # Catalogue thresholds (define in ms, convert to samples below)
     'ANCHOR_MIN_MS': 20,   # e.g. ≥20 ms overlap
-    'POS_MIN_MS': 8,       # e.g. ≥8 ms overlap
-    'GRACE_MS': 0,
+    'POS_MIN_MS': 10,       # e.g. ≥8 ms overlap
+    'GRACE_MS': 10,
 
     # Negatives
     'NEG_GAP_MS': 20,      # dilation gap (ms)

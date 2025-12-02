@@ -67,7 +67,7 @@ def objective_triplet(trial):
             }
 
     # Dynamic learning rate range
-    learning_rate = 1e-2 #trial.suggest_float('learning_rate', 6e-3, 1.5e-2, log=True)
+    learning_rate = 1e-2#0.008595 #trial.suggest_float('learning_rate', 6e-3, 1.5e-2, log=True)
     # learning_rate = 3e-3
     params['LEARNING_RATE'] = learning_rate
 
@@ -78,7 +78,7 @@ def objective_triplet(trial):
     # ...rest of existing objective function code...
 
     # Base parameters
-    params['SRATE'] = 1250
+    params['SRATE'] = 2500
     params['NO_EPOCHS'] = 250
     params['TYPE_MODEL'] = 'Base'
 
@@ -156,7 +156,7 @@ def objective_triplet(trial):
         "CIRCLE_m": 0.32, "CIRCLE_gamma": 20.0,
         "LOSS_Circle": 60.0, "LOSS_SupCon": 0.5, "SUPCON_T": 0.1,
         "BCE_ANC_ALPHA": 2.0, "BCE_POS_ALPHA": 2.0,
-        "LOSS_NEGATIVES_MIN": 4.0, "LOSS_NEGATIVES": 26.0,
+        "LOSS_NEGATIVES_MIN": 1.0, "LOSS_NEGATIVES": 26.0,
         "LOSS_TV": 0.30, "SMOOTH_TYPE": "tMSE", "SMOOTH_SPACE": "logit", "SMOOTH_TAU": 3.5,
         "CLF_SCALE": 0.30,
         # ramps — keep as you had; no tuning needed
@@ -171,10 +171,14 @@ def objective_triplet(trial):
     # ---- Metric: Circle + SupCon (time-averaged sims) ----
     # params["CIRCLE_m"]     = trial.suggest_categorical("CIRCLE_m",     [0.30, 0.33, 0.36])
     # params["CIRCLE_gamma"] = trial.suggest_categorical("CIRCLE_gamma", [18, 21, 24])
-    params["LOSS_Circle"]  =  trial.suggest_int("LOSS_Circle", 40, 160.0, step=10)
-    params["CIRCLE_m"]     = trial.suggest_float("CIRCLE_m", 0.26, 0.40)
-    params['CIRCLE_gamma'] = trial.suggest_float('CIRCLE_gamma',  16.0, 36.0, log=True)
+    params["LOSS_Circle"]  =  trial.suggest_int("LOSS_Circle", 30, 80, step=10)
+    params["CIRCLE_m"]     = trial.suggest_float("CIRCLE_m", 0.26, 0.36, step=0.02)
+    params['CIRCLE_gamma'] = trial.suggest_float('CIRCLE_gamma',  28.0, 36.0, step=2.0)
 
+    params['FOCAL_ALPHA'] = trial.suggest_float('FOCAL_ALPHA', 0.1, 1.0, step=0.05)
+    ax = params['FOCAL_ALPHA']
+    params['FOCAL_GAMMA'] = trial.suggest_float('FOCAL_GAMMA', 1.0, 5.0, step=0.5)
+    gx = params['FOCAL_GAMMA']
     # params["LOSS_Circle"]  = trial.suggest_float("LOSS_Circle", 40.0, 90.0)
 
     # SupCon kept as a stabilizer; grid chosen so (LOSS_SupCon / SUPCON_T) ≤ 10
@@ -192,12 +196,12 @@ def objective_triplet(trial):
     # params["LOSS_NEGATIVES_MIN"] = 2.0 #trial.suggest_categorical("LOSS_NEGATIVES_MIN", [2.0, 4.0])
     # params["LOSS_NEGATIVES"]     = trial.suggest_categorical("LOSS_NEGATIVES",     [24.0, 28.0])
     # params["CLF_SCALE"]          = trial.suggest_categorical("CLF_SCALE",          [0.25, 0.35, 0.45])
-    bce_alpha = trial.suggest_float("BCE_POS_ALPHA", 0.5, 2.6)
+    bce_alpha = trial.suggest_float("BCE_POS_ALPHA", 1.5, 5.0, step=0.5)
     # params["BCE_ANC_ALPHA"] = bce_alpha
     params["BCE_POS_ALPHA"] = bce_alpha
 
     params["LOSS_NEGATIVES_MIN"] = 2.0  # fixed floor of the ramp
-    params["LOSS_NEGATIVES"]     = trial.suggest_int("LOSS_NEGATIVES", 1.0, 24, step=6)
+    params["LOSS_NEGATIVES"]     = trial.suggest_int("LOSS_NEGATIVES", 12, 24, step=4)
 
     # params["CLF_SCALE"] = trial.suggest_float("CLF_SCALE", 0.20, 0.45)
 
@@ -206,7 +210,7 @@ def objective_triplet(trial):
     # params["SMOOTH_TAU"]  = 3.5#trial.suggest_categorical("SMOOTH_TAU", [3.0, 3.5, 4.0])
     # params["SMOOTH_TYPE"] = "tMSE"
     # params["SMOOTH_SPACE"]= "logit"
-    params["LOSS_TV"] = trial.suggest_float("LOSS_TV", 0.06, 5.0, log=True)
+    params["LOSS_TV"] = trial.suggest_float("LOSS_TV", 0.15, 1.5, log=True)
     # params["SMOOTH_TAU"]  = 3.5   # keep fixed this round
     # params["SMOOTH_TYPE"] = "tMSE"
     # params["SMOOTH_SPACE"]= "logit"
@@ -223,9 +227,6 @@ def objective_triplet(trial):
     params["WEIGHT_DECAY"]  = 1e-4
     params["CLIP_NORM"]     = 1.5
 
-
-    ax = 25#trial.suggest_int('AX', 25, 85, step=20)
-    gx = 200#350#trial.suggest_int('GX', 150, 400, step=100)
 
     # Removed duplicate TYPE_ARCH suggestion that was causing the error
     # params['TYPE_LOSS'] = 'FocalGapAx{:03d}Gx{:03d}'.format(ax, gx)
@@ -269,7 +270,7 @@ def objective_triplet(trial):
 
     # act_lib = ['ELU', 'GELU'] # 'RELU',
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    par_act = 'GELU'
+    par_act = 'ELU'
 
     # opt_lib = ['Adam', 'AdamW', 'SGD']
     par_opt = 'AdamWA'
@@ -298,7 +299,7 @@ def objective_triplet(trial):
     # if params['USE_StopGrad']:
     #     print('Using Stop Gradient for Class. Branch')
     #     params['TYPE_ARCH'] += 'StopGrad'
-    # params['TYPE_ARCH'] += 'StopGrad'
+    params['TYPE_ARCH'] += 'StopGrad'
 
     # # ensure StopGrad ON via architecture token you already use
     # if 'StopGrad' not in params.get('TYPE_ARCH', ''):
@@ -308,7 +309,6 @@ def objective_triplet(trial):
     #     print('Using Attention')
     #     params['TYPE_ARCH'] += 'Att'
     # params['TYPE_ARCH'] += 'Att'
-        
     params['TYPE_ARCH'] += 'Online'
 
     params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
@@ -350,8 +350,6 @@ def objective_triplet(trial):
     #     shutil.rmtree(f"{study_dir}/model")
     shutil.copytree(model_dir, f"{study_dir}/model")
     preproc = True
-    
-    
     
     # minimal trial_info skeleton so later code can safely update it
     trial_info = {
@@ -418,7 +416,11 @@ def objective_triplet(trial):
     params['CLF_RAMP_DELAY']  = params['RAMP_DELAY']
     params['CLF_RAMP_STEPS']  = params['RAMP_STEPS']
 
-
+    params['GRACE_MS'] = 10
+    params['ANCHOR_MIN_MS'] = 20
+    params['POS_MIN_MS'] = 10
+    params['POS_EXCLUDE_ANCHORS'] = True
+    
     # after: train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(...)
     trial_info["dataset"] = {
         "estimated_steps_per_epoch": int(params.get("ESTIMATED_STEPS_PER_EPOCH",
@@ -576,7 +578,7 @@ print(val_id)
 # Parameters
 params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
           'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 200,
-          'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 1250,
+          'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 30000,
           'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
           }
 params['mode'] = mode
@@ -657,9 +659,11 @@ if mode == 'train':
         from model.input_augment_weighted import rippleAI_load_dataset
     elif 'TripletOnly' in params['TYPE_ARCH']:
         print('Using TripletOnly')
+        from model.input_augment_weighted_transpose import rippleAI_load_dataset
         # from model.input_proto import rippleAI_load_dataset
-        from model.input_proto_new import rippleAI_load_dataset
-        from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+        # from model.input_proto_new import rippleAI_load_dataset
+        # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+        from model.model_fn import build_DBI_TCN_TripletOnlyTranspose as build_DBI_TCN
     elif 'CADOnly' in params['TYPE_ARCH']:
         from model.model_fn import build_DBI_TCN_CADMixerOnly as build_DBI_TCN
         from model.input_augment_weighted import rippleAI_load_dataset
@@ -774,16 +778,18 @@ if mode == 'train':
         train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, use_band='muax', preprocess=preproc)
     else:
         if 'TripletOnly' in params['TYPE_ARCH']:
-            params['steps_per_epoch'] = 1000
+            params['steps_per_epoch'] = 2
             flag_online = 'Online' in params['TYPE_ARCH']
-            train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
+            # train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
+            train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
+            dataset_params = params
         else:
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
     # train_size = len(list(train_dataset))
     params['RIPPLE_RATIO'] = label_ratio
 
     # --- Preview one triplet batch (debug utility) ---
-    DEBUG_PLOT_TRIPLET = True  # set False to disable
+    DEBUG_PLOT_TRIPLET = False  # set False to disable
     # pdb.set_trace()
     if DEBUG_PLOT_TRIPLET:
         # Fetch first batch (supports tf.data.Dataset or Keras Sequence / custom Sequence)
@@ -822,7 +828,7 @@ if mode == 'train':
             plt.plot(np.arange(128), x_preview[64+ii, :, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
             plt.plot(np.arange(64)+64, y_preview[64+ii, :]*50, 'r')
         plt.show()
-    pdb.set_trace()
+    # pdb.set_trace()
     # n = 0
     # pdb.set_trace()
     # for ii in range(2000):
@@ -883,7 +889,7 @@ if mode == 'train':
         if 'SigmoidFoc' in params['TYPE_LOSS']:
             hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'], checkpoint_metric='val_max_f1_metric_horizon_mixer')
         elif 'TripletOnly' in params['TYPE_ARCH']:
-            hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'], dataset_params=dataset_params)
+            hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'], dataset_params=dataset_params, steps_per_epoch=10)
         else:
             hist = train_pred(model, train_dataset, test_dataset, params['NO_EPOCHS'], params['EXP_DIR'])
 
@@ -1227,7 +1233,7 @@ elif mode == 'predict':
     # inference parameters
     squence_stride = 1
     # params['BATCH_SIZE'] = 512*4*3
-    params['NO_TIMEPOINTS'] = 64
+    params['NO_TIMEPOINTS'] = 44
     params["BATCH_SIZE"] = 1024*4
     # pdb.set_trace()
     # from model.input_augment_weighted import rippleAI_load_dataset
@@ -1248,18 +1254,19 @@ elif mode == 'predict':
         # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/Mouse3_LFPSub_2500.npy')
         # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/Mouse3_LFP_2500.npy')
         # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/Mouse3_ModelInputs_2500.npy')
-        LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/Mouse3_LFP_ZSig_2500.npy')
-
+        # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/Mouse3_LFP_ZSig_2500.npy')
+        # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/MouseTest_LFP_ZSig_2500.npy')
+        LFP = np.load('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake03/LFP_zSig_141125_suffix11_sf2500.npy')
         LFP = np.transpose(LFP, (1, 0))
         # pdb.set_trace()
-        peak_chind = 12 # sexy peak
+        peak_chind = 13 # sexy peak
         # peak_chind = 15 # sexy peak
         # peak_chind = 28 # sexy cortex
-        # LFP = LFP[::2,peak_chind-4:peak_chind+4]
-        LFP = LFP[:,peak_chind-4:peak_chind+4]
-        # LFP = np.fliplr(LFP[:,peak_chind-4:peak_chind+4])
+        # LFP = np.fliplr(LFP[::2,peak_chind-3:peak_chind+5])
+        LFP = LFP[:,peak_chind-3:peak_chind+5]
+        # LFP = np.fliplr(LFP[:,peak_chind-3:peak_chind+5])
         # LFP = (LFP - np.mean(LFP, axis=0)) / np.std(LFP, axis=0)
-        labels = np.zeros(LFP.shape[0])
+        labels = np.zeros(LFP.shape[0]) 
     else:
         preproc = False if model_name=='RippleNet' else True
         if 'NAME' not in params or not params['NAME']:
@@ -1323,7 +1330,8 @@ elif mode == 'predict':
                 probs = np.hstack((np.zeros((sample_length-1, 1)).flatten(), windowed_signal))
                 # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/probs_{0}_{1}.npy'.format(study_num, tag), probs)
                 pdb.set_trace()
-                np.save('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_decimate_{1}.npy'.format(study_num, tag), probs)
+                # np.save('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_decimate_{1}.npy'.format(study_num, tag), probs)
+                np.save('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake03/probs_{0}_decimate_{1}.npy'.format(study_num, tag), probs)
                 # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_{1}.npy'.format(study_num, tag), probs)
                 sys.exit(0)
     else:
@@ -1347,7 +1355,8 @@ elif mode == 'predict':
             # np.save('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_decimate_{1}.npy'.format(study_num, tag), probs)
             # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_{1}.npy'.format(study_num, tag), probs)
             # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_subZ_{1}.npy'.format(study_num, tag), probs)
-            np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_LFPzSig_{1}.npy'.format(study_num, tag), probs)
+            # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_LFPzSig_{1}.npy'.format(study_num, tag), probs)
+            np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake03/probs_{0}_sub_LFPzSig_{1}.npy'.format(study_num, tag), probs)
             # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_{1}.npy'.format(study_num, tag), probs)
             sys.exit(0)
 
@@ -1455,6 +1464,7 @@ elif mode == 'fine_tune':
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
         elif 'TripletOnly' in params['TYPE_ARCH']:
+            tf.config.run_functions_eagerly(True)
             from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
 
             # model_dir = f"studies/{param_dir}/base_model"
@@ -1564,7 +1574,7 @@ elif mode == 'fine_tune':
         else:
             raise ValueError(f"Neither event.weights.h5 nor max.weights.h5 found in {study_dir}")
         print(f"Loading weights from: {weight_file}")
-
+        params['WEIGHT_FILE'] = weight_file
         if 'CADOnly' in params['TYPE_ARCH']:
             model = build_DBI_TCN(pretrained_params["NO_TIMEPOINTS"], params=params, pretrained_tcn=pretrained_tcn)
         elif 'Patch' in params['TYPE_ARCH']:
@@ -1572,16 +1582,19 @@ elif mode == 'fine_tune':
         else:
             # pdb.set_trace()
             params['TYPE_ARCH'] = params['TYPE_ARCH'].replace("StopGrad", "")
-            params['LOSS_NEGATIVES'] = 60
+            print('Fine-tuning model with architecture:', params['TYPE_ARCH'])
+            # params['TYPE_ARCH'] += 'Att'
+            params['LOSS_NEGATIVES'] *= 2
+            # params['LOSS_TV'] *= 10
             # params['LOSS_WEIGHT'] = 0.25
-            params['LEARNING_RATE'] = 0.00003
+            params['LEARNING_RATE'] = 0.000895
             params['BATCH_SIZE'] = 128
+            # params['BCE_POS_ALPHA'] = 0.5
             # params['HYPER_ENTROPY'] = 3.0
             # params['LOSS_TupMPN'] = 10.0
             params['mode'] = 'fine_tune'
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-        
-        model.load_weights(weight_file)
+        # model.load_weights(weight_file, skip_mismatch=True)
         print(params)
         # get sampling rate # little dangerous assumes 4 digits
         if 'Samp' in params['TYPE_LOSS']:
@@ -1647,7 +1660,7 @@ elif mode == 'fine_tune':
                             save_best_only=True,
                             save_weights_only=True,
                             mode='max'),
-                            cb.ModelCheckpoint(
+        cb.ModelCheckpoint(
                             f"{study_dir}/event.finetune.weights.h5",
                             monitor='val_sample_pr_auc',  # Change monitor
                             verbose=1,
@@ -2032,12 +2045,14 @@ elif mode=='export':
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
         elif 'TripletOnly' in params['TYPE_ARCH']:
-            from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            from model.model_fn import build_DBI_TCN_TripletOnlyTranspose as build_DBI_TCN
             # import importlib.util
             # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
             # model_module = importlib.util.module_from_spec(spec)
             # spec.loader.exec_module(model_module)
-            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+            # # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnlyTranspose
         elif 'CADOnly' in params['TYPE_ARCH']:
             pretrain_tag = 'params_mixerOnlyEvents2500'
             pretrain_num = 1414#958
@@ -2151,7 +2166,7 @@ elif mode=='export':
             # weight_file = f"{study_dir}/robust.weights.h5"
             print(f"Loading weights from: {weight_file}")
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-            model.load_weights(weight_file)
+            # model.load_weights(weight_file)
 
     elif model_name == 'RippleNet':
         import sys, pickle, keras, h5py
@@ -2239,11 +2254,15 @@ elif mode=='export':
 
         # tag = ''  # MUAX, LP,
         # get model
-        a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        # a_model = importlib.import_module('experiments.{0}.model.model_fn'.format(model))
+        a_model = importlib.import_module('model.model_fn')
         if model.find('CSD') != -1:
             build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_CSD')
         else:
-            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+            # build_DBI_TCN = getattr(a_model, 'build_DBI_TCN')
+            # build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_TripletOnly')
+            build_DBI_TCN = getattr(a_model, 'build_DBI_TCN_TripletOnlyTranspose')
+            params['LOSS_WEIGHT'] = 1.0
         # from model.model_fn import build_DBI_TCN
 
         params['WEIGHT_FILE'] = 'experiments/{0}/'.format(model_name)+'weights.last.h5'
@@ -2252,17 +2271,55 @@ elif mode=='export':
 
     model_converter = 'ONNX' # 'TF' 'TFLite'
     if model_converter == 'ONNX':
-
+        os.environ["OMP_NUM_THREADS"] = "1" 
+        # Prevents GPU conflicts during simplification
+        os.environ["CUDA_VISIBLE_DEVICES"] = "-1" 
+        
         import tf2onnx
+        import onnx
+        from onnxsim import simplify
+        import tensorflow as tf
         # Convert the model to ONNX format
         # spec = [tf.TensorSpec(model.inputs[0].shape, model.inputs[0].dtype, name="x")]
         # spec = [tf.TensorSpec([1,92,8], model.inputs[0].dtype, name="x")]
         # spec = [tf.TensorSpec([2,44,8], model.inputs[0].dtype, name="x")]
-        spec = [tf.TensorSpec([1,44,8], model.inputs[0].dtype, name="x")]
+        # spec = [tf.TensorSpec([1,44,8], model.inputs[0].dtype, name="x")]
+        # spec = [tf.TensorSpec([1,560,8], model.inputs[0].dtype, name="x")]
+        spec = [tf.TensorSpec([1, 8, 560], model.inputs[0].dtype, name="x")]
         # pdb.set_trace()
         output_path = f"./frozen_models/{model_name}/model.onnx"
+        output_simple = f"./frozen_models/{model_name}/model_simple.onnx"
         model_proto, _ = tf2onnx.convert.from_keras(model, input_signature=spec, output_path=output_path, opset=15)
         print(f"Model saved to {output_path}")
+                
+        # NEW: Simplify the graph immediately
+        print("Simplifying...")
+            
+        try:
+            # Load the base model object
+            model_onnx = onnx.load(output_path)
+
+            # Simplify parameters
+            # skip_fuse_bn=False: Merges BatchNormalization into Convolutions (Speedup!)
+            # dynamic_input_shape=False: We want fixed shapes for maximum TensorRT speed
+            model_simp, check = simplify(
+                model_onnx,
+                check_n=0,  # Disable runtime check if it crashes, or set to 3 to verify
+                skip_fuse_bn=False,
+                input_shapes={'x': [1, 8, 560]} # Explicitly tell it the new shape
+            )
+
+            if check:
+                print("✅ Simplification Validated.")
+            else:
+                print("⚠️ Simplification succeeded but validation was skipped/failed.")
+
+            onnx.save(model_simp, output_simple)
+            print(f"🚀 Optimized model saved to: {output_simple}")
+
+        except Exception as e:
+            print(f"❌ Simplification Failed: {e}")
+            print("Using Base model instead.")
 
     elif model_converter == 'TFLite':
         # Convert the model to a TensorFlow Lite model
@@ -2629,16 +2686,16 @@ elif mode == 'tune_server':
     #     n_ei_candidates=64,     # more candidate draws for better proposals
     #     seed=1337,
     # )
-    from optuna.samplers import TPESampler
-
-    sampler = optuna.samplers.TPESampler(
-        multivariate=True,
-        group=True,
-        constant_liar=True,
-        n_startup_trials=64,
-        n_ei_candidates=64,
-        seed=1337,
-    )
+    # sampler = optuna.samplers.TPESampler(
+    #     multivariate=True,
+    #     group=True,
+    #     constant_liar=True,
+    #     n_startup_trials=64,
+    #     n_ei_candidates=64,
+    #     seed=1337,
+    # )
+    
+    sampler = GPSampler(seed=1337, n_startup_trials=40)
     study = optuna.create_study(
         study_name=param_dir,
         storage=storage,
@@ -2675,15 +2732,18 @@ elif mode == 'tune_worker':
     #     n_startup_trials=64, n_ei_candidates=64, seed=1337
     # )
     from optuna.samplers import TPESampler
+    from optuna.samplers import GPSampler
 
-    sampler = optuna.samplers.TPESampler(
-        multivariate=True,
-        group=True,
-        constant_liar=True,
-        n_startup_trials=64,
-        n_ei_candidates=64,
-        seed=1337,
-    )
+    # sampler = optuna.samplers.TPESampler(
+    #     multivariate=True,
+    #     group=True,
+    #     constant_liar=True,
+    #     n_startup_trials=64,
+    #     n_ei_candidates=64,
+    #     seed=1337,
+    # )
+    
+    sampler = GPSampler(seed=1337, n_startup_trials=40)
     
     study = optuna.load_study(
         study_name=param_dir,
@@ -5866,6 +5926,18 @@ elif mode == 'tune_viz_multi_v7':
         print(f"Error loading study: {e}")
         sys.exit(1)
 
+    # ---------- HELPERS ----------
+    def _ua(tr, key, default=np.nan):
+        # Prefer user_attrs, then system_attrs
+        try:
+            if hasattr(tr, "user_attrs") and key in tr.user_attrs:
+                return tr.user_attrs.get(key, default)
+            if hasattr(tr, "system_attrs") and key in tr.system_attrs:
+                return tr.system_attrs.get(key, default)
+        except Exception:
+            pass
+        return default
+
     # ---------- COLLECT COMPLETED TRIALS ----------
     trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
     if not trials:
@@ -5907,9 +5979,17 @@ elif mode == 'tune_viz_multi_v7':
         bad = lambda x: (x is None) or (isinstance(x, float) and (math.isnan(x) or math.isinf(x)))
         if any(bad(x) for x in [pr, fp]):
             continue
-        rec = {"trial_number": t.number,
-               "val_sample_pr_auc": pr,
-               "val_fp_per_min": fp}
+        rec = {
+            "trial_number": t.number,
+            "val_sample_pr_auc": pr,
+            "val_fp_per_min": fp,
+            # ---- NEW METRICS FROM user_attrs / system_attrs ----
+            "val_latency_score":  _ua(t, "sel_latency_score"),
+            "val_recall_at_0p7":  _ua(t, "sel_recall_at_0p7"),
+            "val_sample_max_f1":  _ua(t, "sel_max_f1"),
+            "val_sample_max_mcc": _ua(t, "sel_max_mcc"),
+            "sel_epoch":          _ua(t, "sel_epoch")
+        }
         rec.update(t.params)  # include hyperparams
         rows.append(rec)
 
@@ -5941,6 +6021,25 @@ elif mode == 'tune_viz_multi_v7':
             target_name="FP/min")
         fig_hist_fp.write_html(os.path.join(viz_dir, "history_fp_per_min.html"))
 
+        # ---- NEW: Histories for latency & recall ----
+        try:
+            fig_hist_lat = optuna.visualization.plot_optimization_history(
+                study, target=lambda t: _ua(t, "sel_latency_score"),
+                target_name="Latency score (↑)"
+            )
+            fig_hist_lat.write_html(os.path.join(viz_dir, "history_latency.html"))
+        except Exception as e:
+            print(f"Latency history warning: {e}")
+
+        try:
+            fig_hist_rec = optuna.visualization.plot_optimization_history(
+                study, target=lambda t: _ua(t, "sel_recall_at_0p7"),
+                target_name="Recall@0.7 (↑)"
+            )
+            fig_hist_rec.write_html(os.path.join(viz_dir, "history_recall.html"))
+        except Exception as e:
+            print(f"Recall history warning: {e}")
+
         # Param importances per objective
         fig_imp_pr = optuna.visualization.plot_param_importances(
             study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'),
@@ -5951,6 +6050,25 @@ elif mode == 'tune_viz_multi_v7':
             study, target=lambda t: t.values[OBJECTIVE_INDEX['fp_per_min']] if t.values else float('nan'),
             target_name="FP/min")
         fig_imp_fp.write_html(os.path.join(viz_dir, "param_importances_fp_per_min.html"))
+
+        # ---- NEW: Param importances for latency & recall ----
+        try:
+            fig_imp_lat = optuna.visualization.plot_param_importances(
+                study, target=lambda t: _ua(t, "sel_latency_score"),
+                target_name="Latency score (↑)"
+            )
+            fig_imp_lat.write_html(os.path.join(viz_dir, "param_importances_latency.html"))
+        except Exception as e:
+            print(f"Latency importances warning: {e}")
+
+        try:
+            fig_imp_rec = optuna.visualization.plot_param_importances(
+                study, target=lambda t: _ua(t, "sel_recall_at_0p7"),
+                target_name="Recall@0.7 (↑)"
+            )
+            fig_imp_rec.write_html(os.path.join(viz_dir, "param_importances_recall.html"))
+        except Exception as e:
+            print(f"Recall importances warning: {e}")
 
         # Pareto front (2D)
         names_by_index = [""] * nvals
@@ -5972,6 +6090,24 @@ elif mode == 'tune_viz_multi_v7':
             study, target=lambda t: t.values[OBJECTIVE_INDEX['fp_per_min']] if t.values else float('nan'),
             target_name="FP/min (↓)")
         fig_edf_fp.write_html(os.path.join(viz_dir, "edf_fp_per_min.html"))
+
+        # ---- NEW: EDFs for latency & recall ----
+        try:
+            fig_edf_lat = optuna.visualization.plot_edf(
+                study, target=lambda t: _ua(t, "sel_latency_score"),
+                target_name="Latency score (↑)")
+            fig_edf_lat.write_html(os.path.join(viz_dir, "edf_latency.html"))
+        except Exception as e:
+            print(f"EDF latency warning: {e}")
+
+        try:
+            fig_edf_rec = optuna.visualization.plot_edf(
+                study, target=lambda t: _ua(t, "sel_recall_at_0p7"),
+                target_name="Recall@0.7 (↑)")
+            fig_edf_rec.write_html(os.path.join(viz_dir, "edf_recall.html"))
+        except Exception as e:
+            print(f"EDF recall warning: {e}")
+
     except Exception as e:
         print(f"EDF plot warning: {e}")
 
@@ -6021,7 +6157,7 @@ elif mode == 'tune_viz_multi_v7':
     except Exception as e:
         print(f"Hypervolume plot skipped: {e}")
 
-    # ---------- 2D PROJECTION (Plotly) ----------
+    # ---------- OBJECTIVE PROJECTION (Plotly) ----------
     try:
         if HAVE_PLOTLY:
             fig2d = px.scatter(
@@ -6036,6 +6172,52 @@ elif mode == 'tune_viz_multi_v7':
                 legend_title_text="Trials"
             )
             fig2d.write_html(os.path.join(viz_dir, "scatter2d_all.html"))
+
+            # ---- NEW: PR-AUC vs FP/min colored by Latency ----
+            if "val_latency_score" in df.columns:
+                fig2d_lat = px.scatter(
+                    df, x="val_sample_pr_auc", y="val_fp_per_min",
+                    color="val_latency_score", color_continuous_scale="Viridis",
+                    hover_name="trial_number",
+                    hover_data=[c for c in ["val_recall_at_0p7","val_sample_max_f1","val_sample_max_mcc","sel_epoch"]
+                                if c in df.columns],
+                    opacity=0.9, title="PR-AUC vs FP/min — color: Latency"
+                )
+                fig2d_lat.update_layout(xaxis_title="PR-AUC (↑)", yaxis_title="FP/min (↓)")
+                fig2d_lat.write_html(os.path.join(viz_dir, "scatter2d_prauc_fp_color_latency.html"))
+
+            # ---- NEW: PR-AUC vs FP/min colored by Recall ----
+            if "val_recall_at_0p7" in df.columns:
+                fig2d_rec = px.scatter(
+                    df, x="val_sample_pr_auc", y="val_fp_per_min",
+                    color="val_recall_at_0p7", color_continuous_scale="Plasma",
+                    hover_name="trial_number",
+                    hover_data=[c for c in ["val_latency_score","val_sample_max_f1","val_sample_max_mcc","sel_epoch"]
+                                if c in df.columns],
+                    opacity=0.9, title="PR-AUC vs FP/min — color: Recall@0.7"
+                )
+                fig2d_rec.update_layout(xaxis_title="PR-AUC (↑)", yaxis_title="FP/min (↓)")
+                fig2d_rec.write_html(os.path.join(viz_dir, "scatter2d_prauc_fp_color_recall.html"))
+
+            # ---- NEW: Pairwise with Latency ----
+            if "val_latency_score" in df.columns:
+                fig_p_l = px.scatter(
+                    df, x="val_sample_pr_auc", y="val_latency_score",
+                    color=np.where(df.trial_number.isin(pareto_nums), "Pareto(PR↔FP)", "Other"),
+                    hover_name="trial_number", opacity=0.9,
+                    title="PR-AUC vs Latency (↑/↑)"
+                )
+                fig_p_l.update_layout(xaxis_title="PR-AUC (↑)", yaxis_title="Latency score (↑)")
+                fig_p_l.write_html(os.path.join(viz_dir, "scatter2d_prauc_latency.html"))
+
+                fig_f_l = px.scatter(
+                    df, x="val_fp_per_min", y="val_latency_score",
+                    color=np.where(df.trial_number.isin(pareto_nums), "Pareto(PR↔FP)", "Other"),
+                    hover_name="trial_number", opacity=0.9,
+                    title="FP/min vs Latency (↓/↑)"
+                )
+                fig_f_l.update_layout(xaxis_title="FP/min (↓)", yaxis_title="Latency score (↑)")
+                fig_f_l.write_html(os.path.join(viz_dir, "scatter2d_fpmin_latency.html"))
     except Exception as e:
         print(f"Projection plot warning: {e}")
 
@@ -6058,34 +6240,36 @@ elif mode == 'tune_viz_multi_v7':
     pr_ylim = qylim(df["val_sample_pr_auc"], clamp=(0,1))
     fp_ylim = qylim(df["val_fp_per_min"], clamp=None)
 
-    hyperparams = [c for c in df.columns if c not in ["trial_number","val_sample_pr_auc","val_fp_per_min"]]
+    hyperparams = [c for c in df.columns if c not in [
+        "trial_number","val_sample_pr_auc","val_fp_per_min",
+        "val_latency_score","val_recall_at_0p7","val_sample_max_f1","val_sample_max_mcc",
+        "score_pr","score_fp","combined_avg","COHORT_StopGrad","sel_epoch"
+    ]]
+
+    targets = [("val_sample_pr_auc","PR-AUC (↑)"),
+               ("val_fp_per_min","FP/min (↓)")]
+    if "val_latency_score" in df.columns:   targets.append(("val_latency_score","Latency (↑)"))
+    if "val_recall_at_0p7" in df.columns:   targets.append(("val_recall_at_0p7","Recall@0.7 (↑)"))
 
     for p in hyperparams:
         if df[p].isnull().all() or df[p].nunique(dropna=True) <= 1:
             continue
         is_num = pd.api.types.is_numeric_dtype(df[p])
-        fig, axes = plt.subplots(2, 1, figsize=(10, 7), sharex=True,
-                                 gridspec_kw={"height_ratios":[2,1]})
-        ax_top, ax_bot = axes
+        fig, axes = plt.subplots(len(targets), 1, figsize=(10, 3.2*len(targets)), sharex=True)
+        if len(targets) == 1: axes = [axes]
 
-        # Top: PR-AUC
-        if is_num:
-            sns.scatterplot(data=df, x=p, y="val_sample_pr_auc", ax=ax_top, color="tab:blue", s=18, alpha=0.5, label="PR-AUC")
-        else:
-            sns.stripplot(data=df, x=p, y="val_sample_pr_auc", ax=ax_top, color="tab:blue", size=4, alpha=0.7, jitter=True)
-        ax_top.set_ylabel("PR-AUC (↑)", color="tab:blue"); ax_top.tick_params(axis='y', labelcolor="tab:blue"); ax_top.set_ylim(pr_ylim)
-
-        # Bottom: FP/min
-        if is_num:
-            sns.scatterplot(data=df, x=p, y="val_fp_per_min", ax=ax_bot, color="tab:red", s=18, alpha=0.5)
-        else:
-            sns.stripplot(data=df, x=p, y="val_fp_per_min", ax=ax_bot, color="tab:red", size=4, alpha=0.7, jitter=True)
-        ax_bot.set_ylabel("FP/min (↓)", color="tab:red"); ax_bot.tick_params(axis='y', labelcolor="tab:red"); ax_bot.set_ylim(fp_ylim)
-
-        if not is_num:
-            for ax in (ax_top, ax_bot):
+        for ax, (obj, ylabel) in zip(axes, targets):
+            ylim = None
+            if obj == "val_sample_pr_auc": ylim = pr_ylim
+            elif obj == "val_fp_per_min": ylim = fp_ylim
+            if is_num:
+                sns.scatterplot(data=df, x=p, y=obj, ax=ax, s=18, alpha=0.5)
+            else:
+                sns.stripplot(data=df, x=p, y=obj, ax=ax, size=4, alpha=0.7, jitter=True)
                 plt.setp(ax.get_xticklabels(), rotation=30, ha="right")
-        ax_bot.set_xlabel(p)
+            ax.set_ylabel(ylabel)
+            if ylim is not None: ax.set_ylim(ylim)
+        axes[-1].set_xlabel(p)
         fig.tight_layout()
         outp = os.path.join(param_impact_dir, f"{p}_impact.png")
         fig.savefig(outp, dpi=130)
@@ -6134,7 +6318,8 @@ elif mode == 'tune_viz_multi_v7':
         return edges
 
     def _trend_by_bins_cohort(dfin: pd.DataFrame, param: str, nbins=12):
-        keep_cols = ["val_sample_pr_auc","val_fp_per_min","COHORT_StopGrad", param]
+        keep_cols = ["val_sample_pr_auc","val_fp_per_min","val_latency_score","val_recall_at_0p7","COHORT_StopGrad", param]
+        keep_cols = [c for c in keep_cols if c in dfin.columns]
         dfin = dfin[keep_cols].copy()
         dfin[param] = pd.to_numeric(dfin[param], errors="coerce")
         dfin = dfin.dropna(subset=[param])
@@ -6149,9 +6334,10 @@ elif mode == 'tune_viz_multi_v7':
         tmp["_bin"] = b
         tmp["_mid"] = mids
 
+        value_vars = [c for c in ["val_sample_pr_auc","val_fp_per_min","val_latency_score","val_recall_at_0p7"] if c in tmp.columns]
         long = tmp.melt(
             id_vars=["_bin","_mid","COHORT_StopGrad"],
-            value_vars=["val_sample_pr_auc","val_fp_per_min"],
+            value_vars=value_vars,
             var_name="metric", value_name="val"
         )
 
@@ -6166,15 +6352,21 @@ elif mode == 'tune_viz_multi_v7':
         return agg
 
     def _plot_trend_overlay(agg: pd.DataFrame, p: str, out_png: str):
-        order  = ["val_sample_pr_auc","val_fp_per_min"]
-        titles = {"val_sample_pr_auc": "PR-AUC (↑)",
-                  "val_fp_per_min":    "FP/min (↓)"}
+        order = [m for m in ["val_sample_pr_auc","val_fp_per_min","val_latency_score","val_recall_at_0p7"]
+                 if (agg["metric"] == m).any()]
+        titles = {
+            "val_sample_pr_auc": "PR-AUC (↑)",
+            "val_fp_per_min":    "FP/min (↓)",
+            "val_latency_score": "Latency (↑)",
+            "val_recall_at_0p7": "Recall@0.7 (↑)"
+        }
         colors = {"SG=False":"tab:blue","SG=True":"tab:orange","SG=unknown":"tab:gray"}
 
-        if agg.empty or agg["bin_mid"].nunique() < 3:
+        if agg.empty or agg["bin_mid"].nunique() < 3 or len(order) == 0:
             return False
 
-        fig, axes = plt.subplots(2,1,figsize=(9,7), sharex=True)
+        fig, axes = plt.subplots(len(order), 1, figsize=(9, 3.3*len(order)), sharex=True)
+        if len(order) == 1: axes = [axes]
         for ax, m in zip(axes, order):
             d = agg[agg["metric"] == m]
             ok_any = False
@@ -6185,14 +6377,10 @@ elif mode == 'tune_viz_multi_v7':
                 c = colors.get(g, "tab:gray")
                 ax.plot(dd["bin_mid"], dd["median"], label=g, color=c, lw=2)
                 ax.fill_between(dd["bin_mid"], dd["q10"], dd["q90"], alpha=0.18, color=c)
-                for xm, cnt in zip(dd["bin_mid"], dd["count"]):
-                    ax.text(xm, dd["median"].min(), f"n={int(cnt)}", fontsize=7, ha="center", va="top", alpha=0.35)
                 ok_any = True
             ax.set_ylabel(titles[m]); ax.grid(alpha=0.3)
-            if not ok_any:
-                ax.text(0.5, 0.5, "insufficient data", ha="center", va="center", transform=ax.transAxes, alpha=0.6)
-
-        axes[0].legend(title="StopGrad", ncol=3)
+            if ok_any:
+                ax.legend(title="StopGrad", ncol=3, fontsize=8)
         axes[-1].set_xlabel(p)
         fig.suptitle(f"Quantile trend (StopGrad overlay): {p}")
         fig.tight_layout(rect=[0,0,1,0.96])
@@ -6200,16 +6388,23 @@ elif mode == 'tune_viz_multi_v7':
         return True
 
     def _plot_trend_facets(agg: pd.DataFrame, p: str, out_png: str):
-        order  = ["val_sample_pr_auc","val_fp_per_min"]
+        order  = [m for m in ["val_sample_pr_auc","val_fp_per_min","val_latency_score","val_recall_at_0p7"]
+                  if (agg["metric"] == m).any()]
         titles = {"val_sample_pr_auc": "PR-AUC (↑)",
-                  "val_fp_per_min":    "FP/min (↓)"}
+                  "val_fp_per_min":    "FP/min (↓)",
+                  "val_latency_score": "Latency (↑)",
+                  "val_recall_at_0p7": "Recall@0.7 (↑)"}
         cohorts = [c for c in ["SG=False","SG=True","SG=unknown"] if (agg["COHORT_StopGrad"] == c).any()]
-        if agg.empty or len(cohorts) == 0 or agg["bin_mid"].nunique() < 3:
+        if agg.empty or len(cohorts) == 0 or agg["bin_mid"].nunique() < 3 or len(order) == 0:
             return False
 
-        fig, axes = plt.subplots(len(cohorts), 2, figsize=(12, 3.5 * len(cohorts)), sharex=True)
-        if len(cohorts) == 1:
+        fig, axes = plt.subplots(len(cohorts), len(order), figsize=(5.5*len(order), 3.5*len(cohorts)), sharex=True)
+        if len(cohorts) == 1 and len(order) == 1:
+            axes = np.array([[axes]])
+        elif len(cohorts) == 1:
             axes = np.expand_dims(axes, 0)
+        elif len(order) == 1:
+            axes = np.expand_dims(axes, 1)
 
         for row, cohort in enumerate(cohorts):
             for col, m in enumerate(order):
@@ -6234,7 +6429,8 @@ elif mode == 'tune_viz_multi_v7':
         return True
 
     trend_params = [c for c in df.columns
-                    if c not in ["trial_number","val_sample_pr_auc","val_fp_per_min","COHORT_StopGrad"]
+                    if c not in ["trial_number","val_sample_pr_auc","val_fp_per_min","val_latency_score","val_recall_at_0p7",
+                                 "val_sample_max_f1","val_sample_max_mcc","COHORT_StopGrad","score_pr","score_fp","combined_avg","sel_epoch"]
                     and pd.api.types.is_numeric_dtype(df[c])
                     and df[c].nunique(dropna=True) >= 3]
 
@@ -6245,7 +6441,9 @@ elif mode == 'tune_viz_multi_v7':
     _created_stopgrad_imgs = []
     for p in trend_params:
         try:
-            sub = df[["val_sample_pr_auc","val_fp_per_min","COHORT_StopGrad", p]].copy()
+            sub = df[["val_sample_pr_auc","val_fp_per_min","val_latency_score","val_recall_at_0p7","COHORT_StopGrad", p] \
+                     if "val_latency_score" in df.columns and "val_recall_at_0p7" in df.columns else \
+                     [c for c in ["val_sample_pr_auc","val_fp_per_min","COHORT_StopGrad", p, "val_latency_score","val_recall_at_0p7"] if c in df.columns]].copy()
             agg = _trend_by_bins_cohort(sub, p, nbins=12)
             if agg.empty or agg["bin_mid"].nunique() < 3:
                 print(f"[trend] Skipped {p}: insufficient data after binning")
@@ -6263,13 +6461,17 @@ elif mode == 'tune_viz_multi_v7':
     heatmap_fp = None
     obj_corr_fp = None
     try:
+        # include extra objectives if present
+        obj_cols_all = [c for c in ["val_sample_pr_auc","val_fp_per_min",
+                                    "val_latency_score","val_recall_at_0p7",
+                                    "val_sample_max_f1","val_sample_max_mcc"]
+                        if c in df.columns]
         num_cols = [c for c in df.columns
-                    if c not in ["trial_number","val_sample_pr_auc","val_fp_per_min"]
+                    if c not in ["trial_number", *obj_cols_all, "COHORT_StopGrad","score_pr","score_fp","combined_avg","sel_epoch"]
                     and pd.api.types.is_numeric_dtype(df[c])]
         if num_cols:
-            corr_df = df[num_cols + ["val_sample_pr_auc","val_fp_per_min"]].corr(method='spearman')
-            plt.figure(figsize=(max(8, 0.6*len(corr_df.columns)), max(6, 0.5*len(corr_df)))
-                       )
+            corr_df = df[num_cols + obj_cols_all].corr(method='spearman')
+            plt.figure(figsize=(max(9, 0.6*len(corr_df.columns)), max(6, 0.5*len(corr_df))))
             sns.heatmap(corr_df, annot=True, fmt=".2f", cmap="coolwarm", cbar=True, square=False)
             plt.title("Spearman correlation: numeric hyperparameters vs objectives")
             plt.tight_layout()
@@ -6279,14 +6481,17 @@ elif mode == 'tune_viz_multi_v7':
         print(f"Correlation heatmap warning: {e}"); plt.close()
 
     try:
-        obj_corr = df[["val_sample_pr_auc","val_fp_per_min"]].corr(method='spearman')
-        plt.figure(figsize=(3.8,3.6))
-        sns.heatmap(obj_corr, annot=True, fmt=".2f", cmap="vlag", cbar=False,
-                    xticklabels=["PR-AUC (↑)","FP/min (↓)"],
-                    yticklabels=["PR-AUC (↑)","FP/min (↓)"])
-        plt.tight_layout()
-        obj_corr_fp = os.path.join(viz_dir, "objective_correlations.png")
-        plt.savefig(obj_corr_fp, dpi=140); plt.close()
+        # Objective-to-objective correlations (whatever exists)
+        obj_cols = [c for c in ["val_sample_pr_auc","val_fp_per_min","val_latency_score","val_recall_at_0p7",
+                                "val_sample_max_f1","val_sample_max_mcc"] if c in df.columns]
+        if len(obj_cols) >= 2:
+            obj_corr = df[obj_cols].corr(method='spearman')
+            plt.figure(figsize=(max(3.8, 0.9*len(obj_cols)), max(3.6, 0.8*len(obj_cols))))
+            sns.heatmap(obj_corr, annot=True, fmt=".2f", cmap="vlag", cbar=False,
+                        xticklabels=obj_cols, yticklabels=obj_cols)
+            plt.tight_layout()
+            obj_corr_fp = os.path.join(viz_dir, "objective_correlations.png")
+            plt.savefig(obj_corr_fp, dpi=140); plt.close()
     except Exception as e:
         print(f"Objective correlation warning: {e}"); plt.close()
 
@@ -6302,21 +6507,31 @@ elif mode == 'tune_viz_multi_v7':
     top_combined = df.sort_values("combined_avg", ascending=False).head(25)
     top_combined.to_csv(os.path.join(viz_dir, "top25_combined_avg.csv"), index=False)
 
-    # Top-by-objective HTML tables with links
+    # Top-by-objective HTML tables with links (extended)
     try:
         top_k = 25
         best_pr  = df.sort_values("val_sample_pr_auc", ascending=False).head(top_k).copy()
         best_fp  = df.sort_values("val_fp_per_min", ascending=True ).head(top_k).copy()
-        for fname, ddd in [("top_by_pr_auc.html", best_pr),
-                           ("top_by_fpmin.html", best_fp),
-                           ("top_by_combined.html", top_combined)]:
+        best_lat = df.sort_values("val_latency_score", ascending=False).head(top_k).copy() if "val_latency_score" in df.columns else None
+        best_rec = df.sort_values("val_recall_at_0p7", ascending=False).head(top_k).copy() if "val_recall_at_0p7" in df.columns else None
+
+        def _write_top(fname, ddd):
+            if ddd is None or ddd.empty: return
             dd = ddd.copy()
             dd["study_dir"] = dd["trial_number"].apply(_trial_link)
-            lead = ["trial_number","val_sample_pr_auc","val_fp_per_min","combined_avg","study_dir"]
+            lead = ["trial_number","val_sample_pr_auc","val_fp_per_min","val_latency_score","val_recall_at_0p7","combined_avg","study_dir"]
             keep = [c for c in lead if c in dd.columns] + [c for c in dd.columns if c not in lead]
             html_tbl = dd[keep].to_html(escape=False, index=False)
             with open(os.path.join(viz_dir, fname), "w") as fh:
                 fh.write(f"<html><head><meta charset='utf-8'><style>body{{font-family:Arial;margin:20px}} table{{border-collapse:collapse}} th,td{{border:1px solid #ddd;padding:6px}} th{{background:#f5f5f5}}</style></head><body>{html_tbl}</body></html>")
+
+        for fname, ddd in [("top_by_pr_auc.html", best_pr),
+                           ("top_by_fpmin.html", best_fp),
+                           ("top_by_latency.html", best_lat),
+                           ("top_by_recall.html",  best_rec),
+                           ("top_by_combined.html", top_combined)]:
+            _write_top(fname, ddd)
+
     except Exception as e:
         print(f"Top-k HTML warning: {e}")
 
@@ -6330,9 +6545,10 @@ elif mode == 'tune_viz_multi_v7':
     recommend_dir = os.path.join(extras_dir, "range_recommendations"); os.makedirs(recommend_dir, exist_ok=True)
     recon_dir     = os.path.join(extras_dir, "importance_reconciliation"); os.makedirs(recon_dir, exist_ok=True)
 
-    objective_cols = ["val_sample_pr_auc","val_fp_per_min"]
+    objective_cols = [c for c in ["val_sample_pr_auc","val_fp_per_min","val_latency_score","val_recall_at_0p7"]
+                      if c in df.columns]
     param_cols = [c for c in df.columns if c not in ["trial_number", *objective_cols,
-                                                     "score_pr","score_fp","combined_avg","COHORT_StopGrad"]]
+                                                     "score_pr","score_fp","combined_avg","COHORT_StopGrad","sel_epoch"]]
     num_params_all = [p for p in param_cols if pd.api.types.is_numeric_dtype(df[p])]
     cat_params = [p for p in param_cols if p not in num_params_all]
 
@@ -6364,9 +6580,8 @@ elif mode == 'tune_viz_multi_v7':
             plt.close()
 
     def _param_summary_scatter(data: pd.DataFrame, name: str):
-        for obj, ylabel in [("val_sample_pr_auc","PR-AUC (↑)"),
-                            ("val_fp_per_min","FP/min (↓)")]:
-            if obj not in data.columns: continue
+        for obj, ylabel in [(c, {"val_sample_pr_auc":"PR-AUC (↑)","val_fp_per_min":"FP/min (↓)",
+                                 "val_latency_score":"Latency (↑)","val_recall_at_0p7":"Recall@0.7 (↑)"}[c]) for c in objective_cols]:
             plt.figure(figsize=(max(8, 0.4*len(param_cols)), 4))
             ax = plt.gca()
             x_idx, x_labs = [], []
@@ -6416,28 +6631,28 @@ elif mode == 'tune_viz_multi_v7':
         return xc, mu, se
 
     num_params_simple = [c for c in df.columns
-                         if c not in ["trial_number","val_sample_pr_auc","val_fp_per_min","COHORT_StopGrad"]
+                         if c not in ["trial_number","val_sample_pr_auc","val_fp_per_min","val_latency_score","val_recall_at_0p7",
+                                      "val_sample_max_f1","val_sample_max_mcc","COHORT_StopGrad","score_pr","score_fp","combined_avg","sel_epoch"]
                          and pd.api.types.is_numeric_dtype(df[c])
                          and df[c].nunique(dropna=True) >= 3]
 
     for p in num_params_simple:
-        fig, axs = plt.subplots(2,1,figsize=(8,7), sharex=True)
-        ok = False
-        for ax, obj, lab in zip(axs,
-                                ["val_sample_pr_auc","val_fp_per_min"],
-                                ["PR-AUC (↑)", "FP/min (↓)"]):
-            if obj not in df.columns:
-                ax.set_ylabel(lab); continue
+        fig, axs = plt.subplots(len(objective_cols), 1, figsize=(8, 3.2*len(objective_cols)), sharex=True)
+        if len(objective_cols) == 1: axs = [axs]
+        ok_any = False
+        for ax, obj in zip(axs, objective_cols):
+            label_map = {"val_sample_pr_auc":"PR-AUC (↑)", "val_fp_per_min":"FP/min (↓)",
+                         "val_latency_score":"Latency (↑)", "val_recall_at_0p7":"Recall@0.7 (↑)"}
             out = quantile_trend(df[p], df[obj], q=12)
             if out is None:
-                ax.set_ylabel(lab); continue
+                ax.set_ylabel(label_map[obj]); continue
             x, mu, se = out
             ax.plot(x, mu, marker="o", linewidth=1.5)
             if np.isfinite(se).any():
                 ax.fill_between(x, mu - 1.96*np.nan_to_num(se), mu + 1.96*np.nan_to_num(se), alpha=0.2)
-            ax.set_ylabel(lab); ok = True
+            ax.set_ylabel(label_map[obj]); ok_any = True
         axs[-1].set_xlabel(p)
-        if ok:
+        if ok_any:
             fig.suptitle(f"Quantile trend — {p}")
             fig.tight_layout(rect=[0,0,1,0.97])
             fig.savefig(os.path.join(qplots_dir, f"{p}_quantile_trends.png"), dpi=130)
@@ -6458,7 +6673,9 @@ elif mode == 'tune_viz_multi_v7':
         if xname not in df.columns or yname not in df.columns:
             return
         for obj, lab in [("val_sample_pr_auc","PR-AUC (↑)"),
-                         ("val_fp_per_min","FP/min (↓)")]:
+                         ("val_fp_per_min","FP/min (↓)"),
+                         ("val_latency_score","Latency (↑)"),
+                         ("val_recall_at_0p7","Recall@0.7 (↑)")]:
             if obj not in df.columns: continue
             H = heat2d(df[xname], df[yname], df[obj])
             if H is None:
@@ -6477,21 +6694,23 @@ elif mode == 'tune_viz_multi_v7':
     if "LOSS_TV" in df.columns and "LOSS_TupMPN" in df.columns:
         _maybe_heatmap("LOSS_TV", "LOSS_TupMPN")
 
-    # Range recommendations: top-quartile trial bands per objective
+    # Range recommendations: top-quartile trial bands per objective (extended)
     def recommend_ranges(data: pd.DataFrame, name: str, top_frac=0.25):
+        metric_list = [c for c in ["val_sample_pr_auc","val_fp_per_min","val_latency_score","val_recall_at_0p7"]
+                       if c in data.columns and not data[c].isnull().all()]
+        nice_name = {"val_sample_pr_auc":"PR-AUC (↑)",
+                     "val_fp_per_min":"FP/min (↓)",
+                     "val_latency_score":"Latency (↑)",
+                     "val_recall_at_0p7":"Recall@0.7 (↑)"}
         num_params_local = [p for p in data.columns
-                            if p not in ["trial_number","val_sample_pr_auc","val_fp_per_min",
-                                         "score_pr","score_fp","combined_avg","COHORT_StopGrad"]
+                            if p not in ["trial_number", *metric_list, "score_pr","score_fp","combined_avg","COHORT_StopGrad","sel_epoch"]
                             and pd.api.types.is_numeric_dtype(data[p])]
         cat_params_local = [p for p in data.columns
-                            if p not in ["trial_number","val_sample_pr_auc","val_fp_per_min",
-                                         "score_pr","score_fp","combined_avg","COHORT_StopGrad"]
+                            if p not in ["trial_number", *metric_list, "score_pr","score_fp","combined_avg","COHORT_StopGrad","sel_epoch"]
                             and p not in num_params_local]
         recs = {}
-        for obj, asc, nice in [("val_sample_pr_auc", False, "PR-AUC (↑)"),
-                               ("val_fp_per_min", True,  "FP/min (↓)")]:
-            if obj not in data.columns or data[obj].isnull().all():
-                continue
+        for obj in metric_list:
+            asc = (obj == "val_fp_per_min")  # only FP/min is minimize
             dsort = data.sort_values(obj, ascending=asc)
             top_n = max(20, int(len(dsort)*top_frac))
             top   = dsort.head(top_n)
@@ -6509,7 +6728,7 @@ elif mode == 'tune_viz_multi_v7':
                 vc = top[p].value_counts(normalize=True, dropna=False)
                 if len(vc):
                     cat[p] = vc.head(3).to_dict()
-            recs[nice] = {"num_quantile_20_80": rng, "cat_top3_props": cat, "n_top": int(len(top))}
+            recs[nice_name[obj]] = {"num_quantile_20_80": rng, "cat_top3_props": cat, "n_top": int(len(top))}
         with open(os.path.join(recommend_dir, f"ranges_{name}.json"), "w") as fh:
             json.dump(recs, fh, indent=2)
         rows = []
@@ -6525,7 +6744,7 @@ elif mode == 'tune_viz_multi_v7':
         if df[~sg_mask].shape[0] >= 40: recommend_ranges(df[~sg_mask], "StopGrad_OFF")
         if df[ sg_mask].shape[0] >= 40: recommend_ranges(df[ sg_mask], "StopGrad_ON")
 
-    # Importance reconciliation: absolute Spearman vs PR-AUC (global/cohort)
+    # Importance reconciliation: absolute Spearman vs PR-AUC (global/cohort) — keep as-is for PR-AUC
     imp_rows = []
     for p in num_params_all:
         try:
@@ -6576,8 +6795,8 @@ elif mode == 'tune_viz_multi_v7':
       <li><a href="all_completed_trials.csv">all_completed_trials.csv</a></li>
       <li><a href="pareto_trials.csv">pareto_trials.csv</a> &nbsp;|&nbsp; <a href="pareto_trials.html">Pareto table (HTML)</a></li>
       <li><a href="top25_combined_avg.csv">top25_combined_avg.csv</a></li>
-      <li>Top-K (HTML): <a href="top_by_pr_auc.html">PR-AUC</a> · <a href="top_by_fpmin.html">FP/min</a> · <a href="top_by_combined.html">Combined</a></li>
-      <li>Objective EDFs: <a href="edf_pr_auc.html">PR-AUC</a> · <a href="edf_fp_per_min.html">FP/min</a></li>
+      <li>Top-K (HTML): <a href="top_by_pr_auc.html">PR-AUC</a> · <a href="top_by_fpmin.html">FP/min</a> · <a href="top_by_latency.html">Latency</a> · <a href="top_by_recall.html">Recall</a> · <a href="top_by_combined.html">Combined</a></li>
+      <li>Objective EDFs: <a href="edf_pr_auc.html">PR-AUC</a> · <a href="edf_fp_per_min.html">FP/min</a> · <a href="edf_latency.html">Latency</a> · <a href="edf_recall.html">Recall</a></li>
     </ul>""")
 
     if pareto_snapshot_html:
@@ -6591,13 +6810,25 @@ elif mode == 'tune_viz_multi_v7':
       <div class="card"><a href="history_fp_per_min.html">Optimization History — FP/min</a></div>
       <div class="card"><a href="param_importances_pr_auc.html">Param Importances — PR-AUC</a></div>
       <div class="card"><a href="param_importances_fp_per_min.html">Param Importances — FP/min</a></div>
+      <div class="card"><a href="history_latency.html">Optimization History — Latency</a></div>
+      <div class="card"><a href="history_recall.html">Optimization History — Recall@0.7</a></div>
+      <div class="card"><a href="param_importances_latency.html">Param Importances — Latency</a></div>
+      <div class="card"><a href="param_importances_recall.html">Param Importances — Recall@0.7</a></div>
       <div class="card"><a href="pareto_front_2obj.html">Pareto Front (interactive)</a></div>
       <div class="card"><a href="hypervolume_history.html">Hypervolume History</a></div>
     </div>""")
 
     html.append("<h2>Objective Projection</h2><div class='grid'>")
     if HAVE_PLOTLY and os.path.exists(os.path.join(viz_dir, "scatter2d_all.html")):
-        html.append('<div class="card"><a href="scatter2d_all.html">2D Scatter (All trials, Pareto highlighted)</a></div>')
+        html.append('<div class="card"><a href="scatter2d_all.html">PR-AUC vs FP/min — Pareto highlighted</a></div>')
+    if HAVE_PLOTLY and os.path.exists(os.path.join(viz_dir, "scatter2d_prauc_fp_color_latency.html")):
+        html.append('<div class="card"><a href="scatter2d_prauc_fp_color_latency.html">PR-AUC vs FP/min — color=Latency</a></div>')
+    if HAVE_PLOTLY and os.path.exists(os.path.join(viz_dir, "scatter2d_prauc_fp_color_recall.html")):
+        html.append('<div class="card"><a href="scatter2d_prauc_fp_color_recall.html">PR-AUC vs FP/min — color=Recall@0.7</a></div>')
+    if HAVE_PLOTLY and os.path.exists(os.path.join(viz_dir, "scatter2d_prauc_latency.html")):
+        html.append('<div class="card"><a href="scatter2d_prauc_latency.html">PR-AUC vs Latency</a></div>')
+    if HAVE_PLOTLY and os.path.exists(os.path.join(viz_dir, "scatter2d_fpmin_latency.html")):
+        html.append('<div class="card"><a href="scatter2d_fpmin_latency.html">FP/min vs Latency</a></div>')
     html.append("</div>")
 
     # StopGrad trend plots (overlay + facets)
