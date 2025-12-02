@@ -1060,8 +1060,8 @@ elif mode == 'predict':
         max_weights = f"{study_dir}/max.weights.h5"
         mcc_weights = f"{study_dir}/mcc.weights.h5"
 
-        event_weights = f"{study_dir}/event.finetune.weights.h5"
-        max_weights = f"{study_dir}/max.finetune.weights.h5"
+        # event_weights = f"{study_dir}/event.finetune.weights.h5"
+        # max_weights = f"{study_dir}/max.finetune.weights.h5"
         if os.path.exists(event_weights) and os.path.exists(max_weights):
             # Both files exist, select the most recently modified one
             event_mtime = os.path.getmtime(event_weights)

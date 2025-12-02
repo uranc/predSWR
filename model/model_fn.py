@@ -1138,7 +1138,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         cls_logits = tf.keras.layers.Conv1D(
             1, 1, use_bias=True,
             kernel_initializer='glorot_uniform',
-            bias_initializer='zeros',
+            bias_initializer=Constant(-3.0),
             name='cls_logits'
         )(cls_logits_in)
         cls_prob = tf.keras.layers.Activation('sigmoid', name='cls_prob')(cls_logits)
@@ -3750,11 +3750,16 @@ def mixed_circle_loss(horizon=0, loss_weight=1, params=None, model=None, this_op
         # ---- TV smoothing on logits ----
         lam_tv = tf.cast(params.get('LOSS_TV', 0.02), tf.float32)
 
+        # tv_term = lam_tv * (
+        #     tv_trunc_logp_masked(a_prob, n_mask, tau=4.0) +         # A: smooth after onset
+        #     tv_trunc_logp_masked(p_prob, n_mask, tau=4.0) +         # P: same
+        #     tv_trunc_logp_masked(n_prob, n_mask, tau=4.0) # N: suppress upward drift
+        # )
         tv_term = lam_tv * (
-            tv_trunc_logp_masked(a_prob, n_mask, tau=4.0) +         # A: smooth after onset
-            tv_trunc_logp_masked(p_prob, n_mask, tau=4.0) +         # P: same
-            tv_trunc_logp_masked(n_prob, n_mask, tau=4.0) # N: suppress upward drift
-        )
+                    tv_on_logits_masked(a_logit, n_mask) +  # Smooth logits A
+                    tv_on_logits_masked(p_logit, n_mask) +  # Smooth logits P
+                    tv_on_logits_masked(n_logit, n_mask)    # Smooth logits N
+                )        
 
         classification_loss = classification_loss + tv_term
 
