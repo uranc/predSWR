@@ -2696,6 +2696,7 @@ def class_finetune(horizon=0, loss_weight=1, params=None, model=None, this_op=No
         # y_bt, logit_bt, w_bt: [B, T]
         focal = tf.keras.losses.BinaryFocalCrossentropy(
             alpha=alpha, gamma=gamma, from_logits=True,
+            apply_class_balancing=True,
             reduction=tf.keras.losses.Reduction.NONE, axis=-1
         )
         # Add a singleton channel so Keras doesn't try to squeeze weird dims

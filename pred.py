@@ -176,9 +176,9 @@ def objective_triplet(trial):
     params['CIRCLE_gamma'] = trial.suggest_float('CIRCLE_gamma',  28.0, 36.0, step=2.0)
 
     params['FOCAL_ALPHA'] = trial.suggest_float('FOCAL_ALPHA', 0.1, 1.0, step=0.05)
-    ax = params['FOCAL_ALPHA']
+    ax = int(100 * params['FOCAL_ALPHA'])
     params['FOCAL_GAMMA'] = trial.suggest_float('FOCAL_GAMMA', 1.0, 5.0, step=0.5)
-    gx = params['FOCAL_GAMMA']
+    gx = int(100 * params['FOCAL_GAMMA'])
     # params["LOSS_Circle"]  = trial.suggest_float("LOSS_Circle", 40.0, 90.0)
 
     # SupCon kept as a stabilizer; grid chosen so (LOSS_SupCon / SUPCON_T) ≤ 10
