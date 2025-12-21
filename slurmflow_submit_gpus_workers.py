@@ -15,7 +15,8 @@ import time, pdb
 # tag = 'tripletOnlyFinn1250'
 # tag = 'tripletOnlyStop2500'
 # tag = 'tripletOnlyFocal2500'
-tag = 'tripletOnlyLogit2500'
+# tag = 'tripletOnlyLogit2500'
+tag = 'tripletOnlyHyp2500'
 
 # Rest of script remains unchanged
 ijob = -1

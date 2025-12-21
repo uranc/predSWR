@@ -224,12 +224,6 @@ def objective_triplet(trial):
     study_dir = f"studies/{param_dir}/study_{trial.number}_{trial.datetime_start.strftime('%Y%m%d_%H%M%S')}"
     os.makedirs(study_dir, exist_ok=True)
 
-    # total steps
-    total_steps     = float(params['steps_per_epoch'] * int(params['NO_EPOCHS']) * 0.9)
-    print('Total Steps: ', total_steps)
-    params['TOTAL_STEPS'] = total_steps
-
-
     # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
     import importlib.util
     model_dir = f"studies/{param_dir}/base_model"
@@ -296,7 +290,12 @@ def objective_triplet(trial):
 
     params.update(dataset_params)   # merge, don't overwrite
     # Ramps (keep constant for stability this round)
-    ts = float(params.get("TOTAL_STEPS", 150000))
+    
+
+    # total steps
+    ts     = float(params['steps_per_epoch'] * int(params['NO_EPOCHS']) * 0.9)
+    print('Total Steps: ', ts)
+    params['TOTAL_STEPS'] = ts
     params["RAMP_DELAY"]     = 0.02 * ts
     params["RAMP_STEPS"]     = 0.30 * ts
     params["NEG_RAMP_DELAY"] = 0.1 * ts
@@ -348,7 +347,7 @@ def objective_triplet(trial):
         cb.ModelCheckpoint(f"{study_dir}/event.weights.h5", monitor='val_sample_pr_auc',
                         save_best_only=True, save_weights_only=True, mode='max', verbose=1),
         
-        optuna.integration.TFKerasPruningCallback(trial, 'val_sample_pr_auc'),
+        # optuna.integration.TFKerasPruningCallback(trial, 'val_sample_pr_auc'),
 
     ]
     val_steps = dataset_params['VAL_STEPS']
@@ -429,10 +428,10 @@ def objective_triplet(trial):
 
     # ---- quick sanity filter to kill obviously bad/degenerate runs (same signatures you used)
     bad = (
-        (not np.isfinite(prauc_sel)) or (prauc_sel <= 1e-4) or
-        (not np.isfinite(rec07_sel)) or (rec07_sel <= 1e-4) or (rec07_sel == 1.0) or
-        (not np.isfinite(fpmin_sel)) or (fpmin_sel <= 1e-6) or   # fp≈0 → meaningless flat model
-        (not np.isfinite(lat_sel))   or (lat_sel >= 0.9999)      # latency≈1 → bug signature
+        (not np.isfinite(prauc_sel)) or (prauc_sel <= 0.001) or
+        (not np.isfinite(rec07_sel)) or (rec07_sel <= 0.001) or (rec07_sel > 0.999) or
+        (not np.isfinite(fpmin_sel)) or (fpmin_sel <= 0.001) or   # fp≈0 → meaningless flat model
+        (not np.isfinite(lat_sel))   or (lat_sel >= 0.999)      # latency≈1 → bug signature
     )
     if bad:
         raise optuna.TrialPruned("Bug signature at selected epoch (prauc/rec≈0, fp≈0, or latency≈1).")

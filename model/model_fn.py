@@ -1088,9 +1088,6 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         r_drop = 0.0
 
     hori_shift = 0
-    if params['TYPE_ARCH'].find('Only')>-1:
-        hori_shift = int(int(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Only')+4:params['TYPE_ARCH'].find('Only')+6])/1000*params['SRATE'])
-        print('Using Horizon Timesteps:', hori_shift)
     is_classification_only = True
 
     print('Using Loss Weight:', params['LOSS_WEIGHT'])
