@@ -219,7 +219,7 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
     # Catalogue thresholds (define in ms, convert to samples below)
     'ANCHOR_MIN_MS': 20,   # e.g. ≥20 ms overlap
     'POS_MIN_MS': 10,       # e.g. ≥8 ms overlap
-    'GRACE_MS': 10,
+    'GRACE_MS': 5,
 
     # Negatives
     'NEG_GAP_MS': 20,      # dilation gap (ms)
