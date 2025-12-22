@@ -1305,7 +1305,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             SamplePRAUC(model=model),
             SampleMaxMCC(model=model),
             SampleMaxF1(model=model),
-            LatencyScore(thresholds=tf.linspace(0.5, 0.99, 6), min_run=5, tau=16.0, model=model),
+            LatencyScore(thresholds=[0.7], min_run=5, tau=16.0, model=model),
             RecallAt0p7(model=model),  # <-- new
             FPperMinAt0p3(
                 win_sec=params['NO_STRIDES']/params['SRATE'],
