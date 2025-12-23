@@ -5153,41 +5153,44 @@ elif mode == 'tune_viz_multi_v8':
         print("No completed trials; nothing to visualize.")
         sys.exit(0)
 
-    # Check dimensionality
+    # 1. Determine Objectives
     nvals = max((len(t.values) if t.values else 0) for t in trials)
     print(f"Detected {nvals} objectives per trial.")
 
-    # === FIX: Update mappings to match your new return (PR-AUC, Latency) ===
-    # OLD: OBJECTIVE_INDEX = dict(pr_auc=0, fp_per_min=1) 
-    # NEW: Assuming you now return (PR-AUC, Latency)
+    # Fix mapping: Index 0 is PR-AUC, Index 1 is Latency (if present)
     if nvals == 2:
         OBJECTIVE_INDEX = dict(pr_auc=0, latency=1)
         print("Mapping: Index 0 -> PR-AUC, Index 1 -> Latency")
     else:
-        # Fallback if you revert to single objective
         OBJECTIVE_INDEX = dict(pr_auc=0)
 
-    # Collect rows
+    # 2. Fix Constraints Logic (Restore missing variables)
+    def _get_constraints(tr):
+        return tr.system_attrs.get("constraints") or tr.user_attrs.get("constraints")
+
+    has_constraints = any(_get_constraints(t) is not None for t in trials)
+
+    feasible_trials = [
+        t for t in trials 
+        if (_get_constraints(t) is None) or all((c is not None) and (c <= 0) for c in _get_constraints(t))
+    ]
+    DO_HV = not (has_constraints and len(feasible_trials) == 0)
+
+    if has_constraints and not DO_HV:
+        print("No feasible trials under constraints; skipping hypervolume plot.")
+
+    # 3. Collect Rows
     rows = []
     for t in trials:
         if not t.values: continue
         try:
-            # 1. Get Objectives (The things you returned in return statement)
+            # Get Objectives from t.values
             pr = float(t.values[OBJECTIVE_INDEX['pr_auc']])
-            
-            # If your 2nd objective is Latency, get it here
             lat_obj = float(t.values[OBJECTIVE_INDEX['latency']]) if 'latency' in OBJECTIVE_INDEX else np.nan
             
-            # 2. Get Attributes (The things you saved in set_user_attr)
-            # CRITICAL: We now pull FP/min from here, NOT from t.values!
+            # Get FP/min from Attributes (NOT t.values)
             real_fp = _ua(t, "sel_fp_per_min")
             
-            # Fallback: if 'real_fp' is missing, check if it was mistakenly in values[1]
-            # (Only necessary if analyzing mixed old/new trials)
-            if pd.isna(real_fp) and 'latency' in OBJECTIVE_INDEX:
-                # Heuristic: if value is > 1.0, it might be FP/min, not Latency/Recall
-                pass 
-
         except Exception:
             continue
 
@@ -5198,8 +5201,8 @@ elif mode == 'tune_viz_multi_v8':
         rec = {
             "trial_number": t.number,
             "val_sample_pr_auc": pr,
-            "val_latency_score": lat_obj,      # Objective 2
-            "val_fp_per_min":    real_fp,      # From Attribute
+            "val_latency_score": lat_obj,
+            "val_fp_per_min":    real_fp, # Now safely loaded from attributes
             
             # Other attributes
             "val_recall_at_0p7":  _ua(t, "sel_recall_at_0p7"),
@@ -5212,90 +5215,80 @@ elif mode == 'tune_viz_multi_v8':
 
     df = pd.DataFrame(rows)
     if df.empty:
-        print("No valid completed trials with 2 objectives.")
+        print("No valid completed trials.")
         sys.exit(0)
-
-    # Optional sanity: PR-AUC should be in [0,1]. If >1 frequently, user probably swapped.
-    if (df["val_sample_pr_auc"] > 1.05).mean() > 0.5:
-        print("Warning: Many PR-AUC values > 1. Did you swap objective order when saving?")
 
     # Save all trials CSV
     all_csv = os.path.join(viz_dir, "all_completed_trials.csv")
     df.to_csv(all_csv, index=False)
-    print(f"Saved {len(df)} trials → {all_csv}")
+    print(f"Saved {len(df)} trials -> {all_csv}")
 
+    # ---------- STANDARD OPTUNA VISUALS ----------
     # ---------- STANDARD OPTUNA VISUALS ----------
     print("Generating Optuna standard plots...")
     try:
-        # History per objective
+        # 1. History - PR-AUC (Objective 0)
         fig_hist_pr = optuna.visualization.plot_optimization_history(
-            study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'),
-            target_name="Sample PR-AUC")
+            study, 
+            target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'), 
+            target_name="Sample PR-AUC"
+        )
         fig_hist_pr.write_html(os.path.join(viz_dir, "history_pr_auc.html"))
 
-        fig_hist_fp = optuna.visualization.plot_optimization_history(
-            study, target=lambda t: t.values[OBJECTIVE_INDEX['fp_per_min']] if t.values else float('nan'),
-            target_name="FP/min")
-        fig_hist_fp.write_html(os.path.join(viz_dir, "history_fp_per_min.html"))
-
-        # ---- NEW: Histories for latency & recall ----
-        try:
+        # 2. History - Latency (Objective 1)
+        if 'latency' in OBJECTIVE_INDEX:
             fig_hist_lat = optuna.visualization.plot_optimization_history(
-                study, target=lambda t: _ua(t, "sel_latency_score"),
-                target_name="Latency score (↑)"
+                study, 
+                target=lambda t: t.values[OBJECTIVE_INDEX['latency']] if t.values else float('nan'),
+                target_name="Latency Score"
             )
             fig_hist_lat.write_html(os.path.join(viz_dir, "history_latency.html"))
-        except Exception as e:
-            print(f"Latency history warning: {e}")
 
-        try:
-            fig_hist_rec = optuna.visualization.plot_optimization_history(
-                study, target=lambda t: _ua(t, "sel_recall_at_0p7"),
-                target_name="Recall@0.7 (↑)"
-            )
-            fig_hist_rec.write_html(os.path.join(viz_dir, "history_recall.html"))
-        except Exception as e:
-            print(f"Recall history warning: {e}")
+        # 3. History - FP/min (Attribute - NOT Objective)
+        # FIX: Use _ua helper, not t.values
+        fig_hist_fp = optuna.visualization.plot_optimization_history(
+            study, 
+            target=lambda t: _ua(t, "sel_fp_per_min"), 
+            target_name="FP/min"
+        )
+        fig_hist_fp.write_html(os.path.join(viz_dir, "history_fp_per_min.html"))
 
-        # Param importances per objective
+        # 4. Param Importances
+        # PR-AUC
         fig_imp_pr = optuna.visualization.plot_param_importances(
-            study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'),
-            target_name="Sample PR-AUC")
+            study, 
+            target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'), 
+            target_name="Sample PR-AUC"
+        )
         fig_imp_pr.write_html(os.path.join(viz_dir, "param_importances_pr_auc.html"))
-
-        fig_imp_fp = optuna.visualization.plot_param_importances(
-            study, target=lambda t: t.values[OBJECTIVE_INDEX['fp_per_min']] if t.values else float('nan'),
-            target_name="FP/min")
-        fig_imp_fp.write_html(os.path.join(viz_dir, "param_importances_fp_per_min.html"))
-
-        # ---- NEW: Param importances for latency & recall ----
-        try:
+        
+        # Latency
+        if 'latency' in OBJECTIVE_INDEX:
             fig_imp_lat = optuna.visualization.plot_param_importances(
-                study, target=lambda t: _ua(t, "sel_latency_score"),
-                target_name="Latency score (↑)"
+                study, 
+                target=lambda t: t.values[OBJECTIVE_INDEX['latency']] if t.values else float('nan'),
+                target_name="Latency Score"
             )
             fig_imp_lat.write_html(os.path.join(viz_dir, "param_importances_latency.html"))
-        except Exception as e:
-            print(f"Latency importances warning: {e}")
 
-        try:
-            fig_imp_rec = optuna.visualization.plot_param_importances(
-                study, target=lambda t: _ua(t, "sel_recall_at_0p7"),
-                target_name="Recall@0.7 (↑)"
-            )
-            fig_imp_rec.write_html(os.path.join(viz_dir, "param_importances_recall.html"))
-        except Exception as e:
-            print(f"Recall importances warning: {e}")
+        # FP/min (Attribute)
+        fig_imp_fp = optuna.visualization.plot_param_importances(
+            study, 
+            target=lambda t: _ua(t, "sel_fp_per_min"), 
+            target_name="FP/min"
+        )
+        fig_imp_fp.write_html(os.path.join(viz_dir, "param_importances_fp_per_min.html"))
 
-        # Pareto front (2D)
-        # This will now plot PR-AUC vs Latency (The actual optimization front)
+        # 5. Pareto Front
+        # Only plots the ACTUAL objectives (PR-AUC vs Latency)
         names_by_index = [""] * nvals
         names_by_index[OBJECTIVE_INDEX['pr_auc']] = "Sample PR-AUC"
         if 'latency' in OBJECTIVE_INDEX:
             names_by_index[OBJECTIVE_INDEX['latency']] = "Latency Score"
-
+            
         fig_pareto = optuna.visualization.plot_pareto_front(study, target_names=names_by_index)
         fig_pareto.write_html(os.path.join(viz_dir, "pareto_front_2obj.html"))
+
     except Exception as e:
         print(f"Standard plot warning: {e}")
 

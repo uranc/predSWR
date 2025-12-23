@@ -2,7 +2,7 @@
 #SBATCH --job-name=tensorflow_gpu
 #SBATCH --partition=GPUlongx86
 #SBATCH --gres=gpu:rtxa6000:1
-#SBATCH --cpus-per-gpu=4
+#SBATCH --cpus-per-gpu=6
 #SBATCH --mem-per-cpu=7800
 #SBATCH --time=00-23:59:00
 #SBATCH --mail-type=END,FAIL
