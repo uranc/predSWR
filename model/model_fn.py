@@ -1350,13 +1350,15 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         )
 
         # Metrics - only applied to anchor output for metric tracking
+        high_conf_range = [0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
         model._is_classification_only = True
         metrics = [
             SamplePRAUC(model=model),
             SampleMaxMCC(model=model),
             SampleMaxF1(model=model),
-            LatencyScore(thresholds=tf.linspace(0.5, 0.99, 6), min_run=5, tau=16.0, model=model),
-            RecallAt0p7(model=model),  # <-- new
+            LatencyScoreRange(thresholds=high_conf_range, min_run=5, tau=16.0, model=model),
+            # LatencyScore(thresholds=tf.constant([0.7]), min_run=5, tau=16.0, model=model),
+            MeanHighConfRecall(thresholds=high_conf_range, model=model),
             FPperMinAt0p3(
                 win_sec=params['NO_STRIDES']/params['SRATE'],
                 mode="consec", consec_k=3,
@@ -1366,7 +1368,10 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # Create loss function and compile model
         # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         # loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-        loss_fn = class_finetune(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        # loss_fn = class_finetune(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        # loss_fn = mixed_hybrid_loss_fine_tuning(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        loss_fn = mixed_hybrid_loss_final(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        
         model.load_weights(params['WEIGHT_FILE'], by_name=True)
         print('Loaded weights for fine-tuning from', params['WEIGHT_FILE'])
         model.compile(
@@ -1818,6 +1823,120 @@ class SampleMaxF1(tf.keras.metrics.Metric):
         for v in (self.tp, self.fp, self.fn): v.assign(tf.zeros_like(v))
 
 # ================= Sample-level LATENCY SCORE =================
+class LatencyScoreRange(tf.keras.metrics.Metric):
+    """
+    Calculates Latency Score across a range of thresholds and averages them.
+    Rewards models that trigger EARLY *and* with HIGH CONFIDENCE.
+    """
+    def __init__(self, thresholds=[0.7, 0.75, 0.8, 0.85, 0.9, 0.95], 
+                 min_run=5, tau=16.0, name="latency_score_range", model=None, **kw):
+        super().__init__(name=name, **kw)
+        self.tau = tf.constant(float(tau), tf.float32)
+        # Ensure thresholds are a tensor
+        self.tau_grid = tf.constant(thresholds, dtype=tf.float32)
+        self.k = len(thresholds)
+        self.min_run = int(min_run)
+        
+        self.sum_score = self.add_weight("sum_score", shape=(self.k,), initializer="zeros")
+        self.count     = self.add_weight("count",     shape=(self.k,), initializer="zeros")
+        self.model = model
+
+    @staticmethod
+    def _first_true_idx(mat_bool):
+        """
+        Finds the index of the first True value along the last axis.
+        Args:
+            mat_bool: Boolean tensor [..., T]
+        Returns:
+            idx: int32 tensor of indices [...,]
+            has: boolean tensor indicating if any True value exists [...,]
+        """
+        # Cast to int to perform argmax (returns first occurrence of max value)
+        idx = tf.argmax(tf.cast(mat_bool, tf.int32), axis=-1, output_type=tf.int32)
+        has = tf.reduce_any(mat_bool, axis=-1)
+        return idx, has
+
+    @staticmethod
+    def _enforce_min_run(pred_bt, k):
+        """
+        Filters detections to only include runs of length >= k.
+        Args:
+            pred_bt: Boolean tensor [B, T]
+            k: Minimum run length
+        """
+        if k <= 1: 
+            return pred_bt
+        
+        # Convolve with a kernel of ones of size k
+        x = tf.cast(pred_bt, tf.float32)[..., None]      # [B,T,1]
+        filt = tf.ones((k, 1, 1), x.dtype)               # [k,1,1]
+        
+        # Result is the running sum. If sum >= k, it means we have k ones in a row.
+        runsum = tf.nn.conv1d(x, filt, stride=1, padding="SAME")
+        
+        # NOTE: conv1d 'SAME' padding centers the window.
+        # To be strictly causal or accurate to the 'first' index, simple checking is usually enough
+        # as long as we treat the run existence consistently.
+        return runsum[..., 0] >= float(k)
+
+    def update_state(self, y_true, y_pred, **_):
+        # 1. Get Labels and Probs
+        yt = y_true[..., 0]
+        # Dynamically find probability index, default to 1
+        prob_idx = getattr(self.model, "_cls_prob_index", 1)
+        yp = y_pred[..., prob_idx]
+        
+        yt_bin = yt >= 0.5
+        
+        # 2. Get Ground Truth Onsets
+        onset_idx, has_ev = self._first_true_idx(yt_bin)
+        
+        # 3. Check all thresholds at once: [K, B, T]
+        # Broadcast yp to [1, B, T] and tau_grid to [K, 1, 1]
+        pred_kbt = yp[None, ...] >= self.tau_grid[:, None, None]
+
+        # 4. Process each threshold level using map_fn
+        # This loops over K (thresholds), processing the [B, T] batch for each.
+        def one_k(pred_bt):
+            if self.min_run > 1:
+                pred_bt = self._enforce_min_run(pred_bt, self.min_run)
+            
+            det_idx, has_det = self._first_true_idx(pred_bt)
+            
+            # Only valid if there was an Event AND a Detection
+            valid = has_ev & has_det
+            
+            # Latency: Detection Index - Onset Index
+            lat = tf.cast(det_idx - onset_idx, tf.float32)
+            
+            # Penalty only for positive latency (late detection). 
+            # Early detection (negative lat) gets 0 penalty -> Score 1.0
+            lat_pos = tf.nn.relu(lat)
+            score = tf.exp(-lat_pos / self.tau)
+            
+            # Zero out invalid windows
+            score = tf.where(valid, score, 0.0)
+            
+            return tf.reduce_sum(score), tf.reduce_sum(tf.cast(valid, tf.float32))
+
+        # Run map_fn over the K dimension
+        sums, cnts = tf.map_fn(one_k, pred_kbt, fn_output_signature=(tf.float32, tf.float32))
+        
+        self.sum_score.assign_add(sums)
+        self.count.assign_add(cnts)
+
+    def result(self):
+        eps = tf.keras.backend.epsilon()
+        # Score per threshold
+        scores = self.sum_score / (self.count + eps)
+        # Return MEAN across all thresholds
+        return tf.reduce_mean(scores)
+        
+    def reset_state(self):
+        self.sum_score.assign(tf.zeros(self.k))
+        self.count.assign(tf.zeros(self.k))
+        
+# ================= Sample-level LATENCY SCORE =================
 class LatencyScore(tf.keras.metrics.Metric):
     """
     Early-OK latency: score = exp(-max(0, det_idx - onset_idx)/tau).
@@ -1927,6 +2046,52 @@ class FPperMinMetric(tf.keras.metrics.Metric):
         self.fp.assign(0.); self.nwin.assign(0.)
 
 # ================= Recall @ τ = 0.7 (sample-level) =================
+class MeanHighConfRecall(tf.keras.metrics.Metric):
+    """
+    Calculates Recall at multiple thresholds and returns the MEAN.
+    Differentiates between 'barely detecting' (0.7) and 'confidently detecting' (0.99).
+    """
+    def __init__(self, thresholds=[0.7, 0.75, 0.8, 0.85, 0.9, 0.95], name="mean_high_conf_recall", model=None, **kw):
+        super().__init__(name=name, **kw)
+        self.thresholds = tf.constant(thresholds, dtype=tf.float32)
+        self.k = len(thresholds)
+        # We track TP and FN for *each* threshold separately
+        self.tp = self.add_weight("tp", shape=(self.k,), initializer="zeros")
+        self.fn = self.add_weight("fn", shape=(self.k,), initializer="zeros")
+        self.model = model
+
+    def update_state(self, y_true, y_pred, **_):
+        yt = _yt_bt(y_true)                     # [B, T]
+        yp = _yp_bt(y_pred, self.model)         # [B, T]
+        
+        # Ground Truth Positives
+        yt_pos = yt >= 0.5                      # [B, T] (Bool)
+        
+        # Predictions at multiple thresholds
+        # Shape: [K, B, T]
+        pred_kbt = yp[None, ...] >= self.thresholds[:, None, None]
+        
+        # Broadcast Ground Truth to [K, B, T]
+        yt_pos_k = tf.repeat(yt_pos[None, ...], self.k, axis=0)
+        
+        # Calculate TP and FN for each threshold
+        tp_k = tf.reduce_sum(tf.cast(pred_kbt & yt_pos_k, tf.float32), axis=[1, 2])
+        fn_k = tf.reduce_sum(tf.cast(~pred_kbt & yt_pos_k, tf.float32), axis=[1, 2])
+        
+        self.tp.assign_add(tp_k)
+        self.fn.assign_add(fn_k)
+
+    def result(self):
+        eps = tf.keras.backend.epsilon()
+        # Recall per threshold
+        recalls = self.tp / (self.tp + self.fn + eps)
+        # Return AVERAGE Recall across all strict thresholds
+        return tf.reduce_mean(recalls)
+
+    def reset_state(self):
+        self.tp.assign(tf.zeros(self.k))
+        self.fn.assign(tf.zeros(self.k))
+        
 class RecallAt0p7(tf.keras.metrics.Metric):
     """
     Sample-level recall at fixed threshold τ=0.7.
@@ -3041,5 +3206,135 @@ def mixed_hybrid_loss_final(horizon=0, loss_weight=1, params=None, model=None, t
         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
 
         return tf.reduce_mean(metric_loss) + 0.5 * ratio * tf.reduce_mean(classification_loss)
+
+    return loss_fn
+
+def mixed_hybrid_loss_fine_tuning(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+    import math
+    import tensorflow as tf
+
+    # ==========================
+    # 1. HELPERS
+    # ==========================
+    def _mean_pool_bt(x):               
+        return tf.reduce_mean(tf.cast(x, tf.float32), axis=1)
+
+    def _ramp(step, delay, dur):
+        step  = tf.cast(step, tf.float32)
+        dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+        x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
+        return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
+
+    def tv_on_logits(z):
+        return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
+
+    # ==========================
+    # 2. METRIC LOSS (Legacy Support - Dampened)
+    # ==========================
+    # We keep your original Tuple loss but treat it as a gentle regularizer
+    def mpn_tuple_loss(z_a_raw, z_p_raw, z_n_raw, *, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1):
+        z_a = tf.reduce_mean(tf.cast(z_a_raw, tf.float32), axis=1)
+        z_p = tf.reduce_mean(tf.cast(z_p_raw, tf.float32), axis=1)
+        z_n = tf.reduce_mean(tf.cast(z_n_raw, tf.float32), axis=1)
+        
+        d_pair = tf.reduce_sum(tf.square(z_a - z_p), axis=1) + 1e-8
+        L_pull = lambda_pull * d_pair
+
+        d_ap = tf.reduce_sum(tf.square(z_a[:,None,:] - z_p[None,:,:]), axis=2) + 1e-8
+        mask = tf.eye(tf.shape(z_a)[0], dtype=tf.bool)
+        d_ap_masked = tf.where(mask, tf.fill(tf.shape(d_ap), 1e9), d_ap)
+        L_weak = tf.reduce_mean(tf.nn.relu(margin_weak + d_pair[:,None] - d_ap_masked))
+        
+        d_an = tf.reduce_sum(tf.square(z_a[:,None,:] - z_n[None,:,:]), axis=2) + 1e-8
+        d_pn = tf.reduce_sum(tf.square(z_p[:,None,:] - z_n[None,:,:]), axis=2) + 1e-8
+        
+        lifted_an = tf.reduce_logsumexp(margin_hard - d_an, axis=1)
+        lifted_pn = tf.reduce_logsumexp(margin_hard - d_pn, axis=1)
+        L_hard = 0.5 * (tf.nn.relu(d_pair + lifted_an) + tf.nn.relu(d_pair + lifted_pn))
+
+        return tf.reduce_mean(L_pull + L_weak + L_hard)
+
+    # ==========================
+    # 3. ASYMMETRIC FOCAL LOSS (The Sharpener)
+    # ==========================
+    def asymmetric_focal_loss(y_true, z_logits, gamma_pos=1.0, gamma_neg=2.0, alpha=0.25):
+        """
+        Asymmetric focusing:
+        - Positives: Lower gamma (e.g. 1.0) -> Don't suppress 'easy' positives too much (Helps Latency/Recall)
+        - Negatives: Higher gamma (e.g. 2.0) -> Suppress easy background, focus on hard false positives (Helps Precision)
+        """
+        # Probability P
+        p = tf.nn.sigmoid(z_logits)
+        
+        # Calculate P_t (probability of the true class)
+        p_t = y_true * p + (1 - y_true) * (1 - p)
+        
+        # Calculate alpha_t (weighting)
+        # alpha for class 1, (1-alpha) for class 0
+        alpha_t = y_true * alpha + (1 - y_true) * (1 - alpha)
+        
+        # Calculate Asymmetric Gamma
+        gamma_t = y_true * gamma_pos + (1 - y_true) * gamma_neg
+        
+        # Cross Entropy
+        ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_true, logits=z_logits)
+        
+        # Focal Term
+        modulating_factor = tf.pow(1.0 - p_t, gamma_t)
+        
+        return tf.reduce_mean(alpha_t * modulating_factor * ce_loss)
+
+    @tf.function
+    def loss_fn(y_true, y_pred):
+        # --- SPLIT INPUTS ---
+        a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
+        a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+
+        logit_idx = getattr(model, '_cls_logit_index', 0)
+        emb_start = getattr(model, '_emb_start_index', 2)
+
+        a_logit = a_out[..., logit_idx]; p_logit = p_out[..., logit_idx]; n_logit = n_out[..., logit_idx]
+        a_emb   = a_out[..., emb_start:]; p_emb   = p_out[..., emb_start:]; n_emb   = n_out[..., emb_start:]
+        
+        a_lab = tf.cast(a_true[..., 0], tf.float32)
+        p_lab = tf.cast(p_true[..., 0], tf.float32)
+        n_lab = tf.cast(n_true[..., 0], tf.float32)
+
+        # --- PARAMS ---
+        # Temperature Scaling: Forces sigmoid saturation (Sharpening)
+        clf_scale = float(params.get('CLF_SCALE', 2.0)) 
+        
+        # Focal Params
+        f_gamma_pos = float(params.get('FOCAL_GAMMA_POS', 1.0)) # Lower = stricter on recall (Latency)
+        f_gamma_neg = float(params.get('FOCAL_GAMMA_NEG', 2.0)) # Higher = ignore easy background
+        f_alpha     = float(params.get('FOCAL_ALPHA', 0.25))    # 0.25 downweights dominating positives
+
+        # 1. METRIC LOSS (The Anchor)
+        # We dampen this significantly for fine-tuning so it doesn't fight the classification
+        L_mpn = mpn_tuple_loss(a_emb, p_emb, n_emb, margin_weak=0.1)
+        w_tupMPN = float(params.get('LOSS_TupMPN', 20.0)) # Reduced weight (was ~80)
+        metric_loss = w_tupMPN * L_mpn 
+
+        # 2. CLASSIFICATION LOSS (The Sharpener)
+        # Scale logits to force certainty
+        def calc_afocal(y, z):
+            return asymmetric_focal_loss(y, z * clf_scale, gamma_pos=f_gamma_pos, gamma_neg=f_gamma_neg, alpha=f_alpha)
+
+        cls_a = calc_afocal(a_lab, a_logit)
+        cls_p = calc_afocal(p_lab, p_logit)
+        cls_n = calc_afocal(n_lab, n_logit) # Negatives are automatically handled by gamma_neg
+
+        classification_loss = cls_a + cls_p + cls_n
+
+        # 3. TV REGULARIZATION (Smoothness)
+        # Apply to RAW logits (before scaling) to avoid exploding gradients
+        lam_tv = float(params.get('LOSS_TV', 0.15))
+        classification_loss += lam_tv * (tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit))
+
+        # 4. AGGREGATION
+        # We assume metric loss is just a constraint now. 
+        # We allow classification loss to drive the gradients.
+        
+        return tf.reduce_mean(metric_loss) + tf.reduce_mean(classification_loss)
 
     return loss_fn
