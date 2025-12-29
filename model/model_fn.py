@@ -3338,3 +3338,30 @@ def mixed_hybrid_loss_fine_tuning(horizon=0, loss_weight=1, params=None, model=N
         return tf.reduce_mean(metric_loss) + tf.reduce_mean(classification_loss)
 
     return loss_fn
+
+def weighted_log_cosh_loss(y_true, y_pred):
+    """
+    Custom loss that unpacks weights from y_true.
+    y_true shape: [batch, time, 2] -> [Labels, Weights]
+    y_pred shape: [batch, time, 1] -> [Predictions]
+    """
+    # 1. Unpack Labels and Weights
+    # y_true[..., 0] are the regression targets (0.0 to 1.0)
+    # y_true[..., 1] are the weights (1.0, 5.0, 20.0)
+    targets = y_true[..., 0:1]
+    weights = y_true[..., 1:2]
+    
+    # 2. Compute Standard LogCosh (Smoother than MAE, more robust than MSE)
+    # log(cosh(x)) is approx x^2/2 for small x and |x| - log(2) for large x
+    error = targets - y_pred
+    log_cosh = tf.math.log(tf.math.cosh(error))
+    
+    # 3. Apply Weights
+    weighted_loss = log_cosh * weights
+    
+    return tf.reduce_mean(weighted_loss)
+
+# Metric to monitor true error without weights
+def raw_mae(y_true, y_pred):
+    targets = y_true[..., 0:1]
+    return tf.keras.metrics.mean_absolute_error(targets, y_pred)

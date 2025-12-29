@@ -524,8 +524,8 @@ elif mode == 'predict':
         max_weights = f"{study_dir}/max.weights.h5"
         mcc_weights = f"{study_dir}/mcc.weights.h5"
 
-        # event_weights = f"{study_dir}/event.finetune.weights.h5"
-        # max_weights = f"{study_dir}/max.finetune.weights.h5"
+        event_weights = f"{study_dir}/event.finetune.weights.h5"
+        max_weights = f"{study_dir}/max.finetune.weights.h5"
         if os.path.exists(event_weights) and os.path.exists(max_weights):
             # Both files exist, select the most recently modified one
             event_mtime = os.path.getmtime(event_weights)
@@ -1056,29 +1056,41 @@ elif mode == 'fine_tune':
             model = build_DBI_TCN(params=params) # Pass only the params dictionary
         else:
             # pdb.set_trace()
-            # params['TYPE_ARCH'] = params['TYPE_ARCH'].replace("StopGrad", "")
-            # params['TYPE_ARCH'] += 'Att'
-            # params['LOSS_NEGATIVES'] *= 2
-            # params['LOSS_TV'] *= 0
-            # params['LOSS_WEIGHT'] = 0.25
-            # params['LEARNING_RATE'] = 1e-5#0.000895
-            # params['BATCH_SIZE'] = 256
-            params.update({'TYPE_ARCH': params['TYPE_ARCH'].replace("StopGrad", "")})
-            print('Fine-tuning model with architecture:', params['TYPE_ARCH'])
-            params.update({'NAME': params['NAME'].replace("StopGrad", "")})
-            print('Fine-tuning model with name:', params['NAME'])
-            params.update({'USE_LR_SCHEDULER': True})
-            params.update({'LEARNING_RATE': 1e-3})
-            params.update({'BATCH_SIZE': 256})
-            params.update({'NO_EPOCHS': 500})
-            params.update({'LABEL_SMOOTHING': 0.0})
-            params.update({'USE_StopGrad': False})
-            # params.update({
-            # 'LOSS_TupMPN': 0.0001,    # Was ~80.0. Turn it OFF.
-            # 'LOSS_Circle': 0.0,    # Was ~60.0. Turn it OFF.
-            # 'LOSS_SupCon': 0.0,    # Ensure this is off too.
-            # 'LOSS_WEIGHT': 1.0,    # (Default)            
-            # })
+            params.update({
+                # 1. ARCHITECTURE & SPEED
+                'TYPE_ARCH': params['TYPE_ARCH'].replace("StopGrad", ""),
+                'NAME': params['NAME'].replace("StopGrad", ""),
+                'USE_StopGrad': False,
+                'USE_LR_SCHEDULE': False,
+                'LEARNING_RATE': 1e-4,        # Very low (Protect the backbone)
+                'BATCH_SIZE': 256,            # Maximize stability
+
+                # 2. DISABLE GEOMETRY (Crucial)
+                # The backbone structure is already good. Don't let Triplet/Circle
+                # distract the classifier. Silence them.
+                'LOSS_TupMPN': 50.0,
+                # 'LOSS_Circle': 0.0,
+                # 'LOSS_SupCon': 0.0,
+                'MARGIN_WEAK': 0.05,
+                # 3. FIX THE COLLAPSE (Rebalance)
+                # The Ramp was killing you. Disable it.
+                'NEG_RAMP_DELAY': 0,          # No warmup
+                'NEG_RAMP_STEPS': 1,          # Instant on
+                
+                # Drastically reduce negative weight (was ~26.0 -> Now 1.0)
+                'LOSS_NEGATIVES': 1.0,        
+                'LOSS_NEGATIVES_MIN': 1.0,
+
+                # Drastically INCREASE positive weight (was ~2.0 -> Now 5.0)
+                # This forces the model to recover Recall immediately.
+                'BCE_POS_ALPHA': 20.0,         
+
+                # 4. SHARPEN PREDICTIONS (Latency & Certainty)
+                # Remove smoothing so the model can hit 1.0
+                'LABEL_SMOOTHING': 0.0,
+                'LOSS_TV': 0.01,
+                'NO_EPOCHS': 200,
+            })
             params.update({'mode': 'fine_tune'})
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         # model.load_weights(weight_file, skip_mismatch=True)
