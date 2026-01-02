@@ -40,14 +40,40 @@ tag = args.tag[0]
 print(val_id)
 # pdb.set_trace()
 # Parameters
-params = {'BATCH_SIZE': 32, 'SHUFFLE_BUFFER_SIZE': 4096*2,
+params = {'BATCH_SIZE': 64, 'SHUFFLE_BUFFER_SIZE': 4096*2,
           'WEIGHT_FILE': '', 'LEARNING_RATE': 1e-3, 'NO_EPOCHS': 200,
-          'NO_TIMEPOINTS': 50, 'NO_CHANNELS': 8, 'SRATE': 30000,
+          'NO_TIMEPOINTS': 64, 'NO_CHANNELS': 8, 'SRATE': 30000,
           'EXP_DIR': '/cs/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
           }
 params['mode'] = mode
 
 if mode == 'train':
+# Timing parameters remain the same
+    params['NO_TIMEPOINTS'] = 64
+    params['NO_STRIDES'] = 32
+
+    params.update({
+        "SHIFT_MS": 0, "HORIZON_MS": 1,
+        'BATCH_SIZE': 64,
+        'NO_TIMEPOINTS': 64,   # Window size
+        'NO_STRIDES': 32,
+        
+        # --- NEW REGRESSION PARAMS ---
+        'LABEL_RISE_MS': 30,    # Anticipation window (Sharp Wave slope)
+        'LABEL_PLATEAU_MS': 12, # Certainty window (SWR peak)
+        'LABEL_FALL_MS': 40,    # Reset window
+        'LABEL_RISE_POWER': 2.0,# Quadratic ramp (fits physics better than linear)
+        
+        'WEIGHT_PLATEAU': 20.0, # Punishment for missing the peak
+        'WEIGHT_TRANSITION': 5.0 # Punishment for missing the slope        
+        
+    })
+
+
+    params['TYPE_LOSS'] = 'TTE'
+    params['HYPER_MONO'] = 0 #trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
+    
+    
     # update params
     print(model_name)
     param_lib = model_name.split('_')
@@ -120,7 +146,8 @@ if mode == 'train':
     elif model_name.find('MixerOnly') != -1:
         print('Using MixerOnly')
         from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
-        from model.input_augment_weighted import rippleAI_load_dataset
+        # from model.input_augment_weighted import rippleAI_load_dataset
+        from model.input_fn_TTE import rippleAI_load_dataset
     elif 'TripletOnly' in params['TYPE_ARCH']:
         print('Using TripletOnly')
         from model.input_augment_weighted_transpose import rippleAI_load_dataset
@@ -247,13 +274,16 @@ if mode == 'train':
             # train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
             dataset_params = params
+        elif 'MixerOnly' in params['TYPE_ARCH']:
+            flag_online = 'Online' in params['TYPE_ARCH']
+            train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
         else:
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
     # train_size = len(list(train_dataset))
     params['RIPPLE_RATIO'] = label_ratio
 
     # --- Preview one triplet batch (debug utility) ---
-    DEBUG_PLOT_TRIPLET = False  # set False to disable
+    DEBUG_PLOT_TRIPLET = True  # set False to disable
     # pdb.set_trace()
     if DEBUG_PLOT_TRIPLET:
         # Fetch first batch (supports tf.data.Dataset or Keras Sequence / custom Sequence)
@@ -276,22 +306,42 @@ if mode == 'train':
         if tf.is_tensor(y_preview):
             y_preview = y_preview.numpy()
 
-        # pdb.set_trace()
+        pdb.set_trace()
+
         n=0
-        for ii in range(0, 10):
-            n+=1
-            plt.subplot(10,3,n)
-            plt.plot(np.arange(128), x_preview[0+ii, :, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
-            plt.plot(np.arange(64)+64, y_preview[0+ii, :]*50, 'r')
-            n+=1
-            plt.subplot(10,3,n)
-            plt.plot(np.arange(128), x_preview[32+ii, :, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
-            plt.plot(np.arange(64)+64, y_preview[32+ii, :]*50, 'r')
-            n+=1
-            plt.subplot(10,3,n)
-            plt.plot(np.arange(128), x_preview[64+ii, :, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
-            plt.plot(np.arange(64)+64, y_preview[64+ii, :]*50, 'r')
-        plt.show()
+        for istep in range(50):
+            x_preview, y_preview = next(iter(train_dataset))
+            x_preview = x_preview.numpy()
+            y_preview = y_preview.numpy()
+            pdb.set_trace()
+            if np.sum(y_preview[:,:,0])==0:
+                continue
+            # pdb.set_trace()
+            for ii in range(0, 25):
+                n+=1
+                plt.subplot(5,5,n)
+                plt.plot(np.arange(512), x_preview[0+ii, :, :]*100+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
+                plt.plot(np.arange(256)+256, -20+20*y_preview[0+ii, :, 1], 'r')        
+                plt.axis('off')
+                if np.mod(n, 25) == 0:
+                    plt.show()
+                    n = 0
+        # n=0
+        # for ii in range(0, 10):
+        #     n+=1
+        #     plt.subplot(10,3,n)
+        #     plt.plot(np.arange(128), x_preview[0+ii, :, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
+        #     plt.plot(np.arange(64)+64, y_preview[0+ii, :]*50, 'r')
+        #     n+=1
+        #     plt.subplot(10,3,n)
+        #     plt.plot(np.arange(128), x_preview[32+ii, :, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
+        #     plt.plot(np.arange(64)+64, y_preview[32+ii, :]*50, 'r')
+        #     n+=1
+        #     plt.subplot(10,3,n)
+        #     plt.plot(np.arange(128), x_preview[64+ii, :, :]*4+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
+        #     plt.plot(np.arange(64)+64, y_preview[64+ii, :]*50, 'r')
+        # plt.show()
+        
     # pdb.set_trace()
     # n = 0
     # pdb.set_trace()
@@ -524,8 +574,8 @@ elif mode == 'predict':
         max_weights = f"{study_dir}/max.weights.h5"
         mcc_weights = f"{study_dir}/mcc.weights.h5"
 
-        event_weights = f"{study_dir}/event.finetune.weights.h5"
-        max_weights = f"{study_dir}/max.finetune.weights.h5"
+        # event_weights = f"{study_dir}/event.finetune.weights.h5"
+        # max_weights = f"{study_dir}/max.finetune.weights.h5"
         if os.path.exists(event_weights) and os.path.exists(max_weights):
             # Both files exist, select the most recently modified one
             event_mtime = os.path.getmtime(event_weights)
@@ -1060,10 +1110,15 @@ elif mode == 'fine_tune':
                 # 1. ARCHITECTURE & SPEED
                 'TYPE_ARCH': params['TYPE_ARCH'].replace("StopGrad", ""),
                 'NAME': params['NAME'].replace("StopGrad", ""),
+                
+                # change optimizer
+                'TYPE_REG': params['TYPE_REG'].replace("AdamWA", "AdamMixer"),
+                'NAME': params['NAME'].replace("AdamWA", "AdamMixer"),
+                
                 'USE_StopGrad': False,
                 'USE_LR_SCHEDULE': False,
                 'LEARNING_RATE': 1e-4,        # Very low (Protect the backbone)
-                'BATCH_SIZE': 256,            # Maximize stability
+                'BATCH_SIZE': 128,            # Maximize stability
 
                 # 2. DISABLE GEOMETRY (Crucial)
                 # The backbone structure is already good. Don't let Triplet/Circle
@@ -1078,17 +1133,17 @@ elif mode == 'fine_tune':
                 'NEG_RAMP_STEPS': 1,          # Instant on
                 
                 # Drastically reduce negative weight (was ~26.0 -> Now 1.0)
-                'LOSS_NEGATIVES': 1.0,        
+                'LOSS_NEGATIVES': 5.0,        
                 'LOSS_NEGATIVES_MIN': 1.0,
 
                 # Drastically INCREASE positive weight (was ~2.0 -> Now 5.0)
                 # This forces the model to recover Recall immediately.
-                'BCE_POS_ALPHA': 20.0,         
-
+                'BCE_POS_ALPHA': 2.5,
+                'DROP_RATE': 0.05,
                 # 4. SHARPEN PREDICTIONS (Latency & Certainty)
                 # Remove smoothing so the model can hit 1.0
-                'LABEL_SMOOTHING': 0.0,
-                'LOSS_TV': 0.01,
+                'LABEL_SMOOTHING': 0.1,
+                'LOSS_TV': 0.3,
                 'NO_EPOCHS': 200,
             })
             params.update({'mode': 'fine_tune'})
@@ -1122,7 +1177,9 @@ elif mode == 'fine_tune':
             params['steps_per_epoch'] = 1000
             flag_online = 'Online' in params['TYPE_ARCH']
             train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
-
+        elif 'MixerOnly' in params['TYPE_ARCH']:
+            flag_online = 'Online' in params['TYPE_ARCH']
+            train_dataset, test_dataset = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
         else:
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
     # train_size = len(list(train_dataset))
@@ -1149,7 +1206,7 @@ elif mode == 'fine_tune':
     #                         save_weights_only=True,
     #                         mode='max')]
     callbacks = [cb.EarlyStopping(monitor='val_sample_pr_auc',  # Change monitor
-                        patience=60,
+                        patience=20,
                         mode='max',
                         verbose=1,
                         restore_best_weights=True),
@@ -1994,7 +2051,7 @@ elif mode == 'tune_worker':
         from model.study_objectives import objective_only as objective
 
     study.optimize(
-        lambda trial: objective(trial, model_name, tag),
+        lambda trial: objective(trial, model_name, tag, logger),
         n_trials=80,
         gc_after_trial=True,
         show_progress_bar=True,

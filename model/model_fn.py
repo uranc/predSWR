@@ -151,12 +151,12 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
         # anchor_output = self_att_gate(anchor_output, anchor_input)
     # sigmoid out
     if flag_sigmoid:
-        tmp_class = Conv1D(1, kernel_size=1, use_bias=True, activation='linear', name='tmp_class')(tcn_output)
+        tmp_class = Conv1D(1, kernel_size=1, use_bias=True, activation=None, name='tmp_class')(tcn_output)
     else:
-        tmp_class = Conv1D(1, kernel_size=1, use_bias=True, kernel_initializer='glorot_uniform', activation='sigmoid', name='tmp_class')(tcn_output)
-
+        tmp_class = Conv1D(1, kernel_size=1, use_bias=True, kernel_initializer='glorot_uniform', activation=None, name='tmp_class')(tcn_output)
+        cls_prob = Activation('sigmoid', name='classification_output')(tmp_class)
     # compute probability
-    concat_outputs = tmp_class
+    concat_outputs = Concatenate(axis=-1)([tmp_class, cls_prob])
 
     # Define model with both outputs
     if params['mode']=='embedding':
@@ -166,19 +166,37 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
 
     model = Model(inputs=inputs, outputs=concat_outputs)
     model._is_classification_only = True
-
-    f1_metric = MaxF1MetricHorizon(model=model)
+    model._cls_logit_index = 0  
+    model._cls_prob_index = 1
+    # f1_metric = MaxF1MetricHorizon(model=model)
     # r1_metric = RobustF1Metric(model=model)
     # latency_metric = LatencyMetric(model=model)
-    event_f1_metric = EventAwareF1(model=model)
-    fp_event_metric = EventFalsePositiveRateMetric(model=model)
-
+    # event_f1_metric = EventAwareF1(model=model)
+    # fp_event_metric = EventFalsePositiveRateMetric(model=model)
+    
+    # Metrics - only applied to anchor output for metric tracking
+    high_conf_range = [0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+    model._is_classification_only = True
+    metrics = [
+        SamplePRAUC(model=model),
+        SampleMaxMCC(model=model),
+        SampleMaxF1(model=model),
+        LatencyScoreRange(thresholds=high_conf_range, min_run=5, tau=16.0, model=model),
+        # LatencyScore(thresholds=tf.constant([0.7]), min_run=5, tau=16.0, model=model),
+        MeanHighConfRecall(thresholds=high_conf_range, model=model),
+        FPperMinAt0p3(
+            win_sec=params['NO_STRIDES']/params['SRATE'],
+            mode="consec", consec_k=3,
+            model=model
+        ),                          # <-- new (name default 'fp_per_min')
+    ]     
     # Create loss function without calling it
-    loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
-
+    # loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
+    loss_fn = weighted_log_cosh_loss
+    
     model.compile(optimizer=this_optimizer,
                   loss=loss_fn,
-                  metrics=[f1_metric, event_f1_metric, fp_event_metric])
+                  metrics=metrics)
 
     if params['WEIGHT_FILE']:
         print('load model')
@@ -1062,7 +1080,9 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             clipnorm=float(params.get('CLIP_NORM', 1.5)),
             epsilon=1e-8
         )
-               
+    elif params['TYPE_REG'].find('AdamMixer')>-1:
+        initial_lr = params['LEARNING_RATE'] * 2.0
+        this_optimizer = tf.keras.optimizers.AdamW(learning_rate=initial_lr, clipnorm=1.0)
     elif params['TYPE_REG'].find('Adam')>-1:
         this_optimizer = tf.keras.optimizers.Adam(learning_rate=params['LEARNING_RATE'])
     elif params['TYPE_REG'].find('SGD')>-1:
@@ -1080,12 +1100,14 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
     n_kernels = params['NO_KERNELS']
     n_dilations = params['NO_DILATIONS']
 
-    if params['TYPE_ARCH'].find('Drop')>-1:
-        r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
-        print('Using Dropout')
-        print(r_drop)
-    else:
-        r_drop = 0.0
+    # if params['TYPE_ARCH'].find('Drop')>-1:
+    #     r_drop = float(params['TYPE_ARCH'][params['TYPE_ARCH'].find('Drop')+4:params['TYPE_ARCH'].find('Drop')+6])/100
+    #     print('Using Dropout')
+    #     print(r_drop)
+    # else:
+    #     r_drop = 0.0
+    r_drop = params.get('DROP_RATE', 0.0)
+    print('Using Dropout:', r_drop)
 
     hori_shift = 0
     is_classification_only = True
@@ -1241,7 +1263,6 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         cls_logits = tf.keras.layers.Conv1D(
             1, 1, use_bias=True,
             kernel_initializer='glorot_uniform',
-            bias_initializer='zeros',
             activation=None,
             name='cls_logits'
         )(cls_logits_in)
@@ -3339,6 +3360,7 @@ def mixed_hybrid_loss_fine_tuning(horizon=0, loss_weight=1, params=None, model=N
 
     return loss_fn
 
+@ tf.function
 def weighted_log_cosh_loss(y_true, y_pred):
     """
     Custom loss that unpacks weights from y_true.

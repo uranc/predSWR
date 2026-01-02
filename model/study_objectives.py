@@ -1277,7 +1277,7 @@ def _atomic_write_json(path, payload):
         json.dump(payload, f, indent=2, default=_to_serializable)
     os.replace(tmp, path)
 
-def objective_triplet(trial, model_name, tag):
+def objective_triplet(trial, model_name, tag, logger):
     ctypes.CDLL("libcuda.so.1")
     """Objective function for Optuna optimization"""
 
@@ -1353,23 +1353,25 @@ def objective_triplet(trial, model_name, tag):
 
     # ---- Metric: Circle + MPNTuple (time-averaged sims) ----
     # 1. Structure (High Weight, Tight Clusters)
-    params['LOSS_TupMPN']   = trial.suggest_float('LOSS_TupMPN', 30.0, 120.0, log=True)
+    params['LOSS_TupMPN']   = trial.suggest_float('LOSS_TupMPN', 50.0, 150.0, log=True)
     params['MARGIN_WEAK']   = trial.suggest_float('MARGIN_WEAK', 0.05, 0.15, step=0.05) # Keep this low!
 
     # 2. Geometry (Circle Fix)
-    params['LOSS_Circle']   = trial.suggest_int('LOSS_Circle', 30, 60, step=10)
-    params['CIRCLE_m']      = trial.suggest_float('CIRCLE_m', 0.20, 0.40, step=0.05)
+    params['LOSS_Circle']   = trial.suggest_int('LOSS_Circle', 10, 40, step=10)
+    params['CIRCLE_m']      = trial.suggest_float('CIRCLE_m', 0.25, 0.40, step=0.05)
     params['CIRCLE_gamma']  = trial.suggest_categorical('CIRCLE_gamma', [32.0, 64.0])
 
     # 3. Classification (Soft & Robust)
     params['BCE_POS_ALPHA'] = trial.suggest_float('BCE_POS_ALPHA', 1.0, 3.0, step=0.5)
-    params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.1) # Handles jitter
-    params['LOSS_NEGATIVES']= trial.suggest_int('LOSS_NEGATIVES', 20, 30, step=2)
+    params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.04, 0.12) # Handles jitter
+    params['LOSS_NEGATIVES']= trial.suggest_int('LOSS_NEGATIVES', 16, 30, step=2)
 
     # 4. General
-    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 8e-3, 2e-2, log=True)
+    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-3, 2e-2, log=True)
     params['LOSS_TV']       = trial.suggest_float('LOSS_TV', 0.05, 0.5, log=True)
-    params['USE_StopGrad']  = True # Essential for this architecture
+    params['USE_StopGrad']  = trial.suggest_categorical('USE_StopGrad', [False, True])
+
+    True # Essential for this architecture
     if params['USE_StopGrad']:
         print('Using Stop Gradient for Class. Branch')
         params['TYPE_ARCH'] += 'StopGrad'
@@ -1549,7 +1551,7 @@ def objective_triplet(trial, model_name, tag):
     params['CLF_RAMP_DELAY']  = params['RAMP_DELAY']
     params['CLF_RAMP_STEPS']  = params['RAMP_STEPS']
 
-    params['GRACE_MS'] = 10
+    params['GRACE_MS'] = 5
     params['ANCHOR_MIN_MS'] = 20
     params['POS_MIN_MS'] = 10
     params['POS_EXCLUDE_ANCHORS'] = True
@@ -1684,7 +1686,7 @@ def objective_triplet(trial, model_name, tag):
     return float(prauc_sel), float(lat_sel) #float(fpmin_sel)
 
 
-def objective_time_to_event(trial, model_name, tag):
+def objective_time_to_event(trial, model_name, tag, logger):
     ctypes.CDLL("libcuda.so.1")
     """Objective function for Optuna optimization"""
 
@@ -1728,7 +1730,8 @@ def objective_time_to_event(trial, model_name, tag):
         from model.input_augment_weighted import rippleAI_load_dataset
         from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
     elif 'MixerOnly' in params['TYPE_ARCH']:
-        from model.input_augment_weighted import rippleAI_load_dataset
+        # from model.input_augment_weighted import rippleAI_load_dataset
+        from model.input_fn_TTE import rippleAI_load_dataset
         from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
     elif 'TripletOnly' in params['TYPE_ARCH']:
         # from model.input_proto import rippleAI_load_dataset
@@ -1742,54 +1745,23 @@ def objective_time_to_event(trial, model_name, tag):
 
     params.update({
         "SHIFT_MS": 0, "HORIZON_MS": 1,
-        "CIRCLE_m": 0.32, "CIRCLE_gamma": 20.0,
-        "LOSS_Circle": 60.0, "LOSS_SupCon": 0.0, "SUPCON_T": 0.1,
-        "BCE_ANC_ALPHA": 2.0, "BCE_POS_ALPHA": 2.0,
-        "LOSS_WEIGHT": 1.0, "LABEL_SMOOTHING": 0.0,
-        "LOSS_NEGATIVES_MIN": 4.0, "LOSS_NEGATIVES": 26.0,
-        "LOSS_TV": 0.30, "SMOOTH_TYPE": "tMSE", "SMOOTH_SPACE": "logit", "SMOOTH_TAU": 3.5,
-        "CLF_SCALE": 0.30,
-        # ramps — keep as you had; no tuning needed
-        "RAMP_DELAY": 0.02 * params.get("TOTAL_STEPS", 100000),
-        "RAMP_STEPS": 0.30 * params.get("TOTAL_STEPS", 100000),
-        "NEG_RAMP_DELAY": 0.10 * params.get("TOTAL_STEPS", 100000),
-        "NEG_RAMP_STEPS": 0.60 * params.get("TOTAL_STEPS", 100000),
-        "TV_DELAY": 0.08 * params.get("TOTAL_STEPS", 100000),
-        "TV_DUR":   0.35 * params.get("TOTAL_STEPS", 100000),
+        'BATCH_SIZE': 64,
+        'NO_TIMEPOINTS': 64,   # Window size
+        'NO_STRIDES': 32,
+        
+        # --- NEW REGRESSION PARAMS ---
+        'LABEL_RISE_MS': 30,    # Anticipation window (Sharp Wave slope)
+        'LABEL_PLATEAU_MS': 12, # Certainty window (SWR peak)
+        'LABEL_FALL_MS': 40,    # Reset window
+        'LABEL_RISE_POWER': 2.0,# Quadratic ramp (fits physics better than linear)
+        
+        'WEIGHT_PLATEAU': 20.0, # Punishment for missing the peak
+        'WEIGHT_TRANSITION': 5.0 # Punishment for missing the slope        
+        
     })
 
-    # ---- Metric: Circle + MPNTuple (time-averaged sims) ----
-    # 1. Structure (High Weight, Tight Clusters)
-    params['LOSS_TupMPN']   = trial.suggest_float('LOSS_TupMPN', 30.0, 120.0, log=True)
-    params['MARGIN_WEAK']   = trial.suggest_float('MARGIN_WEAK', 0.05, 0.15, step=0.05) # Keep this low!
 
-    # 2. Geometry (Circle Fix)
-    params['LOSS_Circle']   = trial.suggest_int('LOSS_Circle', 30, 60, step=10)
-    params['CIRCLE_m']      = trial.suggest_float('CIRCLE_m', 0.20, 0.40, step=0.05)
-    params['CIRCLE_gamma']  = trial.suggest_categorical('CIRCLE_gamma', [32.0, 64.0])
-
-    # 3. Classification (Soft & Robust)
-    params['BCE_POS_ALPHA'] = trial.suggest_float('BCE_POS_ALPHA', 1.0, 3.0, step=0.5)
-    params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.1) # Handles jitter
-    params['LOSS_NEGATIVES']= trial.suggest_int('LOSS_NEGATIVES', 20, 30, step=2)
-
-    # 4. General
-    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 8e-3, 2e-2, log=True)
-    params['LOSS_TV']       = trial.suggest_float('LOSS_TV', 0.05, 0.5, log=True)
-    params['USE_StopGrad']  = True # Essential for this architecture
-    if params['USE_StopGrad']:
-        print('Using Stop Gradient for Class. Branch')
-        params['TYPE_ARCH'] += 'StopGrad'
-
-    # =====================  FIXED RIDGE / CONSTANTS  =====================
-    params["USE_LR_SCHEDULE"] = True
-    params["LR_WARMUP_RATIO"] = 0.10
-    params["LR_COOL_RATIO"] = 0.80
-    params["LR_FINAL_SCALE"] = 0.08
-    params["WEIGHT_DECAY"]  = 1e-4
-    params["CLIP_NORM"]     = 1.5
-
-    params['TYPE_LOSS'] = 'HybridV3_Sigmoid'
+    params['TYPE_LOSS'] = 'TTE'
     params['HYPER_MONO'] = 0 #trial.suggest_float('HYPER_MONO', 0.000001, 10.0, log=True)
 
     # Model parameters matching training format
@@ -1824,7 +1796,7 @@ def objective_time_to_event(trial, model_name, tag):
     # act_lib = ['ELU', 'GELU'] # 'RELU',
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
     par_act = 'ELU'
-    par_opt = 'AdamWA'
+    par_opt = 'AdamMixer'
     
     # reg_lib = ['LOne',  'None'] #'LTwo',
     # par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
@@ -1836,18 +1808,6 @@ def objective_time_to_event(trial, model_name, tag):
                 f"{int(params['HORIZON_MS']):02d}")
     print(arch_str)
     params['TYPE_ARCH'] = arch_str
-
-
-    # params['USE_Aug'] = trial.suggest_categorical('USE_Aug', [True, False])
-    # if params['USE_Aug']:
-    #     params['TYPE_ARCH'] += 'Aug'
-    # params['TYPE_ARCH'] += 'Aug'
-
-
-    # params['USE_Attention'] = trial.suggest_categorical('USE_Attention', [True, False])
-    # if params['USE_Attention']:
-    #     print('Using Attention')
-    #     params['TYPE_ARCH'] += 'Att'
     
     params['TYPE_ARCH'] += 'Online'
 
@@ -1936,35 +1896,17 @@ def objective_time_to_event(trial, model_name, tag):
             params['steps_per_epoch'] = 1000
             flag_online = 'Online' in params['TYPE_ARCH']
             train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
+        elif 'MixerOnly' in params['TYPE_ARCH']:
+            flag_online = 'Online' in params['TYPE_ARCH']
+            train_dataset, test_dataset = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
         else:
             train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
 
     params.update(dataset_params)   # merge, don't overwrite
     # Ramps (keep constant for stability this round)
-    
 
-    # total steps
-    ts     = float(params['steps_per_epoch'] * int(params['NO_EPOCHS']) * 0.9)
-    print('Total Steps: ', ts)
-    params['TOTAL_STEPS'] = ts
-    params["RAMP_DELAY"]     = 0.02 * ts
-    params["RAMP_STEPS"]     = 0.30 * ts
-    params["NEG_RAMP_DELAY"] = 0.1 * ts
-    params["NEG_RAMP_STEPS"] = 0.6 * ts
-    params["TV_DELAY"]       = 0.25 * ts
-    params["TV_DUR"]         = 0.40 * ts
-    params['CLF_RAMP_DELAY']  = params['RAMP_DELAY']
-    params['CLF_RAMP_STEPS']  = params['RAMP_STEPS']
-
-    params['GRACE_MS'] = 10
-    params['ANCHOR_MIN_MS'] = 20
-    params['POS_MIN_MS'] = 10
-    params['POS_EXCLUDE_ANCHORS'] = True
-    
     # after: train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(...)
     trial_info["dataset"] = {
-        "estimated_steps_per_epoch": int(params.get("ESTIMATED_STEPS_PER_EPOCH",
-                                params.get("steps_per_epoch", 0))),
         "val_steps": int(params.get("VAL_STEPS", 0)),
         "label_ratio": float(label_ratio) if "label_ratio" in locals() else None,
         "no_timepoints": int(params.get("NO_TIMEPOINTS", 0)),
@@ -2006,7 +1948,6 @@ def objective_time_to_event(trial, model_name, tag):
     # Train and evaluate
     history = model.fit(
         train_dataset,
-        steps_per_epoch=dataset_params['ESTIMATED_STEPS_PER_EPOCH'],
         validation_data=test_dataset,
         validation_steps=val_steps,  # Explicitly set to avoid the partial batch
         epochs=params['NO_EPOCHS'],
