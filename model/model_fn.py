@@ -153,11 +153,12 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
     if flag_sigmoid:
         tmp_class = Conv1D(1, kernel_size=1, use_bias=True, activation=None, name='tmp_class')(tcn_output)
     else:
-        tmp_class = Conv1D(1, kernel_size=1, use_bias=True, kernel_initializer='glorot_uniform', activation=None, name='tmp_class')(tcn_output)
-        cls_prob = Activation('sigmoid', name='classification_output')(tmp_class)
+        tmp_class = Conv1D(1, kernel_size=1, use_bias=True, kernel_initializer=this_kernel_initializer, activation='sigmoid', name='tmp_class')(tcn_output)
+        # tmp_class = Conv1D(1, kernel_size=1, use_bias=True, kernel_initializer='glorot_uniform', activation=None, name='tmp_class')(tcn_output)
+        # cls_prob = Activation('sigmoid', name='classification_output')(tmp_class)
     # compute probability
-    concat_outputs = Concatenate(axis=-1)([tmp_class, cls_prob])
-
+    # concat_outputs = Concatenate(axis=-1)([tmp_class, cls_prob])
+    concat_outputs = tmp_class
     # Define model with both outputs
     if params['mode']=='embedding':
         concat_outputs = Concatenate(axis=-1)([concat_outputs, tcn_output])
@@ -165,35 +166,31 @@ def build_DBI_TCN_MixerOnly(input_timepoints, input_chans=8, params=None):
         concat_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(concat_outputs)
 
     model = Model(inputs=inputs, outputs=concat_outputs)
-    model._is_classification_only = True
-    model._cls_logit_index = 0  
-    model._cls_prob_index = 1
-    # f1_metric = MaxF1MetricHorizon(model=model)
-    # r1_metric = RobustF1Metric(model=model)
-    # latency_metric = LatencyMetric(model=model)
-    # event_f1_metric = EventAwareF1(model=model)
-    # fp_event_metric = EventFalsePositiveRateMetric(model=model)
+    # model._is_classification_only = True
+    # model._cls_logit_index = 0  
+    # model._cls_prob_index = 1
     
     # Metrics - only applied to anchor output for metric tracking
-    high_conf_range = [0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
-    model._is_classification_only = True
-    metrics = [
-        SamplePRAUC(model=model),
-        SampleMaxMCC(model=model),
-        SampleMaxF1(model=model),
-        LatencyScoreRange(thresholds=high_conf_range, min_run=5, tau=16.0, model=model),
-        # LatencyScore(thresholds=tf.constant([0.7]), min_run=5, tau=16.0, model=model),
-        MeanHighConfRecall(thresholds=high_conf_range, model=model),
-        FPperMinAt0p3(
-            win_sec=params['NO_STRIDES']/params['SRATE'],
-            mode="consec", consec_k=3,
-            model=model
-        ),                          # <-- new (name default 'fp_per_min')
-    ]     
+    # high_conf_range = [0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+    # model._is_classification_only = True
+    # metrics = [
+    #     SamplePRAUC(model=model),
+    #     SampleMaxMCC(model=model),
+    #     SampleMaxF1(model=model),
+    #     LatencyScoreRange(thresholds=high_conf_range, min_run=5, tau=16.0, model=model),
+    #     # LatencyScore(thresholds=tf.constant([0.7]), min_run=5, tau=16.0, model=model),
+    #     MeanHighConfRecall(thresholds=high_conf_range, model=model),
+    #     FPperMinAt0p3(
+    #         win_sec=params['NO_STRIDES']/params['SRATE'],
+    #         mode="consec", consec_k=3,
+    #         model=model
+    #     ),                          # <-- new (name default 'fp_per_min')
+    # ]     
     # Create loss function without calling it
     # loss_fn = custom_fbfce(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model, this_op=tcn_op)
-    loss_fn = weighted_log_cosh_loss
-    
+    loss_fn = WeightedTTNELoss(mode='stable_logcosh')
+    metrics = ['mae']
+
     model.compile(optimizer=this_optimizer,
                   loss=loss_fn,
                   metrics=metrics)
@@ -1321,26 +1318,33 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         )
 
         # Metrics - only applied to anchor output for metric tracking
-        model._is_classification_only = True 
+        high_conf_range = [0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
+        low_conf_range  = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
+        
+        model._is_classification_only = True
+        
         metrics = [
             SamplePRAUC(model=model),
             SampleMaxMCC(model=model),
             SampleMaxF1(model=model),
-            LatencyScore(thresholds=tf.constant([0.7]), min_run=5, tau=16.0, model=model),
-            RecallAt0p7(model=model),  # <-- new
-            FPperMinAt0p3(
+            LatencyScoreRange(thresholds=high_conf_range, min_run=5, tau=16.0, model=model),
+            MeanHighConfRecall(thresholds=high_conf_range, model=model),
+            MeanLowConfFP(
+                thresholds=low_conf_range, # "High Conf FP" = "FP at Low Thresholds"
                 win_sec=params['NO_STRIDES']/params['SRATE'],
-                mode="consec", consec_k=3,
+                consec_k=6,
                 model=model
-            ),                          # <-- new (name default 'fp_per_min')
-        ]          
+            )
+        ]    
 
         # Create loss function and compile model
         # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         # loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         # loss_fn = mixed_circle_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         # loss_fn = mixed_mpnFocal_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-        loss_fn = mixed_hybrid_loss_final(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        # loss_fn = mixed_hybrid_loss_final(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        
+        loss_fn = mixed_hybrid_loss_proxy_v1(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
 
         model.compile(
             optimizer=this_optimizer,
@@ -1379,10 +1383,13 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             SampleMaxF1(model=model),
             LatencyScoreRange(thresholds=high_conf_range, min_run=5, tau=16.0, model=model),
             # LatencyScore(thresholds=tf.constant([0.7]), min_run=5, tau=16.0, model=model),
-            MeanHighConfRecall(thresholds=high_conf_range, model=model),
-            FPperMinAt0p3(
+            MeanHighConfRecall(
+                        thresholds=high_conf_range, 
+                        consec_k=5,  # <--- Consistency with inference
+                        model=model
+                    ),            FPperMinAt0p3(
                 win_sec=params['NO_STRIDES']/params['SRATE'],
-                mode="consec", consec_k=3,
+                mode="consec", consec_k=5,
                 model=model
             ),                          # <-- new (name default 'fp_per_min')
         ]        
@@ -1391,7 +1398,9 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         # loss_fn = class_finetune(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         # loss_fn = mixed_hybrid_loss_fine_tuning(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-        loss_fn = mixed_hybrid_loss_final(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        # loss_fn = mixed_hybrid_loss_final(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        print(f"Using Proxy Anchor Loss with {num_classes} classes, {n_subcenters} sub-centers, embedding dim {embedding_dim}")
+        loss_fn = mixed_hybrid_loss_proxy_v1(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         
         model.load_weights(params['WEIGHT_FILE'], by_name=True)
         print('Loaded weights for fine-tuning from', params['WEIGHT_FILE'])
@@ -2069,44 +2078,86 @@ class FPperMinMetric(tf.keras.metrics.Metric):
 # ================= Recall @ τ = 0.7 (sample-level) =================
 class MeanHighConfRecall(tf.keras.metrics.Metric):
     """
-    Calculates Recall at multiple thresholds and returns the MEAN.
-    Differentiates between 'barely detecting' (0.7) and 'confidently detecting' (0.99).
+    Calculates Recall at multiple thresholds (e.g. 0.7 to 0.95) and returns the MEAN.
+    
+    UPDATED: Now enforces 'consec_k' logic.
+    A prediction is only counted as a True Positive if it is part of a sustained run.
+    Single-frame spikes are filtered out (treated as negatives), making the metric stricter/realistic.
     """
-    def __init__(self, thresholds=[0.7, 0.75, 0.8, 0.85, 0.9, 0.95], name="mean_high_conf_recall", model=None, **kw):
+    def __init__(self, 
+                 thresholds=[0.7, 0.75, 0.8, 0.85, 0.9, 0.95], 
+                 consec_k=3,
+                 name="mean_high_conf_recall", 
+                 model=None, 
+                 **kw):
         super().__init__(name=name, **kw)
+        
         self.thresholds = tf.constant(thresholds, dtype=tf.float32)
         self.k = len(thresholds)
-        # We track TP and FN for *each* threshold separately
+        self.consec_k = int(consec_k)
+        
+        # Track TP and FN for each threshold
         self.tp = self.add_weight("tp", shape=(self.k,), initializer="zeros")
         self.fn = self.add_weight("fn", shape=(self.k,), initializer="zeros")
         self.model = model
 
+    @staticmethod
+    def _enforce_min_run(pred_bt, k):
+        """Filters detections to only include runs of length >= k."""
+        if k <= 1: return pred_bt
+        
+        # Input: [B, T] -> [B, T, 1] for conv1d
+        x = tf.cast(pred_bt, tf.float32)[..., None]
+        filt = tf.ones((k, 1, 1), x.dtype)
+        
+        # Sum neighbors
+        runsum = tf.nn.conv1d(x, filt, stride=1, padding="SAME")
+        
+        # If sum >= k, it's part of a run
+        return runsum[..., 0] >= float(k)
+
     def update_state(self, y_true, y_pred, **_):
-        yt = _yt_bt(y_true)                     # [B, T]
-        yp = _yp_bt(y_pred, self.model)         # [B, T]
+        # 1. Parse Inputs
+        prob_idx = getattr(self.model, "_cls_prob_index", 1)
+        yp = y_pred[..., prob_idx]  # [B, T]
+        yt = y_true[..., 0]         # [B, T]
         
-        # Ground Truth Positives
-        yt_pos = yt >= 0.5                      # [B, T] (Bool)
+        # Ground Truth Positives (Raw)
+        yt_pos = yt >= 0.5
         
-        # Predictions at multiple thresholds
-        # Shape: [K, B, T]
+        # 2. Predictions at all thresholds: [K, B, T]
         pred_kbt = yp[None, ...] >= self.thresholds[:, None, None]
         
-        # Broadcast Ground Truth to [K, B, T]
-        yt_pos_k = tf.repeat(yt_pos[None, ...], self.k, axis=0)
+        # 3. Process each threshold to apply consec_k filter
+        def count_tp_fn_for_thresh(pred_bt):
+            # Apply Filter: Remove glitches
+            det_bt = self._enforce_min_run(pred_bt, self.consec_k) # [B, T]
+            
+            # Calculate TP/FN against Ground Truth
+            # TP: Prediction Sustained AND Ground Truth is Positive
+            tp = tf.reduce_sum(tf.cast(det_bt & yt_pos, tf.float32))
+            
+            # FN: Prediction NOT Sustained AND Ground Truth is Positive
+            fn = tf.reduce_sum(tf.cast(~det_bt & yt_pos, tf.float32))
+            
+            return tp, fn
+
+        # Efficient Map over K thresholds
+        tps_k, fns_k = tf.map_fn(
+            count_tp_fn_for_thresh, 
+            pred_kbt, 
+            fn_output_signature=(tf.float32, tf.float32)
+        )
         
-        # Calculate TP and FN for each threshold
-        tp_k = tf.reduce_sum(tf.cast(pred_kbt & yt_pos_k, tf.float32), axis=[1, 2])
-        fn_k = tf.reduce_sum(tf.cast(~pred_kbt & yt_pos_k, tf.float32), axis=[1, 2])
-        
-        self.tp.assign_add(tp_k)
-        self.fn.assign_add(fn_k)
+        # 4. Update State
+        self.tp.assign_add(tps_k)
+        self.fn.assign_add(fns_k)
 
     def result(self):
         eps = tf.keras.backend.epsilon()
         # Recall per threshold
         recalls = self.tp / (self.tp + self.fn + eps)
-        # Return AVERAGE Recall across all strict thresholds
+        # Average Recall
         return tf.reduce_mean(recalls)
 
     def reset_state(self):
@@ -2201,6 +2252,58 @@ class FPperMinAt0p3(tf.keras.metrics.Metric):
 
     def reset_state(self):
         self.fp.assign(0.0); self.nwin.assign(0.0)
+        
+class MeanLowConfFP(tf.keras.metrics.Metric):
+    """
+    Calculates Mean FP per Minute at LOW thresholds (0.05 to 0.30).
+    Enforces noise suppression logic.
+    """
+    def __init__(self, thresholds=[0.05, 0.1, 0.15, 0.2, 0.25, 0.3], 
+                 win_sec=1.0, consec_k=3, name="mean_low_conf_fp", model=None, **kw):
+        super().__init__(name=name, **kw)
+        self.thresholds = tf.constant(thresholds, dtype=tf.float32)
+        self.k_thresh = len(thresholds)
+        self.wsec = tf.constant(float(win_sec), tf.float32)
+        self.consec_k = int(consec_k)
+        self.model = model
+        self.fp_sum   = self.add_weight("fp_sum",   shape=(self.k_thresh,), initializer="zeros")
+        self.nwin_sum = self.add_weight("nwin_sum", shape=(self.k_thresh,), initializer="zeros")
+
+    @staticmethod
+    def _enforce_min_run(pred_bt, k):
+        if k <= 1: return pred_bt
+        x = tf.cast(pred_bt, tf.float32)[..., None]
+        filt = tf.ones((k, 1, 1), x.dtype)
+        runsum = tf.nn.conv1d(x, filt, stride=1, padding="SAME")
+        return runsum[..., 0] >= float(k)
+
+    def update_state(self, y_true, y_pred, **_):
+        prob_idx = getattr(self.model, "_cls_prob_index", 1)
+        yp = y_pred[..., prob_idx]
+        yt = y_true[..., 0]
+        is_neg_win = tf.reduce_max(yt, axis=1) < 0.5
+        pred_kbt = yp[None, ...] >= self.thresholds[:, None, None]
+
+        def count_fp_for_thresh(pred_bt):
+            det_bt = self._enforce_min_run(pred_bt, self.consec_k)
+            has_det = tf.reduce_any(det_bt, axis=1)
+            fps = tf.reduce_sum(tf.cast(has_det & is_neg_win, tf.float32))
+            n_neg = tf.reduce_sum(tf.cast(is_neg_win, tf.float32))
+            return fps, n_neg
+
+        fps_k, nwins_k = tf.map_fn(count_fp_for_thresh, pred_kbt, fn_output_signature=(tf.float32, tf.float32))
+        self.fp_sum.assign_add(fps_k)
+        self.nwin_sum.assign_add(nwins_k)
+
+    def result(self):
+        eps = tf.keras.backend.epsilon()
+        minutes = (self.nwin_sum * self.wsec) / 60.0 + eps
+        fp_per_min = self.fp_sum / minutes
+        return tf.reduce_mean(fp_per_min)
+
+    def reset_state(self):
+        self.fp_sum.assign(tf.zeros(self.k_thresh))
+        self.nwin_sum.assign(tf.zeros(self.k_thresh))
         
 # --------------------------------------------------------------------- #
 # LOSS FN 
@@ -3230,9 +3333,22 @@ def mixed_hybrid_loss_final(horizon=0, loss_weight=1, params=None, model=None, t
 
     return loss_fn
 
-def mixed_hybrid_loss_fine_tuning(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
-    import math
-    import tensorflow as tf
+
+def mixed_hybrid_loss_proxy_v1(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+    # ==========================
+    # 0. SETUP PROXIES
+    # ==========================
+    num_classes = int(params.get('NUM_CLASSES', 2)) 
+    n_subcenters = int(params.get('NUM_SUBCENTERS', 3)) 
+    embedding_dim = int(params.get('EMBEDDING_DIM', 128))
+    print(f"Using Proxy Anchor Loss with {num_classes} classes, {n_subcenters} sub-centers, embedding dim {embedding_dim}")
+    if model is not None and not hasattr(model, 'proxy_vectors'):
+        model.proxy_vectors = model.add_weight(
+            name='proxy_vectors',
+            shape=(num_classes, n_subcenters, embedding_dim),
+            initializer='he_normal',
+            trainable=True
+        )
 
     # ==========================
     # 1. HELPERS
@@ -3240,9 +3356,10 @@ def mixed_hybrid_loss_fine_tuning(horizon=0, loss_weight=1, params=None, model=N
     def _mean_pool_bt(x):               
         return tf.reduce_mean(tf.cast(x, tf.float32), axis=1)
 
+    # Only used for Negatives/FP suppression
     def _ramp(step, delay, dur):
-        step  = tf.cast(step, tf.float32)
-        dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+        step, delay = tf.cast(step, tf.float32), tf.cast(delay, tf.float32)
+        dur = tf.maximum(tf.cast(dur, tf.float32), 1.0)
         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
 
@@ -3250,140 +3367,102 @@ def mixed_hybrid_loss_fine_tuning(horizon=0, loss_weight=1, params=None, model=N
         return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
 
     # ==========================
-    # 2. METRIC LOSS (Legacy Support - Dampened)
+    # 2. CORE: SoftTriple Proxy Anchor
     # ==========================
-    # We keep your original Tuple loss but treat it as a gentle regularizer
-    def mpn_tuple_loss(z_a_raw, z_p_raw, z_n_raw, *, margin_hard=1.0, margin_weak=0.1, lambda_pull=0.1):
-        z_a = tf.reduce_mean(tf.cast(z_a_raw, tf.float32), axis=1)
-        z_p = tf.reduce_mean(tf.cast(z_p_raw, tf.float32), axis=1)
-        z_n = tf.reduce_mean(tf.cast(z_n_raw, tf.float32), axis=1)
+    def simple_proxy_anchor_loss(embeddings, labels, proxies, alpha=32, margin=0.1):
+        # Flatten Proxies
+        C, K, D = tf.shape(proxies)[0], tf.shape(proxies)[1], tf.shape(proxies)[2]
+        P_flat = tf.reshape(proxies, [C * K, D])
         
-        d_pair = tf.reduce_sum(tf.square(z_a - z_p), axis=1) + 1e-8
-        L_pull = lambda_pull * d_pair
+        # Normalize
+        P_norm = tf.math.l2_normalize(P_flat, axis=1)
+        X_norm = tf.math.l2_normalize(embeddings, axis=1)
 
-        d_ap = tf.reduce_sum(tf.square(z_a[:,None,:] - z_p[None,:,:]), axis=2) + 1e-8
-        mask = tf.eye(tf.shape(z_a)[0], dtype=tf.bool)
-        d_ap_masked = tf.where(mask, tf.fill(tf.shape(d_ap), 1e9), d_ap)
-        L_weak = tf.reduce_mean(tf.nn.relu(margin_weak + d_pair[:,None] - d_ap_masked))
-        
-        d_an = tf.reduce_sum(tf.square(z_a[:,None,:] - z_n[None,:,:]), axis=2) + 1e-8
-        d_pn = tf.reduce_sum(tf.square(z_p[:,None,:] - z_n[None,:,:]), axis=2) + 1e-8
-        
-        lifted_an = tf.reduce_logsumexp(margin_hard - d_an, axis=1)
-        lifted_pn = tf.reduce_logsumexp(margin_hard - d_pn, axis=1)
-        L_hard = 0.5 * (tf.nn.relu(d_pair + lifted_an) + tf.nn.relu(d_pair + lifted_pn))
+        # Cosine Similarity [N, C, K]
+        cos_sim_all = tf.matmul(X_norm, P_norm, transpose_b=True)
+        cos_sim_shaped = tf.reshape(cos_sim_all, [-1, C, K]) 
 
-        return tf.reduce_mean(L_pull + L_weak + L_hard)
+        labels = tf.cast(tf.reshape(labels, [-1]), tf.int32)
+        one_hot_class = tf.one_hot(labels, depth=C)
 
-    # ==========================
-    # 3. ASYMMETRIC FOCAL LOSS (The Sharpener)
-    # ==========================
-    def asymmetric_focal_loss(y_true, z_logits, gamma_pos=1.0, gamma_neg=2.0, alpha=0.25):
-        """
-        Asymmetric focusing:
-        - Positives: Lower gamma (e.g. 1.0) -> Don't suppress 'easy' positives too much (Helps Latency/Recall)
-        - Negatives: Higher gamma (e.g. 2.0) -> Suppress easy background, focus on hard false positives (Helps Precision)
-        """
-        # Probability P
-        p = tf.nn.sigmoid(z_logits)
+        # --- POSITIVE (SoftMax) ---
+        target_sims = tf.gather(cos_sim_shaped, labels, batch_dims=1)
+        gamma = 10.0
+        # SoftMax over sub-centers (Onset vs Body handled here automatically)
+        soft_sims = (1.0 / gamma) * tf.reduce_logsumexp(gamma * target_sims, axis=1)
         
-        # Calculate P_t (probability of the true class)
-        p_t = y_true * p + (1 - y_true) * (1 - p)
+        loss_pos = tf.reduce_mean(tf.math.log(1.0 + tf.exp(-alpha * (soft_sims - margin))))
+
+        # --- NEGATIVE (Sum) ---
+        mask_neg_class = tf.expand_dims(1.0 - one_hot_class, axis=2)
+        mask_neg_flat = tf.reshape(tf.broadcast_to(mask_neg_class, tf.shape(cos_sim_shaped)), [-1, C*K])
+        sim_flat      = tf.reshape(cos_sim_shaped, [-1, C*K])
         
-        # Calculate alpha_t (weighting)
-        # alpha for class 1, (1-alpha) for class 0
-        alpha_t = y_true * alpha + (1 - y_true) * (1 - alpha)
-        
-        # Calculate Asymmetric Gamma
-        gamma_t = y_true * gamma_pos + (1 - y_true) * gamma_neg
-        
-        # Cross Entropy
-        ce_loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y_true, logits=z_logits)
-        
-        # Focal Term
-        modulating_factor = tf.pow(1.0 - p_t, gamma_t)
-        
-        return tf.reduce_mean(alpha_t * modulating_factor * ce_loss)
+        neg_term = tf.exp(alpha * (sim_flat + margin)) * mask_neg_flat
+        loss_neg = tf.reduce_mean(tf.math.log(1.0 + tf.reduce_sum(neg_term, axis=1)))
+
+        return loss_pos + loss_neg
 
     @tf.function
     def loss_fn(y_true, y_pred):
-        # --- SPLIT INPUTS ---
+        
+        # 1. PARSE
         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
 
         logit_idx = getattr(model, '_cls_logit_index', 0)
         emb_start = getattr(model, '_emb_start_index', 2)
 
-        a_logit = a_out[..., logit_idx]; p_logit = p_out[..., logit_idx]; n_logit = n_out[..., logit_idx]
-        a_emb   = a_out[..., emb_start:]; p_emb   = p_out[..., emb_start:]; n_emb   = n_out[..., emb_start:]
+        # Embeddings
+        a_emb = a_out[..., emb_start:]; p_emb = p_out[..., emb_start:]; n_emb = n_out[..., emb_start:]
         
-        a_lab = tf.cast(a_true[..., 0], tf.float32)
-        p_lab = tf.cast(p_true[..., 0], tf.float32)
-        n_lab = tf.cast(n_true[..., 0], tf.float32)
+        # Labels (Pooled for Metric)
+        a_lab_pool = tf.reduce_max(a_true[..., 0], axis=1)
+        p_lab_pool = tf.reduce_max(p_true[..., 0], axis=1)
+        n_lab_pool = tf.reduce_max(n_true[..., 0], axis=1)
 
-        # --- PARAMS ---
-        # Temperature Scaling: Forces sigmoid saturation (Sharpening)
-        clf_scale = float(params.get('CLF_SCALE', 2.0)) 
+        # 2. METRIC LOSS (Concatenate A + P + N)
+        # 2 Positives (Onset/Body) vs 1 Negative (Noise)
+        # This helps learn the Signal structure faster.
+        all_emb = tf.concat([_mean_pool_bt(a_emb), _mean_pool_bt(p_emb), _mean_pool_bt(n_emb)], axis=0)
+        all_lab = tf.concat([a_lab_pool, p_lab_pool, n_lab_pool], axis=0)
+
+        L_proxy = simple_proxy_anchor_loss(
+            all_emb, all_lab, model.proxy_vectors,
+            alpha=float(params.get('PROXY_ALPHA', 32.0)),
+            margin=float(params.get('PROXY_MARGIN', 0.1))
+        )
         
-        # Focal Params
-        f_gamma_pos = float(params.get('FOCAL_GAMMA_POS', 1.0)) # Lower = stricter on recall (Latency)
-        f_gamma_neg = float(params.get('FOCAL_GAMMA_NEG', 2.0)) # Higher = ignore easy background
-        f_alpha     = float(params.get('FOCAL_ALPHA', 0.25))    # 0.25 downweights dominating positives
+        # Fixed Weight (No Ramp). 
+        # Start with 0.05 to balance against BCE.
+        metric_loss = float(params.get('LOSS_PROXY', 0.05)) * L_proxy
 
-        # 1. METRIC LOSS (The Anchor)
-        # We dampen this significantly for fine-tuning so it doesn't fight the classification
-        L_mpn = mpn_tuple_loss(a_emb, p_emb, n_emb, margin_weak=0.1)
-        w_tupMPN = float(params.get('LOSS_TupMPN', 20.0)) # Reduced weight (was ~80)
-        metric_loss = w_tupMPN * L_mpn 
-
-        # 2. CLASSIFICATION LOSS (The Sharpener)
-        # Scale logits to force certainty
-        def calc_afocal(y, z):
-            return asymmetric_focal_loss(y, z * clf_scale, gamma_pos=f_gamma_pos, gamma_neg=f_gamma_neg, alpha=f_alpha)
-
-        cls_a = calc_afocal(a_lab, a_logit)
-        cls_p = calc_afocal(p_lab, p_logit)
-        cls_n = calc_afocal(n_lab, n_logit) # Negatives are automatically handled by gamma_neg
-
-        classification_loss = cls_a + cls_p + cls_n
-
-        # 3. TV REGULARIZATION (Smoothness)
-        # Apply to RAW logits (before scaling) to avoid exploding gradients
-        lam_tv = float(params.get('LOSS_TV', 0.15))
-        classification_loss += lam_tv * (tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit))
-
-        # 4. AGGREGATION
-        # We assume metric loss is just a constraint now. 
-        # We allow classification loss to drive the gradients.
+        # 3. CLASSIFICATION LOSS
+        # Optional: Ramp ONLY the negatives weight to reduce FPs late in training
+        neg_min = 1.0
+        it = tf.cast(model.optimizer.iterations, tf.float32)
+        total_steps = float(params.get('TOTAL_STEPS', 100000))
+        r_neg = _ramp(it, params.setdefault('NEG_RAMP_DELAY', 0.1*total_steps), params.setdefault('NEG_RAMP_STEPS', 0.4*total_steps))
         
-        return tf.reduce_mean(metric_loss) + tf.reduce_mean(classification_loss)
+        # If LOSS_NEGATIVES=1.0, this stays 1.0. If higher, it ramps up.
+        loss_fp_weight = neg_min + r_neg * tf.maximum(0.0, params.get('LOSS_NEGATIVES', 1.0) - neg_min)
+
+        def bce(y, z):
+            y = tf.cast(y, tf.float32)
+            if tf.rank(z) > tf.rank(y): y = tf.expand_dims(y, -1)
+            # Minimal smoothing
+            y = y * (1.0 - 0.05) + 0.5 * 0.05
+            return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
+
+        # Classification Head (Trained only if StopGrad is False, else just trains head)
+        L_cls = bce(a_true[..., 0], a_out[..., logit_idx]) + \
+                bce(p_true[..., 0], p_out[..., logit_idx]) + \
+                loss_fp_weight * bce(n_true[..., 0], n_out[..., logit_idx])
+        
+        L_cls += 0.15 * (tv_on_logits(a_out[..., logit_idx]) + 
+                         tv_on_logits(p_out[..., logit_idx]) + 
+                         tv_on_logits(n_out[..., logit_idx]))
+
+        return metric_loss + L_cls
 
     return loss_fn
-
-@ tf.function
-def weighted_log_cosh_loss(y_true, y_pred):
-    """
-    Custom loss that unpacks weights from y_true.
-    y_true shape: [batch, time, 2] -> [Labels, Weights]
-    y_pred shape: [batch, time, 1] -> [Predictions]
-    """
-    # 1. Unpack Labels and Weights
-    # y_true[..., 0] are the regression targets (0.0 to 1.0)
-    # y_true[..., 1] are the weights (1.0, 5.0, 20.0)
-    targets = y_true[..., 0:1]
-    weights = y_true[..., 1:2]
-    
-    # 2. Compute Standard LogCosh (Smoother than MAE, more robust than MSE)
-    # log(cosh(x)) is approx x^2/2 for small x and |x| - log(2) for large x
-    error = targets - y_pred
-    log_cosh = tf.math.log(tf.math.cosh(error))
-    
-    # 3. Apply Weights
-    weighted_loss = log_cosh * weights
-    
-    return tf.reduce_mean(weighted_loss)
-
-# Metric to monitor true error without weights
-def raw_mae(y_true, y_pred):
-    targets = y_true[..., 0:1]
-    return tf.keras.metrics.mean_absolute_error(targets, y_pred)

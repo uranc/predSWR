@@ -1353,22 +1353,22 @@ def objective_triplet(trial, model_name, tag, logger):
 
     # ---- Metric: Circle + MPNTuple (time-averaged sims) ----
     # 1. Structure (High Weight, Tight Clusters)
-    params['LOSS_TupMPN']   = trial.suggest_float('LOSS_TupMPN', 50.0, 150.0, log=True)
+    params['LOSS_TupMPN']   = trial.suggest_float('LOSS_TupMPN', 50.0, 180.0, log=True)
     params['MARGIN_WEAK']   = trial.suggest_float('MARGIN_WEAK', 0.05, 0.15, step=0.05) # Keep this low!
 
     # 2. Geometry (Circle Fix)
-    params['LOSS_Circle']   = trial.suggest_int('LOSS_Circle', 10, 40, step=10)
+    params['LOSS_Circle']   = trial.suggest_int('LOSS_Circle', 1, 20, step=10)
     params['CIRCLE_m']      = trial.suggest_float('CIRCLE_m', 0.25, 0.40, step=0.05)
     params['CIRCLE_gamma']  = trial.suggest_categorical('CIRCLE_gamma', [32.0, 64.0])
 
     # 3. Classification (Soft & Robust)
     params['BCE_POS_ALPHA'] = trial.suggest_float('BCE_POS_ALPHA', 1.0, 3.0, step=0.5)
-    params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.04, 0.12) # Handles jitter
+    params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.04, 0.18) # Handles jitter
     params['LOSS_NEGATIVES']= trial.suggest_int('LOSS_NEGATIVES', 16, 30, step=2)
 
     # 4. General
-    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-3, 2e-2, log=True)
-    params['LOSS_TV']       = trial.suggest_float('LOSS_TV', 0.05, 0.5, log=True)
+    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-4, 2e-2, log=True)
+    params['LOSS_TV']       = trial.suggest_float('LOSS_TV', 0.05, 0.8, log=True)
     params['USE_StopGrad']  = trial.suggest_categorical('USE_StopGrad', [False, True])
 
     True # Essential for this architecture
@@ -1418,12 +1418,12 @@ def objective_triplet(trial, model_name, tag, logger):
 
     # act_lib = ['ELU', 'GELU'] # 'RELU',
     # par_act = act_lib[trial.suggest_int('IND_ACT', 0, len(act_lib)-1)]
-    par_act = 'ELU'
+    par_act = 'GELU'
     par_opt = 'AdamWA'
     
     # reg_lib = ['LOne',  'None'] #'LTwo',
     # par_reg = reg_lib[trial.suggest_int('IND_REG', 0, len(reg_lib)-1)]
-    par_reg = 'LOne'  # No regularization for now
+    par_reg = 'None'  # No regularization for now
 
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
     # Build architecture string with timing parameters (adjust format)
@@ -1685,6 +1685,331 @@ def objective_triplet(trial, model_name, tag, logger):
     # ---- finally: report to Optuna as 2-objective (prauc, fp/min@0.3)
     return float(prauc_sel), float(lat_sel) #float(fpmin_sel)
 
+
+def objective_proxy(trial, model_name, tag, logger):
+    ctypes.CDLL("libcuda.so.1")
+    """Objective function for Optuna optimization - Phase 1 Proxy Anchor"""
+
+    tf.keras.backend.clear_session()    
+    gc.collect()
+    tf.config.run_functions_eagerly(False)
+    tf.random.set_seed(1337); np.random.seed(1337); random.seed(1337)
+    
+    # ============================================================
+    # 1. PARAMETERS & ARCHITECTURE
+    # ============================================================
+    params = {'BATCH_SIZE': 128, 'SHUFFLE_BUFFER_SIZE': 4096*2,
+            'WEIGHT_FILE': '', 'NO_EPOCHS': 300,
+            'NO_TIMEPOINTS': 64, 'NO_CHANNELS': 8, 'SRATE': 2500,
+            'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
+            'mode': 'train', 'TYPE_MODEL': 'Base', 'NO_STRIDES': 32
+            }
+
+    # Dynamic learning rate range
+    learning_rate = 1e-2
+    params['LEARNING_RATE'] = learning_rate
+    batch_size = 128
+    params['BATCH_SIZE'] = batch_size
+    params['SRATE'] = 2500
+    params['NO_EPOCHS'] = 500
+    params['TYPE_MODEL'] = 'Base'
+
+    # Architecture Selection
+    arch_lib = ['MixerOnly', 'MixerHori', 'MixerDori', 'DualMixerDori', 'MixerCori', 'SingleCh', 'TripletOnly']
+    arch_ind = np.where([(arch.lower() in tag.lower()) for arch in arch_lib])[0][0]
+    params['TYPE_ARCH'] = arch_lib[arch_ind]
+    print(f"Architecture: {params['TYPE_ARCH']}")
+
+    # Dynamic Imports
+    if 'MixerHori' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
+        from model.model_fn import build_DBI_TCN_HorizonMixer as build_DBI_TCN
+    elif 'MixerDori' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
+        from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
+    elif 'MixerCori' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
+        from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
+    elif 'MixerOnly' in params['TYPE_ARCH']:
+        from model.input_augment_weighted import rippleAI_load_dataset
+        from model.model_fn import build_DBI_TCN_MixerOnly as build_DBI_TCN
+    elif 'TripletOnly' in params['TYPE_ARCH']:
+        from model.input_proto_new import rippleAI_load_dataset
+        # build_DBI_TCN loaded dynamically later
+
+    params['NO_TIMEPOINTS'] = 64
+    params['NO_STRIDES'] = 32
+
+    # ============================================================
+    # 2. HYPERPARAMETERS
+    # ============================================================
+    
+    # --- A. Metric Learning (The Core) ---
+    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.001, 8.0, log=True)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 3, 16)
+    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 64.0, step=8.0)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.05, 0.25, step=0.05)
+    
+    # --- B. Classification Head & Regularization ---
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 1.0, 30.0, step=5.0)
+    params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.15, step=0.05)
+    params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 0.05, 0.50, log=True)
+    
+    # Dropout (Categorical)
+    params['DROP_RATE']       = trial.suggest_categorical('DROP_RATE', [0.0, 0.05, 0.1, 0.2])
+
+    # --- C. Constants / Fixed ---
+    params['USE_StopGrad'] = trial.suggest_int('NUM_SUBCENTERS', 1, 1) > 0
+    params['BCE_POS_ALPHA'] = 1.0
+    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-4, 1e-2, log=True)
+    
+    if params['USE_StopGrad']:
+        print('Using Stop Gradient for Class. Branch')
+        params['TYPE_ARCH'] += 'StopGrad'
+    
+    # --- D. Derived / Fixed Params ---
+    params.update({
+        "SHIFT_MS": 0, "HORIZON_MS": 1,
+        "LOSS_WEIGHT": 1.0, 
+        "LOSS_NEGATIVES_MIN": 1.0, 
+        "NUM_CLASSES": 2,
+        "PROXY_SCALING": 1.0,
+        # Optimizer defaults
+        "USE_LR_SCHEDULE": True,
+        "LR_WARMUP_RATIO": 0.10,
+        "LR_COOL_RATIO": 0.80,
+        "LR_FINAL_SCALE": 0.08,
+        "WEIGHT_DECAY": 1e-4,
+        "CLIP_NORM": 1.5,
+    })
+
+    # =====================  FIXED RIDGE / CONSTANTS  =====================
+    params['TYPE_LOSS'] = 'ProxyPhase1'
+    params['HYPER_MONO'] = 0 
+
+    # TCN Configuration
+    params['NO_KERNELS'] = 4
+    if params['NO_TIMEPOINTS'] == 32:   dil_lib = [4,3,2,2,2]
+    elif params['NO_TIMEPOINTS'] == 64: dil_lib = [5,4,3,3,3]
+    elif params['NO_TIMEPOINTS'] == 92: dil_lib = [6,5,4,4,4]
+    elif params['NO_TIMEPOINTS'] == 128:dil_lib = [6,5,4,4,4]
+    elif params['NO_TIMEPOINTS'] == 196:dil_lib = [7,6,5,5,5]
+    elif params['NO_TIMEPOINTS'] == 384:dil_lib = [8,7,6,6,6]
+    params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
+    params['NO_FILTERS'] = 32
+    params['EMBEDDING_DIM'] = params['NO_FILTERS']
+
+    # Set Loss Name (Strict)
+    params['TYPE_LOSS'] += tag
+    print(params['TYPE_LOSS'])
+
+    # Regularization Name Construction (Strict)
+    par_init = 'He'
+    par_norm = 'LN'
+    par_act = 'GELU'
+    par_opt = 'AdamWA'
+    par_reg = 'None' 
+
+    params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
+    
+    # Build architecture string
+    arch_str = (f"{params['TYPE_ARCH']}" f"{int(params['HORIZON_MS']):02d}")
+    print(arch_str)
+    params['TYPE_ARCH'] = arch_str
+    
+    params['TYPE_ARCH'] += 'Online'
+    params['TYPE_ARCH'] += f"Shift{int(params['SHIFT_MS']):02d}"
+
+    # Build Run Name (STRICTLY PRESERVED STRUCTURE)
+    run_name = (f"{params['TYPE_MODEL']}_"
+                f"K{params['NO_KERNELS']}_"
+                f"T{params['NO_TIMEPOINTS']}_"
+                f"D{params['NO_DILATIONS']}_"
+                f"N{params['NO_FILTERS']}_"
+                f"L{int(-np.log10(params['LEARNING_RATE']))}_"
+                f"E{params['NO_EPOCHS']}_"
+                f"B{params['BATCH_SIZE']}_"
+                f"S{params['NO_STRIDES']}_"
+                f"{params['TYPE_LOSS']}_"
+                f"{params['TYPE_REG']}_"
+                f"{params['TYPE_ARCH']}")
+    
+    params['NAME'] = run_name
+    print(params['NAME'])
+
+    # ============================================================
+    # 3. SETUP & LOADING
+    # ============================================================
+    param_dir = f"params_{tag}"
+    study_dir = f"studies/{param_dir}/study_{trial.number}_{trial.datetime_start.strftime('%Y%m%d_%H%M%S')}"
+    os.makedirs(study_dir, exist_ok=True)
+
+    import importlib.util
+    model_dir = f"studies/{param_dir}/base_model"
+    spec = importlib.util.spec_from_file_location("model_fn", f"{model_dir}/model_fn.py")
+    model_module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(model_module)
+    build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+    
+    shutil.copy2('./pred.py', f"{study_dir}/pred.py")
+    shutil.copytree(model_dir, f"{study_dir}/model")
+    
+    trial_info = {
+        "study_name": (study.study_name if "study" in globals() else param_dir),
+        "trial_number": int(trial.number),
+        "start_time": datetime.datetime.now().isoformat(),
+        "study_dir": study_dir,
+        "run_name": run_name,
+        "parameters": dict(params),
+        "dataset": {},
+        "environment": {
+            "python": sys.version,
+            "tensorflow": tf.__version__,
+            "optuna": optuna.__version__,
+            "numpy": np.__version__,
+            "cuda_visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES", ""),
+            "gpus": [d.name for d in tf.config.list_physical_devices("GPU")],
+        },
+        "selected_epoch": None,
+        "selection_metric": None,
+        "metrics": {}
+    }
+    _atomic_write_json(os.path.join(study_dir, "trial_info.json"), trial_info)
+
+    # Load Data
+    preproc = True
+    if 'TripletOnly' in params['TYPE_ARCH']:
+        params['steps_per_epoch'] = 1000
+        flag_online = 'Online' in params['TYPE_ARCH']
+        train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
+    else:
+        train_dataset, test_dataset, label_ratio = rippleAI_load_dataset(params, preprocess=preproc)
+
+    params.update(dataset_params)
+
+    # Ramps
+    ts = float(params['steps_per_epoch'] * int(params['NO_EPOCHS']) * 0.9)
+    print('Total Steps: ', ts)
+    params['TOTAL_STEPS'] = ts
+    params["RAMP_DELAY"]     = 0.02 * ts
+    params["RAMP_STEPS"]     = 0.30 * ts
+    params["NEG_RAMP_DELAY"] = 0.10 * ts 
+    params["NEG_RAMP_STEPS"] = 0.60 * ts
+    params["TV_DELAY"]       = 0.08 * ts
+    params["TV_DUR"]         = 0.35 * ts
+    params['CLF_RAMP_DELAY']  = params['RAMP_DELAY']
+    params['CLF_RAMP_STEPS']  = params['RAMP_STEPS']
+
+    params['GRACE_MS'] = 5
+    params['ANCHOR_MIN_MS'] = 20
+    params['POS_MIN_MS'] = 10
+    params['POS_EXCLUDE_ANCHORS'] = True
+    
+    trial_info["dataset"] = {
+        "estimated_steps_per_epoch": int(params.get("ESTIMATED_STEPS_PER_EPOCH", params.get("steps_per_epoch", 0))),
+        "val_steps": int(params.get("VAL_STEPS", 0)),
+        "label_ratio": float(label_ratio) if "label_ratio" in locals() else None,
+        "no_timepoints": int(params.get("NO_TIMEPOINTS", 0)),
+        "stride": int(params.get("NO_STRIDES", 0)),
+        "srate": int(params.get("SRATE", 0)),
+    }    
+    trial_info["parameters_final"] = dict(params)
+    _atomic_write_json(os.path.join(study_dir, "trial_info.json"), trial_info)
+    
+    # ============================================================
+    # 4. BUILD & TRAIN
+    # ============================================================
+    # Model is compiled inside build_DBI_TCN
+    model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
+    model.summary()
+    
+    val_steps = dataset_params['VAL_STEPS']
+
+    # Callbacks (Early Stopping + Checkpoints)
+    callbacks = [
+        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=50, mode='max', verbose=1, restore_best_weights=True),        
+        cb.TensorBoard(log_dir=f"{study_dir}/", write_graph=True, write_images=True, update_freq='epoch'),
+        cb.ModelCheckpoint(f"{study_dir}/mcc.weights.h5", monitor="val_sample_max_mcc", mode="max", save_best_only=True, save_weights_only=True, verbose=1),
+        cb.ModelCheckpoint(f"{study_dir}/max.weights.h5", monitor='val_sample_max_f1', save_best_only=True, save_weights_only=True, mode='max', verbose=1),
+        cb.ModelCheckpoint(f"{study_dir}/event.weights.h5", monitor='val_sample_pr_auc', save_best_only=True, save_weights_only=True, mode='max', verbose=1),
+    ]
+
+    history = model.fit(
+        train_dataset,
+        steps_per_epoch=dataset_params['ESTIMATED_STEPS_PER_EPOCH'],
+        validation_data=test_dataset,
+        validation_steps=val_steps,
+        epochs=params['NO_EPOCHS'],
+        callbacks=callbacks,
+        verbose=1,
+        max_queue_size=8
+    )
+    hist = history.history
+
+    # ============================================================
+    # 5. METRIC SELECTION & PRUNING
+    # ============================================================
+    def hist_pick(hist, key, idx, default=np.nan):
+        arr = hist.get(key, None)
+        if arr is None or idx is None or idx < 0 or idx >= len(arr): return float(default)
+        return float(arr[idx])
+
+    # Select by Max PR-AUC
+    pr_list = np.asarray(hist.get("val_sample_pr_auc", []), dtype=np.float64)
+    if pr_list.size == 0 or np.all(np.isnan(pr_list)):
+        raise optuna.TrialPruned("No valid PR-AUC history; pruning trial.")
+
+    idx = int(np.nanargmax(pr_list))
+    epoch_sel = idx 
+
+    # Pick metrics (Metrics defined in build_DBI_TCN)
+    prauc_sel = hist_pick(hist, "val_sample_pr_auc",     idx)
+    rec_sel   = hist_pick(hist, "val_mean_high_conf_recall", idx) 
+    fpmin_sel = hist_pick(hist, "val_mean_low_conf_fp", idx)
+    lat_sel   = hist_pick(hist, "val_latency_score_range",     idx)
+    f1_sel    = hist_pick(hist, "val_sample_max_f1",     idx)
+    mcc_sel   = hist_pick(hist, "val_sample_max_mcc",    idx)
+
+    # Logging
+    logger.info(
+        f"Trial {trial.number} SELECTED@epoch[{epoch_sel}] — PRAUC: {prauc_sel:.4f} | "
+        f"RecHigh: {rec_sel:.4f} | FPLow: {fpmin_sel:.3f} | Lat: {lat_sel:.4f} | "
+        f"MaxF1: {f1_sel:.4f} | MaxMCC: {mcc_sel:.4f}"
+    )
+
+    # User Attributes
+    trial.set_user_attr("sel_epoch",           int(epoch_sel))
+    trial.set_user_attr("sel_prauc",           float(prauc_sel))
+    trial.set_user_attr("sel_high_conf_rec",   float(rec_sel))
+    trial.set_user_attr("sel_low_conf_fp",     float(fpmin_sel))
+    trial.set_user_attr("sel_latency_range",   float(lat_sel))
+    trial.set_user_attr("sel_max_f1",          float(f1_sel))
+    trial.set_user_attr("sel_max_mcc",         float(mcc_sel))
+
+    # JSON Update
+    trial_info["selected_epoch"] = int(epoch_sel)
+    trial_info["selection_metric"] = "val_sample_pr_auc"
+    trial_info["selected_epoch_metrics"] = {
+        'val_sample_pr_auc':         float(prauc_sel),
+        'val_mean_high_conf_recall': float(rec_sel),
+        'val_mean_low_conf_fp':      float(fpmin_sel),
+        'val_latency_score_range':   float(lat_sel),
+        'val_sample_max_f1':         float(f1_sel),
+        'val_sample_max_mcc':        float(mcc_sel),
+    }
+    _atomic_write_json(os.path.join(study_dir, "trial_info.json"), trial_info)
+
+    # Pruning (Restored EXACT Logic)
+    bad = (
+        (not np.isfinite(prauc_sel)) or (prauc_sel <= 0.001) or
+        (not np.isfinite(rec_sel))   or (rec_sel <= 0.001) or (rec_sel > 0.999) or
+        (not np.isfinite(fpmin_sel)) or (fpmin_sel <= 0.001) or   
+        (not np.isfinite(lat_sel))   or (lat_sel >= 0.999)      
+    )
+    if bad:
+        raise optuna.TrialPruned("Bug signature at selected epoch.")
+
+    return float(prauc_sel), float(fpmin_sel)
 
 def objective_time_to_event(trial, model_name, tag, logger):
     ctypes.CDLL("libcuda.so.1")

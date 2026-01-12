@@ -283,7 +283,7 @@ if mode == 'train':
     params['RIPPLE_RATIO'] = label_ratio
 
     # --- Preview one triplet batch (debug utility) ---
-    DEBUG_PLOT_TRIPLET = True  # set False to disable
+    DEBUG_PLOT_TRIPLET = False  # set False to disable
     # pdb.set_trace()
     if DEBUG_PLOT_TRIPLET:
         # Fetch first batch (supports tf.data.Dataset or Keras Sequence / custom Sequence)
@@ -306,26 +306,26 @@ if mode == 'train':
         if tf.is_tensor(y_preview):
             y_preview = y_preview.numpy()
 
-        pdb.set_trace()
+        # pdb.set_trace()
 
-        n=0
-        for istep in range(50):
-            x_preview, y_preview = next(iter(train_dataset))
-            x_preview = x_preview.numpy()
-            y_preview = y_preview.numpy()
-            pdb.set_trace()
-            if np.sum(y_preview[:,:,0])==0:
-                continue
-            # pdb.set_trace()
-            for ii in range(0, 25):
-                n+=1
-                plt.subplot(5,5,n)
-                plt.plot(np.arange(512), x_preview[0+ii, :, :]*100+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
-                plt.plot(np.arange(256)+256, -20+20*y_preview[0+ii, :, 1], 'r')        
-                plt.axis('off')
-                if np.mod(n, 25) == 0:
-                    plt.show()
-                    n = 0
+        # n=0
+        # for istep in range(50):
+        #     x_preview, y_preview = next(iter(train_dataset))
+        #     x_preview = x_preview.numpy()
+        #     y_preview = y_preview.numpy()
+        #     pdb.set_trace()
+        #     if np.sum(y_preview[:,:,0])==0:
+        #         continue
+        #     # pdb.set_trace()
+        #     for ii in range(0, 25):
+        #         n+=1
+        #         plt.subplot(5,5,n)
+        #         plt.plot(np.arange(512), x_preview[0+ii, :, :]*100+np.array([0, 5, 10, 15, 20, 25, 30, 35]))
+        #         plt.plot(np.arange(256)+256, -20+20*y_preview[0+ii, :, 1], 'r')        
+        #         plt.axis('off')
+        #         if np.mod(n, 25) == 0:
+        #             plt.show()
+        #             n = 0
         # n=0
         # for ii in range(0, 10):
         #     n+=1
@@ -773,11 +773,12 @@ elif mode == 'predict':
         # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/Mouse3_LFP_ZSig_2500.npy')
         # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/MouseTest_LFP_ZSig_2500.npy')
         # LFP = np.load('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake03/LFP_zSig_141125_suffix11_sf2500.npy')
-        # LFP = np.load('/cs/projects/OWVinckSWR/Cem/StateMachine_Session1_LFP_ZScore.npy')
-        LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake03/download/lfp_sub12_slidingZ_CropTEST.npy')
-
+        LFP = np.load('/cs/projects/OWVinckSWR/Cem/StateMachine_Session1_LFP_ZScore.npy')
+        # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake03/download/lfp_sub12_slidingZ_CropTEST.npy')
+        # pdb.set_trace()
         LFP = np.transpose(LFP, (1, 0)).astype(np.float32)
         # import matplotlib.pyplot as plt
+        # LFP += np.array([0, 5, 10, 15, 20, 25, 30, 35])
         # for ii in range(LFP.shape[1]):
         #     plt.plot(LFP[:,ii])
         # plt.show()
@@ -1999,23 +2000,23 @@ elif mode == 'tune_server':
     #     seed=1337,
     # )
     sampler = NSGAIISampler(
-        population_size=60,   # High diversity to utilize 18 parallel streams
-        mutation_prob=0.15,   # Slightly increased (default 0.1) to keep discovering new logic over weeks
+        population_size=36,   # High diversity to utilize 18 parallel streams
+        mutation_prob=0.2,   # Slightly increased (default 0.1) to keep discovering new logic over weeks
         crossover_prob=0.9,   # Keep high to combine features of "Fast" and "Accurate" models
         seed=1337
     )
-    pruner = optuna.pruners.HyperbandPruner(
-            min_resource=30,    # Give model 30 epochs before judging
-            max_resource=500,   # Max epochs
-            reduction_factor=3  # Check at 30 -> 90 -> 270...
-        )    
+    # pruner = optuna.pruners.HyperbandPruner(
+    #         min_resource=30,    # Give model 30 epochs before judging
+    #         max_resource=500,   # Max epochs
+    #         reduction_factor=3  # Check at 30 -> 90 -> 270...
+    #     )    
     study = optuna.create_study(
         study_name=param_dir,
         storage=storage,
-        directions=["maximize", "maximize"],  # PR-AUC up, FP/min down
+        directions=["maximize", "minimize"],  # PR-AUC up, FP/min down
         load_if_exists=True,
         sampler=sampler,
-        pruner=pruner,
+        # pruner=pruner,
     )
     print("Resilient async study server started.")
     print("Study name:", study.study_name)
@@ -2036,7 +2037,8 @@ elif mode == 'tune_worker':
     )
     # Optimize for 1000 trials
     if 'TripletOnly'.lower() in tag.lower():
-        from model.study_objectives import objective_triplet as objective
+        # from model.study_objectives import objective_triplet as objective
+        from model.study_objectives import objective_proxy as objective
         # objective = objective_triplet
     elif 'MixerOnly'.lower() in tag.lower():
         # from model.study_objectives import objective_only as objective

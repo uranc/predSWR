@@ -13,38 +13,41 @@ from keras.utils import timeseries_dataset_from_array
 
 def compute_ttne(n_samples, events_seconds, sf):
     """
-    Computes Time To Next Event (TTNE) in seconds.
-    TTNE = Start Time of Next Event - Current Time
-    Values are strictly positive and count down to 0.
+    Computes Time To Next Event (TTNE) in seconds on continuous data.
     """
-    # Default to 60s (infinity cap)
+    # Default cap: 60s
     ttne = np.full(n_samples, 60.0, dtype=np.float32) 
     t_vec = np.arange(n_samples) / sf
     
     if len(events_seconds) > 0:
         events_idx = (events_seconds * sf).astype(int)
+        
+        if events_idx.ndim == 1:
+             events_idx = events_idx.reshape(1, 2)
+             
         start_indices = events_idx[:, 0]
         end_indices = events_idx[:, 1]
         
-        # 1. Before first event
-        if start_indices[0] > 0:
+        # 1. Fill gap before first event
+        if len(start_indices) > 0 and start_indices[0] > 0:
             ttne[:start_indices[0]] = (start_indices[0] / sf) - t_vec[:start_indices[0]]
             
-        # 2. Between events
+        # 2. Fill gaps between events
         for i in range(len(start_indices) - 1):
             curr_end = end_indices[i]
             next_start = start_indices[i+1]
             
-            # Only fill valid gaps
-            if next_start > curr_end:
-                # The countdown is: (Time of Next Start) - (Current Time)
-                ttne[curr_end:next_start] = (next_start / sf) - t_vec[curr_end:next_start]
+            if next_start > curr_end and curr_end < n_samples:
+                seg_len = min(next_start, n_samples) - curr_end
+                if seg_len > 0:
+                    ttne[curr_end:curr_end+seg_len] = (next_start / sf) - t_vec[curr_end:curr_end+seg_len]
 
-        # 3. Zero out during events (or keep 0)
+        # 3. Zero out during events
         for i in range(len(start_indices)):
             s, e = start_indices[i], end_indices[i]
-            if e > n_samples: e = n_samples
-            ttne[s:e] = 0.0
+            if s < n_samples:
+                e = min(e, n_samples)
+                ttne[s:e] = 0.0
             
     return np.maximum(ttne, 0).astype(np.float32)
 
@@ -77,8 +80,7 @@ def rippleAI_prepare_training_data(train_LFPs, train_GTs,
                                    channels=np.arange(0, 8),
                                    zscore=True, process_online=False, use_band=None):    
     assert len(train_LFPs) == len(train_GTs)
-    assert len(val_LFPs) == len(val_GTs)
-
+    
     counter_sf = 0
     retrain_LFP = []
     retrain_TTNE = [] 
@@ -96,7 +98,7 @@ def rippleAI_prepare_training_data(train_LFPs, train_GTs,
         if zscore:
             aux_LFP = (aux_LFP - np.mean(aux_LFP, axis=0)) / np.std(aux_LFP, axis=0)
         
-        # Compute TTNE
+        # Calculate TTNE on the CONTINUOUS session to ensure accuracy
         aux_TTNE = compute_ttne(len(aux_LFP), GT, new_sf)
 
         if len(retrain_LFP) == 0:
@@ -122,9 +124,7 @@ def rippleAI_prepare_training_data(train_LFPs, train_GTs,
         except TypeError:
              tmpLFP = process_LFP(LFP, ch=channels, sf=sf[counter_sf], new_sf=new_sf, 
                                   use_zscore=False, use_band=use_band)
-
-        if zscore:
-            tmpLFP = (tmpLFP - np.mean(tmpLFP, axis=0)) / np.std(tmpLFP, axis=0)
+        if zscore: tmpLFP = (tmpLFP - np.mean(tmpLFP, axis=0)) / np.std(tmpLFP, axis=0)
         norm_val_GT.append(tmpLFP)
         counter_sf += 1
         
@@ -155,10 +155,8 @@ def create_parametric_labels(binary_labels, sampling_rate, params):
         if onset > start_rise:
             t = np.linspace(0, 1, onset - start_rise)
             targets[start_rise:onset] = np.maximum(targets[start_rise:onset], t ** rise_power)
-            
         end_plateau = min(n_points, onset + plateau_samples)
         targets[onset:end_plateau] = 1.0
-        
         start_fall = end_plateau
         end_fall = min(n_points, start_fall + fall_samples)
         if end_fall > start_fall:
@@ -199,13 +197,12 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
     if mode == 'test':
         path = os.path.join('/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/','Downloaded_data','Dlx1','figshare_14959449')
         LFP, GT = load_lab_data(path); val_LFPs.append(LFP); val_GTs.append(GT); all_SFs.append(30000)
-        
         path = os.path.join('/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/','Downloaded_data','Thy7','figshare_14960085')
         LFP, GT = load_lab_data(path); val_LFPs.append(LFP); val_GTs.append(GT); all_SFs.append(30000)
-
         path = os.path.join('/mnt/hpc/projects/OWVinckSWR/Dataset/rippl-AI-data/','Downloaded_data','Calb20','figshare_20072252')
         LFP, GT = load_lab_data(path); val_LFPs.append(LFP); val_GTs.append(GT); all_SFs.append(30000)
 
+    # Process
     train_data, train_labels_vec, val_data, val_labels_vec, train_ttne_full = rippleAI_prepare_training_data(
         train_LFPs, train_GTs, val_LFPs, val_GTs,
         sf=all_SFs, new_sf=params['SRATE'],
@@ -218,19 +215,12 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
         return val_data, val_labels_vec
 
     # -------------------------------------------------------------------------
-    # VISUALIZATION (Whole Session & Distribution)
+    # VISUALIZATION (Pre-Split)
     # -------------------------------------------------------------------------
     print("Generating Visualizations...")
     sf = params['SRATE']
     
-    # 1. Histogram
-    plt.figure(figsize=(10, 6))
-    plt.hist(train_ttne_full[::100], bins=100, color='teal', alpha=0.7, log=True)
-    plt.title('Distribution of Time-To-Next-Event (Training Set)')
-    plt.xlabel('Seconds to Next Ripple'); plt.ylabel('Count (Log Scale)')
-    plt.grid(True, alpha=0.3); plt.savefig('ttne_histogram.png'); print("Saved ttne_histogram.png")
-
-    # 2. Whole Session Trace
+    # Create temp label for plotting (reconstructed from GT)
     temp_binary = np.zeros(len(train_data), dtype=np.float32)
     for event in train_labels_vec:
         start = int(sf * event[0]); end = int(sf * event[1])
@@ -238,24 +228,46 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
     temp_labels = create_parametric_labels(temp_binary, sf, params)
     temp_weights = create_weights(temp_labels, params)
     
-    ds = 10 
-    t_axis = np.arange(len(temp_binary))[::ds] / sf
-    
-    fig, axes = plt.subplots(3, 1, figsize=(15, 12), sharex=True)
-    axes[0].plot(t_axis, temp_labels[::ds], 'b', linewidth=1); axes[0].set_title('Target Label (Proximity)')
-    axes[1].plot(t_axis, temp_weights[::ds], 'orange', linewidth=1); axes[1].set_title('Weights')
-    axes[2].plot(t_axis, train_ttne_full[::ds], 'g', linewidth=1); axes[2].set_title('Time To Next Event (s)')
-    axes[2].set_xlabel('Time (s)')
-    pdb.set_trace()
-    
-    plt.tight_layout(); plt.savefig('whole_session_vis.png'); print("Saved whole_session_vis.png")
+    # 1. Histogram
+    # plt.figure(figsize=(10, 6))
+    # plt.hist(train_ttne_full[::100], bins=100, color='teal', alpha=0.7, log=True)
+    # plt.title('Distribution of Time-To-Next-Event (Training Set)')
+    # plt.xlabel('Seconds'); plt.ylabel('Count (Log Scale)')
+    # plt.grid(True, alpha=0.3); plt.savefig('ttne_histogram.png'); print("Saved ttne_histogram.png")
+
+    # 2. Trace
+    # ds = 10 
+    # t_axis = np.arange(len(temp_binary))[::ds] / sf
+    # fig, axes = plt.subplots(3, 1, figsize=(15, 12), sharex=True)
+    # axes[0].plot(t_axis, temp_labels[::ds], 'b'); axes[0].set_title('Target Label (0-1)')
+    # axes[1].plot(t_axis, temp_weights[::ds], 'orange'); axes[1].set_title('Weights')
+    # axes[2].plot(t_axis, train_ttne_full[::ds], 'g'); axes[2].set_title('TTNE (s)')
+    # plt.tight_layout(); plt.savefig('whole_session_vis.png'); print("Saved whole_session_vis.png")
     # -------------------------------------------------------------------------
 
-    # Split Data
-    test_examples, events_test, train_examples, events_train = split_data(train_data, train_labels_vec, sf=params['SRATE'], split=0.7)
-    test_ttne, _, train_ttne, _ = split_data(train_ttne_full.reshape(-1, 1), train_labels_vec, sf=params['SRATE'], split=0.7)
+    # BUNDLE TTNE WITH DATA FOR SAFE SPLITTING
+    # This is the crucial fix: Attach TTNE as the last channel
+    if train_ttne_full.ndim == 1:
+        train_ttne_full = train_ttne_full[:, np.newaxis]
+        
+    bundled_data = np.hstack([train_data, train_ttne_full])
 
-    # Generate Batched Labels
+    # Split Data (Splits the bundled matrix)
+    test_bundled, events_test, train_bundled, events_train = split_data(
+        bundled_data, train_labels_vec, sf=params['SRATE'], split=0.7
+    )
+    
+    # UNBUNDLE (Peel off the last channel)
+    # Assuming original LFP has 8 channels
+    n_ch = train_data.shape[1]
+    train_examples = train_bundled[:, :n_ch]
+    train_ttne = train_bundled[:, n_ch]
+    
+    test_examples = test_bundled[:, :n_ch]
+    test_ttne = test_bundled[:, n_ch]
+
+    # Generate Binary/Parametric Labels from the split events
+    sf = params['SRATE']
     y_train_binary = np.zeros(len(train_examples), dtype=np.float32)
     for event in events_train: y_train_binary[int(sf*event[0]):int(sf*event[1])] = 1
     
@@ -266,14 +278,22 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
     test_labels  = create_parametric_labels(y_test_binary, sf, params)
     weights = create_weights(train_labels, params)
 
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(12, 6))
+    plt.plot(train_labels[:500000], label='Train Labels')
+    plt.plot(weights[:500000], label='Weights')
+    plt.plot(train_ttne[:500000], label='Train TTNE')
+    plt.legend()
+    plt.show()
+    pdb.set_trace()
+    
     if sample_shift > 0:
         train_examples = train_examples[:-sample_shift]; train_labels = train_labels[sample_shift:]
         train_ttne = train_ttne[sample_shift:]; weights = weights[sample_shift:]
         test_examples = test_examples[:-sample_shift]; test_labels = test_labels[sample_shift:]
+        test_ttne = test_ttne[sample_shift:]
 
-    print('Train X:', train_examples.shape)
-    print('Train Y:', train_labels.shape)
-    print('Weights:', weights.shape)
+    print(f'Train X: {train_examples.shape} | Train Y: {train_labels.shape}')
 
     # Dataset Creation
     sample_length = params['NO_TIMEPOINTS'] * 2
@@ -292,20 +312,19 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
     test_y  = create_ds(test_labels[y_start:].reshape(-1,1), label_length)
     train_w = create_ds(weights[y_start:].reshape(-1,1), label_length)
     
-    # Create TTNE Datasets
     train_t = create_ds(train_ttne[y_start:].reshape(-1,1), label_length)
     test_t  = create_ds(test_ttne[y_start:].reshape(-1,1), label_length)
 
     if params['TYPE_ARCH'].find('Only') > -1:
         test_d = test_y 
-        # Train Y = [Label, Weight, TTNE]
+        # Output: [Label, Weight, TTNE]
         train_c = tf.data.Dataset.zip((train_y, train_w, train_t))
         train_d = train_c.map(lambda l, w, t: tf.concat([l, w, t], axis=-1))
         test_d = test_y
     else:
         # Standard
         train_xy = train_x; test_xy = test_x
-
+        
         test_c = tf.data.Dataset.zip((test_xy, test_y))
         
         if params['TYPE_ARCH'].find('Patch') > -1:
@@ -314,7 +333,6 @@ def rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=
         else:
              train_c = tf.data.Dataset.zip((train_xy, train_y, train_w, train_t))
              # Target = [Label, Weight, TTNE]
-             # We include TTNE so you can monitor regression error (in seconds) during training if you want
              train_d = train_c.map(lambda x, l, w, t: tf.concat([l, w, t], axis=-1))
 
         test_d = test_c.map(lambda x, y: y)

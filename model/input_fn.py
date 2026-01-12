@@ -297,7 +297,7 @@ def load_bruce(probe = 'probe1'):
         indeces = np.int32(np.linspace(24,31,8))
         LFP = loaded_data_raw[:,indeces]
     elif probe == 'probe2':
-        loaded_data_raw = np.load('/cs/projects/OWVinckSWR/DL/predSWR/bruce_dataset/LFP_sanity_check/LFP_Bruce_Probe1.npy')
+        loaded_data_raw = np.load('/cs/projects/OWVinckSWR/DL/predSWR/bruce_dataset/LFP_sanity_check/LFP_Bruce_Probe2.npy')
         # we know peak channel is 35
         indeces = np.int32(np.linspace(31,38,8))
         LFP = loaded_data_raw[:,indeces]
