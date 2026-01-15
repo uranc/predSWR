@@ -1745,28 +1745,33 @@ def objective_proxy(trial, model_name, tag, logger):
     # ============================================================
     
     # --- A. Metric Learning (The Core) ---
-    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.001, 8.0, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 3, 16)
+    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.01, 8.0, log=True)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 2, 16, step=2)
     params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 64.0, step=8.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.05, 0.25, step=0.05)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.2, 1.6, step=0.1)
     
     # --- B. Classification Head & Regularization ---
-    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 1.0, 30.0, step=5.0)
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 1.0, 24.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.15, step=0.05)
-    params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 0.05, 0.50, log=True)
+    params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 0.01, 1.0, log=True)
     
     # Dropout (Categorical)
-    params['DROP_RATE']       = trial.suggest_categorical('DROP_RATE', [0.0, 0.05, 0.1, 0.2])
+    drop_lib = [0.1, 0.2, 0.3, 0.4]
+    params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, len(drop_lib)-1)]
 
     # --- C. Constants / Fixed ---
-    params['USE_StopGrad'] = trial.suggest_int('NUM_SUBCENTERS', 1, 1) > 0
     params['BCE_POS_ALPHA'] = 1.0
     params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-4, 1e-2, log=True)
     
+    params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 1, 1)) == 1
     if params['USE_StopGrad']:
         print('Using Stop Gradient for Class. Branch')
         params['TYPE_ARCH'] += 'StopGrad'
-    
+
+    params['USE_Attention'] = int(trial.suggest_int('USE_Attention', 0, 1)) == 1
+    if params['USE_Attention']:
+        print('Using Attention')
+        params['TYPE_ARCH'] += 'Att'
     # --- D. Derived / Fixed Params ---
     params.update({
         "SHIFT_MS": 0, "HORIZON_MS": 1,

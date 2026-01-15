@@ -1268,7 +1268,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         
         # ---- projection head for contrastive (L2N ONLY here) ----
         emb = LayerNormalization(name='emb_ln')(feats)
-        emb = Dense(n_filters * 2, activation=this_activation,
+        emb = Dense(n_filters * 2, activation=None,
                     kernel_initializer=this_kernel_initializer, name='emb_p1')(emb)
         emb = Dense(n_filters, activation=None,
                     kernel_initializer=this_kernel_initializer, name='emb_p2')(emb)
@@ -1316,6 +1316,9 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             inputs = all_inputs,
             outputs = all_outputs
         )
+
+        # Metrics - only applied to anchor output for metric tracking
+        model._is_classification_only = True
 
         # Metrics - only applied to anchor output for metric tracking
         high_conf_range = [0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
@@ -1373,6 +1376,31 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             inputs = all_inputs,
             outputs = all_outputs
         )
+        
+        # =================================================================
+        # FIX: PRE-INITIALIZE PROXY VECTORS FOR LOADING
+        # =================================================================
+        # We must add the variable to the model graph NOW so load_weights 
+        # has a "slot" to put the saved proxy data into.
+        if 'Proxy' in params.get('TYPE_LOSS', ''):
+            print("Initializing Proxy Vectors for Weight Loading...")
+            
+            # 1. Get Dimensions (Must match training params exactly!)
+            n_classes = int(params.get('NUM_CLASSES', 2))
+            n_subcenters = int(params.get('NUM_SUBCENTERS', 3)) 
+            
+            # Critical: Use NO_FILTERS if EMBEDDING_DIM is missing/mismatched
+            emb_dim = int(params.get('EMBEDDING_DIM', params['NO_FILTERS']))
+            
+            # 2. Inject Variable
+            if not hasattr(model, 'proxy_vectors'):
+                model.proxy_vectors = model.add_weight(
+                    name='proxy_vectors',
+                    shape=(n_classes, n_subcenters, emb_dim),
+                    initializer='he_normal',
+                    trainable=True
+                )
+        # =================================================================
 
         # Metrics - only applied to anchor output for metric tracking
         high_conf_range = [0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
@@ -1440,6 +1468,31 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             inputs = all_inputs,
             outputs = all_outputs
         )
+
+        # =================================================================
+        # FIX: PRE-INITIALIZE PROXY VECTORS FOR LOADING
+        # =================================================================
+        # We must add the variable to the model graph NOW so load_weights 
+        # has a "slot" to put the saved proxy data into.
+        if 'Proxy' in params.get('TYPE_LOSS', ''):
+            print("Initializing Proxy Vectors for Weight Loading...")
+            
+            # 1. Get Dimensions (Must match training params exactly!)
+            n_classes = int(params.get('NUM_CLASSES', 2))
+            n_subcenters = int(params.get('NUM_SUBCENTERS', 3)) 
+            
+            # Critical: Use NO_FILTERS if EMBEDDING_DIM is missing/mismatched
+            emb_dim = int(params.get('EMBEDDING_DIM', params['NO_FILTERS']))
+            
+            # 2. Inject Variable
+            if not hasattr(model, 'proxy_vectors'):
+                model.proxy_vectors = model.add_weight(
+                    name='proxy_vectors',
+                    shape=(n_classes, n_subcenters, emb_dim),
+                    initializer='he_normal',
+                    trainable=True
+                )
+        # =================================================================
 
         # Metrics - only applied to anchor output for metric tracking
         model._is_classification_only = True
@@ -3333,15 +3386,16 @@ def mixed_hybrid_loss_final(horizon=0, loss_weight=1, params=None, model=None, t
 
     return loss_fn
 
-
 def mixed_hybrid_loss_proxy_v1(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
-    # ==========================
-    # 0. SETUP PROXIES
-    # ==========================
+    # =========================================================================
+    # 0. SETUP & SAFETY CHECKS
+    # =========================================================================
+    # Fallback defaults used only if params is missing keys (prevents crash)
     num_classes = int(params.get('NUM_CLASSES', 2)) 
     n_subcenters = int(params.get('NUM_SUBCENTERS', 3)) 
     embedding_dim = int(params.get('EMBEDDING_DIM', 128))
-    print(f"Using Proxy Anchor Loss with {num_classes} classes, {n_subcenters} sub-centers, embedding dim {embedding_dim}")
+    
+    # Initialize Proxy Vectors if they don't exist (Critical for load_weights)
     if model is not None and not hasattr(model, 'proxy_vectors'):
         model.proxy_vectors = model.add_weight(
             name='proxy_vectors',
@@ -3350,13 +3404,12 @@ def mixed_hybrid_loss_proxy_v1(horizon=0, loss_weight=1, params=None, model=None
             trainable=True
         )
 
-    # ==========================
+    # =========================================================================
     # 1. HELPERS
-    # ==========================
+    # =========================================================================
     def _mean_pool_bt(x):               
         return tf.reduce_mean(tf.cast(x, tf.float32), axis=1)
 
-    # Only used for Negatives/FP suppression
     def _ramp(step, delay, dur):
         step, delay = tf.cast(step, tf.float32), tf.cast(delay, tf.float32)
         dur = tf.maximum(tf.cast(dur, tf.float32), 1.0)
@@ -3364,49 +3417,66 @@ def mixed_hybrid_loss_proxy_v1(horizon=0, loss_weight=1, params=None, model=None
         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
 
     def tv_on_logits(z):
+        # L1 Temporal Variation (Smoothness)
         return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
 
-    # ==========================
-    # 2. CORE: SoftTriple Proxy Anchor
-    # ==========================
-    def simple_proxy_anchor_loss(embeddings, labels, proxies, alpha=32, margin=0.1):
-        # Flatten Proxies
+    # =========================================================================
+    # 2. CORE: STABLE PROXY ANCHOR LOSS (NaN-Proof)
+    # =========================================================================
+    def simple_proxy_anchor_loss(embeddings, labels, proxies, alpha, margin):
+        # A. Stability: Epsilon in Norm
+        # Prevents 0/0 -> NaN if model outputs dead features
         C, K, D = tf.shape(proxies)[0], tf.shape(proxies)[1], tf.shape(proxies)[2]
         P_flat = tf.reshape(proxies, [C * K, D])
         
-        # Normalize
-        P_norm = tf.math.l2_normalize(P_flat, axis=1)
-        X_norm = tf.math.l2_normalize(embeddings, axis=1)
+        P_norm = tf.math.l2_normalize(P_flat, axis=1, epsilon=1e-12)
+        X_norm = tf.math.l2_normalize(embeddings, axis=1, epsilon=1e-12)
 
-        # Cosine Similarity [N, C, K]
+        # B. Stability: Clip Cosine Similarity
+        # Prevents slightly > 1.0 values due to float errors causing NaN gradients
         cos_sim_all = tf.matmul(X_norm, P_norm, transpose_b=True)
         cos_sim_shaped = tf.reshape(cos_sim_all, [-1, C, K]) 
+        cos_sim_shaped = tf.clip_by_value(cos_sim_shaped, -1.0 + 1e-7, 1.0 - 1e-7)
 
         labels = tf.cast(tf.reshape(labels, [-1]), tf.int32)
         one_hot_class = tf.one_hot(labels, depth=C)
 
-        # --- POSITIVE (SoftMax) ---
+        # --- POSITIVE (Using Softplus) ---
         target_sims = tf.gather(cos_sim_shaped, labels, batch_dims=1)
         gamma = 10.0
-        # SoftMax over sub-centers (Onset vs Body handled here automatically)
+        # LogSumExp over sub-centers (stable softmax)
         soft_sims = (1.0 / gamma) * tf.reduce_logsumexp(gamma * target_sims, axis=1)
         
-        loss_pos = tf.reduce_mean(tf.math.log(1.0 + tf.exp(-alpha * (soft_sims - margin))))
+        # log(1 + exp(x)) == softplus(x). Numerically stable for large alpha.
+        pos_logit = -alpha * (soft_sims - margin)
+        loss_pos = tf.reduce_mean(tf.math.softplus(pos_logit))
 
-        # --- NEGATIVE (Sum) ---
+        # --- NEGATIVE (Using LogSumExp Trick) ---
+        # Goal: log(1 + sum(exp( alpha * (sim + margin) )))
         mask_neg_class = tf.expand_dims(1.0 - one_hot_class, axis=2)
         mask_neg_flat = tf.reshape(tf.broadcast_to(mask_neg_class, tf.shape(cos_sim_shaped)), [-1, C*K])
         sim_flat      = tf.reshape(cos_sim_shaped, [-1, C*K])
         
-        neg_term = tf.exp(alpha * (sim_flat + margin)) * mask_neg_flat
-        loss_neg = tf.reduce_mean(tf.math.log(1.0 + tf.reduce_sum(neg_term, axis=1)))
+        neg_logits = alpha * (sim_flat + margin)
+        
+        # MASKING TRICK: Add -1e9 to ignored values so exp(x) -> 0
+        neg_logits_masked = neg_logits + (1.0 - mask_neg_flat) * -1e9
+        
+        # Append 0.0 column to represent the "1 +" in log(1 + sum...)
+        zeros = tf.zeros([tf.shape(neg_logits_masked)[0], 1], dtype=tf.float32)
+        logits_with_bias = tf.concat([zeros, neg_logits_masked], axis=1)
+        
+        # Calculate LogSumExp on the whole set
+        loss_neg = tf.reduce_mean(tf.reduce_logsumexp(logits_with_bias, axis=1))
 
         return loss_pos + loss_neg
 
     @tf.function
     def loss_fn(y_true, y_pred):
+        # 1. PARSE & CAST
+        # Ensure everything is float32 to avoid mixed-precision overflows
+        y_pred = tf.cast(y_pred, tf.float32)
         
-        # 1. PARSE
         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
 
@@ -3421,9 +3491,7 @@ def mixed_hybrid_loss_proxy_v1(horizon=0, loss_weight=1, params=None, model=None
         p_lab_pool = tf.reduce_max(p_true[..., 0], axis=1)
         n_lab_pool = tf.reduce_max(n_true[..., 0], axis=1)
 
-        # 2. METRIC LOSS (Concatenate A + P + N)
-        # 2 Positives (Onset/Body) vs 1 Negative (Noise)
-        # This helps learn the Signal structure faster.
+        # 2. METRIC LOSS
         all_emb = tf.concat([_mean_pool_bt(a_emb), _mean_pool_bt(p_emb), _mean_pool_bt(n_emb)], axis=0)
         all_lab = tf.concat([a_lab_pool, p_lab_pool, n_lab_pool], axis=0)
 
@@ -3433,35 +3501,42 @@ def mixed_hybrid_loss_proxy_v1(horizon=0, loss_weight=1, params=None, model=None
             margin=float(params.get('PROXY_MARGIN', 0.1))
         )
         
-        # Fixed Weight (No Ramp). 
-        # Start with 0.05 to balance against BCE.
         metric_loss = float(params.get('LOSS_PROXY', 0.05)) * L_proxy
 
         # 3. CLASSIFICATION LOSS
-        # Optional: Ramp ONLY the negatives weight to reduce FPs late in training
+        # Ramping Schedule for Negatives
         neg_min = 1.0
         it = tf.cast(model.optimizer.iterations, tf.float32)
         total_steps = float(params.get('TOTAL_STEPS', 100000))
-        r_neg = _ramp(it, params.setdefault('NEG_RAMP_DELAY', 0.1*total_steps), params.setdefault('NEG_RAMP_STEPS', 0.4*total_steps))
+        r_neg = _ramp(it, 
+                      params.setdefault('NEG_RAMP_DELAY', 0.1*total_steps), 
+                      params.setdefault('NEG_RAMP_STEPS', 0.4*total_steps))
         
-        # If LOSS_NEGATIVES=1.0, this stays 1.0. If higher, it ramps up.
         loss_fp_weight = neg_min + r_neg * tf.maximum(0.0, params.get('LOSS_NEGATIVES', 1.0) - neg_min)
 
+        # Helper: Binary Cross Entropy with Dynamic Smoothing
+        smoothing_val = float(params.get('LABEL_SMOOTHING', 0.0))
+        
         def bce(y, z):
             y = tf.cast(y, tf.float32)
             if tf.rank(z) > tf.rank(y): y = tf.expand_dims(y, -1)
-            # Minimal smoothing
-            y = y * (1.0 - 0.05) + 0.5 * 0.05
+            # Apply dynamic smoothing (linear interpolation)
+            y = y * (1.0 - smoothing_val) + 0.5 * smoothing_val
             return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
 
-        # Classification Head (Trained only if StopGrad is False, else just trains head)
+        # Main Classification Loss
+        # Note: Positives are weighted 1.0 by default, negatives scaled by ramp
         L_cls = bce(a_true[..., 0], a_out[..., logit_idx]) + \
                 bce(p_true[..., 0], p_out[..., logit_idx]) + \
                 loss_fp_weight * bce(n_true[..., 0], n_out[..., logit_idx])
         
-        L_cls += 0.15 * (tv_on_logits(a_out[..., logit_idx]) + 
-                         tv_on_logits(p_out[..., logit_idx]) + 
-                         tv_on_logits(n_out[..., logit_idx]))
+        # Temporal Variation (Smoothness) Regularization
+        # [FIX] Now uses params['LOSS_TV'] instead of hardcoded 0.15
+        tv_weight = float(params.get('LOSS_TV', 0.0))
+        if tv_weight > 1e-6:
+            L_cls += tv_weight * (tv_on_logits(a_out[..., logit_idx]) + 
+                                  tv_on_logits(p_out[..., logit_idx]) + 
+                                  tv_on_logits(n_out[..., logit_idx]))
 
         return metric_loss + L_cls
 
