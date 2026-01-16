@@ -5761,25 +5761,29 @@ elif mode == 'tune_viz_multi_v8':
 
     print(f"Visualization complete → {viz_dir}")
 
-    
-elif mode == 'tune_viz_multi_v13':
-    import os, sys, json, math, warnings, glob
+elif mode == 'tune_viz_multi_v9':
+    import os, sys, json, math, warnings, glob, re
     import numpy as np
     import pandas as pd
     import matplotlib.pyplot as plt
     import seaborn as sns
     import optuna
 
+    # Suppress warnings
     warnings.filterwarnings("ignore", category=UserWarning, module="optuna")
     warnings.filterwarnings("ignore", category=FutureWarning, module="pandas")
+    warnings.filterwarnings("ignore", category=RuntimeWarning)
+    
+    # Increase Plot Resolution
+    plt.rcParams['figure.dpi'] = 120
+    plt.rcParams['savefig.dpi'] = 120
 
     # Optional: Plotly
     try:
         import plotly.express as px
         import plotly.graph_objects as go
-        from plotly.subplots import make_subplots
         HAVE_PLOTLY = True
-    except Exception:
+    except ImportError:
         HAVE_PLOTLY = False
         print("WARNING: Plotly not found. Interactive plots will be skipped.")
 
@@ -5787,7 +5791,7 @@ elif mode == 'tune_viz_multi_v13':
     tag = args.tag[0]
     param_dir = f'params_{tag}'
     storage_url = f"sqlite:///studies/{param_dir}/{param_dir}.db"
-    viz_dir = f"studies/{param_dir}/visualizations_v13_comprehensive"
+    viz_dir = f"studies/{param_dir}/visualizations_v9_final"
     os.makedirs(viz_dir, exist_ok=True)
 
     print(f"Loading study '{param_dir}' from {storage_url}")
@@ -5799,7 +5803,6 @@ elif mode == 'tune_viz_multi_v13':
 
     # ---------- HELPERS ----------
     def _ua(tr, keys, default=np.nan):
-        """Robustly fetch attributes checking multiple possible keys."""
         if isinstance(keys, str): keys = [keys]
         for key in keys:
             try:
@@ -5812,312 +5815,429 @@ elif mode == 'tune_viz_multi_v13':
             except: continue
         return default
 
-    # ---------- COLLECT COMPLETED TRIALS ----------
-    trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
-    if not trials:
-        print("No completed trials; nothing to visualize.")
-        sys.exit(0)
-
-    # 1. Determine Objectives
-    nvals = max((len(t.values) if t.values else 0) for t in trials)
-    print(f"Detected {nvals} objectives per trial.")
-
-    # Mapping based on your code: [PR-AUC, FP/min] returned in objective_proxy
-    if nvals == 2:
-        OBJECTIVE_INDEX = dict(pr_auc=0, fp_min=1) 
-        print("Mapping: Index 0 -> PR-AUC, Index 1 -> FP/min (Objective)")
-    else:
-        OBJECTIVE_INDEX = dict(pr_auc=0)
-
-    # 2. Fix Constraints Logic
-    def _get_constraints(tr):
-        return tr.system_attrs.get("constraints") or tr.user_attrs.get("constraints")
-
-    has_constraints = any(_get_constraints(t) is not None for t in trials)
-
-    # 3. Collect Rows (UPDATED METRIC NAMES)
-    rows = []
-    for t in trials:
-        if not t.values: continue
-        try:
-            # Get PR-AUC (Objective 0)
-            pr = float(t.values[OBJECTIVE_INDEX['pr_auc']])
-            
-            # Get FP/min (Objective 1 OR Attribute)
-            # Your return statement is: return float(prauc_sel), float(fpmin_sel)
-            if 'fp_min' in OBJECTIVE_INDEX:
-                real_fp = float(t.values[OBJECTIVE_INDEX['fp_min']])
-            else:
-                # Fallback to Attribute lookup
-                real_fp = _ua(t, ["sel_low_conf_fp", "sel_fp_per_min", "val_mean_low_conf_fp"])
-            
-        except Exception:
-            continue
-
-        # Filter bad values
-        bad = lambda x: (x is None) or (isinstance(x, float) and (math.isnan(x) or math.isinf(x)))
-        if bad(pr): continue
-
-        rec = {
-            "trial_number": t.number,
-            "val_sample_pr_auc": pr,      # Maximize
-            "val_fp_per_min":    real_fp, # Minimize
-            
-            # UPDATED KEYS FROM YOUR CODE
-            # We check the new 'sel_' keys first, then fallback to 'val_' or old keys
-            "val_latency_score":  _ua(t, ["sel_latency_range", "sel_latency_score", "val_latency_score_range"]), 
-            "val_recall_at_0p7":  _ua(t, ["sel_high_conf_rec", "sel_recall_at_0p7", "val_mean_high_conf_recall"]),
-            "val_sample_max_f1":  _ua(t, ["sel_max_f1", "val_sample_max_f1"]),
-            "val_sample_max_mcc": _ua(t, ["sel_max_mcc", "val_sample_max_mcc"]),
-            "sel_epoch":          _ua(t, ["sel_epoch"])
-        }
-        rec.update(t.params)
-        rows.append(rec)
-
-    df = pd.DataFrame(rows)
-    if df.empty:
-        print("No valid completed trials.")
-        sys.exit(0)
-
-    # Save all trials CSV
-    all_csv = os.path.join(viz_dir, "all_completed_trials.csv")
-    df.to_csv(all_csv, index=False)
-    print(f"Saved {len(df)} trials -> {all_csv}")
-
-    # =========================================================
-    # 1. STANDARD OPTUNA VISUALS
-    # =========================================================
-    print("Generating Optuna standard plots...")
-    try:
-        # 1. History - PR-AUC
-        fig_hist_pr = optuna.visualization.plot_optimization_history(
-            study, 
-            target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'), 
-            target_name="Sample PR-AUC"
-        )
-        fig_hist_pr.write_html(os.path.join(viz_dir, "history_pr_auc.html"))
-
-        # 2. History - FP/min
-        fig_hist_fp = optuna.visualization.plot_optimization_history(
-            study, 
-            target=lambda t: _ua(t, ["sel_low_conf_fp", "sel_fp_per_min"]), 
-            target_name="FP/min"
-        )
-        fig_hist_fp.write_html(os.path.join(viz_dir, "history_fp_per_min.html"))
-
-        # 3. Param Importances (PR-AUC)
-        fig_imp_pr = optuna.visualization.plot_param_importances(
-            study, 
-            target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'), 
-            target_name="Sample PR-AUC"
-        )
-        fig_imp_pr.write_html(os.path.join(viz_dir, "param_importances_pr_auc.html"))
-        
-        # 4. Pareto Front (Optuna Native)
-        # Using the actual objectives (PR and FP)
-        names_by_index = [""] * nvals
-        names_by_index[OBJECTIVE_INDEX['pr_auc']] = "PR-AUC"
-        if 'fp_min' in OBJECTIVE_INDEX:
-            names_by_index[OBJECTIVE_INDEX['fp_min']] = "FP/min"
-            
-        fig_pareto = optuna.visualization.plot_pareto_front(study, target_names=names_by_index)
-        fig_pareto.write_html(os.path.join(viz_dir, "pareto_front_optuna.html"))
-
-    except Exception as e:
-        print(f"Standard plot warning: {e}")
-
-    # =========================================================
-    # 2. PARETO SET & LISTS
-    # =========================================================
-    pareto_trials = study.best_trials
-    pareto_nums = [t.number for t in pareto_trials]
-    pareto_df = df[df.trial_number.isin(pareto_nums)].copy()
-    pareto_csv = os.path.join(viz_dir, "pareto_trials.csv")
-    pareto_df.to_csv(pareto_csv, index=False)
-
     def _trial_link(trial_no: int) -> str:
         base = os.path.join("studies", param_dir)
         matches = glob.glob(os.path.join(base, f"study_{trial_no}_*"))
         if matches:
             rel = os.path.relpath(matches[0], viz_dir)
-            return f'<a href="{rel}">study_{trial_no}</a>'
-        return ""
+            return f'<a href="{rel}" target="_blank">study_{trial_no}</a>'
+        return str(trial_no)
 
-    pareto_snapshot_html = ""
-    if not pareto_df.empty:
-        _pareto_view = pareto_df.copy()
-        _pareto_view["study_dir"] = _pareto_view["trial_number"].apply(_trial_link)
-        params_to_show = [c for c in df.columns if c not in ["trial_number", "val_sample_pr_auc", "val_fp_per_min", "val_latency_score", "val_recall_at_0p7"]][:6]
-        lead_cols = ["trial_number", "val_sample_pr_auc", "val_fp_per_min", "val_latency_score", "study_dir"]
-        
-        pareto_html = _pareto_view[lead_cols + params_to_show].to_html(escape=False, index=False, classes='table table-striped')
-        with open(os.path.join(viz_dir, "pareto_trials.html"), "w") as fh:
-            fh.write(f"""<html><head><meta charset="utf-8"><title>Pareto Trials</title>
-            <style>body{{font-family:Arial;margin:20px}} table{{border-collapse:collapse; width:100%}} th,td{{border:1px solid #ddd;padding:8px}} th{{background:#f5f5f5}} tr:nth-child(even){{background-color: #f2f2f2;}}</style>
-            </head><body><h2>Pareto Trials</h2>
-            <p>Objectives: Max(PR-AUC) | Min(FP/min)</p>
-            {pareto_html}
-            </body></html>""")
+    def _clean_filename(s):
+        return re.sub(r'[\\/*?:"<>|]', "_", str(s))
+
+    # ---------- COLLECT DATA ----------
+    trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
+    if not trials:
+        print("No completed trials.")
+        sys.exit(0)
+
+    nvals = max((len(t.values) if t.values else 0) for t in trials)
+    OBJECTIVE_INDEX = dict(pr_auc=0, fp_min=1) if nvals == 2 else dict(pr_auc=0)
+
+    rows = []
+    for t in trials:
+        if not t.values: continue
+        try:
+            pr = float(t.values[OBJECTIVE_INDEX['pr_auc']])
+            if 'fp_min' in OBJECTIVE_INDEX:
+                real_fp = float(t.values[OBJECTIVE_INDEX['fp_min']])
+            else:
+                real_fp = _ua(t, ["sel_low_conf_fp", "sel_fp_per_min", "val_mean_low_conf_fp"])
+            
+            if math.isnan(pr) or math.isinf(pr): continue
+
+            rec = {
+                "trial_number": t.number,
+                "val_sample_pr_auc": pr,      
+                "val_fp_per_min":    real_fp,
+                "val_latency_score":  _ua(t, ["sel_latency_range", "sel_latency_score", "val_latency_score_range"]), 
+                "val_recall_at_0p7":  _ua(t, ["sel_high_conf_rec", "sel_recall_at_0p7", "val_mean_high_conf_recall"]),
+                "val_sample_max_f1":  _ua(t, ["sel_max_f1", "val_sample_max_f1"]),
+                "val_sample_max_mcc": _ua(t, ["sel_max_mcc", "val_sample_max_mcc"]),
+                "sel_epoch":          _ua(t, ["sel_epoch", "selected_epoch", "best_epoch"]), 
+            }
+            rec.update(t.params)
+            rows.append(rec)
+        except Exception: continue
+
+    df = pd.DataFrame(rows)
+    df.to_csv(os.path.join(viz_dir, "all_trials_data.csv"), index=False)
+
+    # --- CLASSIFY COLUMNS ---
+    known_metrics = ["val_sample_pr_auc", "val_fp_per_min", "val_latency_score", 
+                     "val_recall_at_0p7", "val_sample_max_mcc", "val_sample_max_f1", 
+                     "sel_epoch"] 
+    
+    metric_cols = [c for c in df.columns if c in known_metrics or c.startswith("val_") or c.startswith("sel_") or c.startswith("score_")]
+    metric_cols = list(set(metric_cols)) 
+    
+    exclude_cols = metric_cols + ["trial_number"]
+    param_cols = sorted([c for c in df.columns if c not in exclude_cols])
+    
+    num_params = [p for p in param_cols if pd.api.types.is_numeric_dtype(df[p]) and df[p].nunique() > 1]
+    cat_params = [p for p in param_cols if p not in num_params]
+
+    # Pareto
+    pareto_trials = study.best_trials
+    pareto_nums = [t.number for t in pareto_trials]
+    pareto_df = df[df.trial_number.isin(pareto_nums)].copy()
+    pareto_df.to_csv(os.path.join(viz_dir, "pareto_trials.csv"), index=False)
+
+    # --- HELPER FOR TABLES ---
+    def get_display_cols(target_df):
+        cols = ["trial_number", "study_dir"]
+        if "sel_epoch" in target_df.columns: cols.append("sel_epoch")
+        cols += [x for x in known_metrics if x in target_df.columns and x not in cols]
+        cols += param_cols
+        return [c for c in cols if c in target_df.columns]
+
+    # Generate All Trials HTML
+    all_trials_view = df.copy()
+    all_trials_view["study_dir"] = all_trials_view["trial_number"].apply(_trial_link)
+    all_cols = get_display_cols(all_trials_view)
+    with open(os.path.join(viz_dir, "all_trials.html"), "w") as f:
+        f.write("<html><head><link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css'></head><body class='p-4'><h3>All Completed Trials</h3>")
+        f.write(all_trials_view[all_cols].to_html(escape=False, index=False, classes='table table-sm table-hover table-striped'))
+        f.write("</body></html>")
 
     # =========================================================
-    # 3. INTERACTIVE PLOTS (2D+Color & X-Rays)
+    # 1. OPTUNA STANDARD VISUALIZATIONS
     # =========================================================
-    hyperparams = [c for c in df.columns if c not in [
-        "trial_number","val_sample_pr_auc","val_fp_per_min",
-        "val_latency_score","val_recall_at_0p7","val_sample_max_f1","val_sample_max_mcc",
-        "score_pr","score_fp","combined_avg","COHORT_StopGrad","sel_epoch"
-    ]]
+    print("Generating Standard Optuna Plots...")
+    
+    # History
+    try:
+        fig_hist_pr = optuna.visualization.plot_optimization_history(
+            study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'), target_name="PR-AUC")
+        fig_hist_pr.write_html(os.path.join(viz_dir, "history_pr_auc.html"))
+    except: pass
+    try:
+        fig_hist_fp = optuna.visualization.plot_optimization_history(
+            study, target=lambda t: _ua(t, ["sel_low_conf_fp", "sel_fp_per_min"]), target_name="FP/min")
+        fig_hist_fp.write_html(os.path.join(viz_dir, "history_fp_per_min.html"))
+    except: pass
 
+    # Pareto Front
+    names_by_index = [""] * nvals
+    names_by_index[OBJECTIVE_INDEX['pr_auc']] = "PR-AUC"
+    if 'fp_min' in OBJECTIVE_INDEX: names_by_index[OBJECTIVE_INDEX['fp_min']] = "FP/min"
+    try:
+        fig_pareto = optuna.visualization.plot_pareto_front(study, target_names=names_by_index)
+        fig_pareto.write_html(os.path.join(viz_dir, "pareto_front_optuna.html"))
+    except: pass
+
+    # Importance
+    imp_dir = os.path.join(viz_dir, "importance_analysis")
+    os.makedirs(imp_dir, exist_ok=True)
+    valid_imp_metrics = [m for m in known_metrics if m in df.columns and df[m].nunique() > 1 and m != "sel_epoch"]
+    for metric in valid_imp_metrics:
+        try:
+            t_map = df.set_index("trial_number")[metric].to_dict()
+            fig_imp = optuna.visualization.plot_param_importances(study, target=lambda t: t_map.get(t.number, float('nan')), target_name=metric)
+            fig_imp.write_html(os.path.join(imp_dir, f"importance_{metric}.html"))
+        except: pass
+
+    # =========================================================
+    # 2. INTERACTIVE PLOTS
+    # =========================================================
     if HAVE_PLOTLY:
-        print("Generating Interactive 2D+Color Plots...")
+        print("Generating Interactive Plots...")
         
-        # A. PARETO: FP/min vs PR-AUC (Color = Latency)
-        # Note: Latency Score Range is usually 0.0-1.0 (Higher=Better stability/latency profile)
-        fig_main = px.scatter(
-            df, 
-            x="val_fp_per_min", y="val_sample_pr_auc",
-            color="val_latency_score" if "val_latency_score" in df.columns else "val_sample_max_mcc",
-            color_continuous_scale="Viridis",
-            hover_name="trial_number",
-            hover_data=hyperparams[:5], 
-            title="<b>Trade-off:</b> FP/min vs PR-AUC (Color=Latency Range)",
-            labels={"val_fp_per_min": "FP/min (Minimize)", "val_sample_pr_auc": "PR-AUC (Maximize)", "val_latency_score": "Latency Range (Max)"}
-        )
-        if not pareto_df.empty:
-            fig_main.add_trace(go.Scatter(
-                x=pareto_df["val_fp_per_min"], y=pareto_df["val_sample_pr_auc"],
-                mode='markers', marker=dict(symbol='star', size=12, color='red', line=dict(width=1, color='black')),
-                name='Pareto Optimal', hoverinfo='skip'
-            ))
-        fig_main.write_html(os.path.join(viz_dir, "interactive_pareto_main.html"))
-
-        # B. HYPERPARAMETER X-RAYS
-        xray_dir = os.path.join(viz_dir, "xray_plots_interactive")
-        os.makedirs(xray_dir, exist_ok=True)
-        
-        for p in hyperparams:
-            if df[p].nunique() <= 1: continue
+        # 3D Plot
+        z_axis = "val_latency_score" if "val_latency_score" in df.columns else "val_sample_max_mcc"
+        c_col = "val_recall_at_0p7" if "val_recall_at_0p7" in df.columns else "val_sample_pr_auc"
+        if z_axis in df.columns:
             try:
-                fig_xray = px.scatter(
-                    df, x="val_fp_per_min", y="val_sample_pr_auc",
-                    color=p,
-                    color_continuous_scale="Spectral_r" if pd.api.types.is_numeric_dtype(df[p]) else None,
-                    title=f"Trade-off Colored by: <b>{p}</b>",
-                    hover_name="trial_number",
-                    labels={"val_fp_per_min": "FP/min", "val_sample_pr_auc": "PR-AUC"}
+                fig_3d = px.scatter_3d(
+                    df, x="val_fp_per_min", y="val_sample_pr_auc", z=z_axis,
+                    color=c_col, color_continuous_scale="Plasma",
+                    hover_name="trial_number", hover_data=param_cols[:6],
+                    title=f"3D: FP vs PR vs {z_axis} (Color={c_col})"
                 )
-                fig_xray.update_layout(height=600)
-                fig_xray.write_html(os.path.join(xray_dir, f"xray_{p}.html"))
+                fig_3d.update_layout(scene=dict(xaxis_title='FP/min', yaxis_title='PR-AUC', zaxis_title=z_axis))
+                fig_3d.write_html(os.path.join(viz_dir, "3d_tradeoff.html"))
             except: pass
 
-    # =========================================================
-    # 4. STATIC PLOTS: BOX PLOTS & CORRELATIONS
-    # =========================================================
-    print("Generating Static Box Plots & Correlations...")
-    static_dir = os.path.join(viz_dir, "static_analysis")
-    os.makedirs(static_dir, exist_ok=True)
+        # Main 2D Scatter
+        fig_main = px.scatter(
+            df, x="val_fp_per_min", y="val_sample_pr_auc",
+            color="val_sample_max_mcc" if "val_sample_max_mcc" in df.columns else None,
+            size="val_latency_score" if "val_latency_score" in df.columns else None,
+            color_continuous_scale="Turbo",
+            hover_name="trial_number", hover_data=param_cols[:6] + known_metrics,
+            title="<b>Main Trade-off</b>: FP vs PR (Color=MCC, Size=Latency)"
+        )
+        if not pareto_df.empty:
+            fig_main.add_trace(go.Scatter(x=pareto_df["val_fp_per_min"], y=pareto_df["val_sample_pr_auc"],
+                mode='markers', marker=dict(symbol='star', size=12, color='black', line=dict(width=1, color='white')),
+                name='Pareto'))
+        fig_main.write_html(os.path.join(viz_dir, "main_interactive_scatter.html"))
 
-    # A. BOX PLOTS (Impact of Params on PR-AUC)
-    for p in hyperparams:
+        # X-Rays
+        xray_dir = os.path.join(viz_dir, "xray_plots")
+        os.makedirs(xray_dir, exist_ok=True)
+        for p in param_cols:
+            if df[p].nunique() <= 1: continue
+            try:
+                fig_x = px.scatter(df, x="val_fp_per_min", y="val_sample_pr_auc", color=p,
+                    color_continuous_scale="Spectral_r" if pd.api.types.is_numeric_dtype(df[p]) else None,
+                    title=f"Trade-off colored by: {p}", hover_name="trial_number")
+                fig_x.write_html(os.path.join(xray_dir, f"xray_{_clean_filename(p)}.html"))
+            except: pass
+            
+        # Parallel Coords
+        try:
+            tunable = list(study.best_trial.params.keys())
+            valid_p = [p for p in tunable if p in df.columns]
+            if valid_p:
+                corr_pr = df[valid_p].corrwith(df["val_sample_pr_auc"], method="spearman").abs()
+                top_p = corr_pr.sort_values(ascending=False).head(8).index.tolist()
+                t_map_pr = df.set_index("trial_number")["val_sample_pr_auc"].to_dict()
+                fig_par = optuna.visualization.plot_parallel_coordinate(
+                    study, params=top_p, target=lambda t: t_map_pr.get(t.number, np.nan), target_name="PR-AUC")
+                fig_par.write_html(os.path.join(viz_dir, "parallel_coords_pr_auc.html"))
+        except: pass
+
+    # =========================================================
+    # 3. STATIC DIAGNOSTICS
+    # =========================================================
+    print("Generating Static Diagnostics...")
+    diag_dir = os.path.join(viz_dir, "diagnostic_plots")
+    os.makedirs(diag_dir, exist_ok=True)
+
+    top_params = []
+    if num_params:
+        corr_pr = df[num_params].corrwith(df["val_sample_pr_auc"], method="spearman").abs()
+        top_params = corr_pr.sort_values(ascending=False).head(5).index.tolist()
+    if cat_params:
+        top_params.extend(cat_params[:2])
+
+    # A. Box Plots
+    box_dir = os.path.join(viz_dir, "box_plots")
+    os.makedirs(box_dir, exist_ok=True)
+    for p in param_cols:
         if df[p].nunique() <= 1: continue
         try:
             plt.figure(figsize=(8, 5))
-            plot_data = df.copy()
-            # If continuous, bin it into quartiles
-            if pd.api.types.is_numeric_dtype(df[p]) and df[p].nunique() > 10:
-                plot_data[p] = pd.qcut(plot_data[p], q=4, duplicates='drop')
-                
-            sns.boxplot(data=plot_data, x=p, y="val_sample_pr_auc", palette="Blues")
+            plot_df = df.copy()
+            if pd.api.types.is_numeric_dtype(df[p]) and df[p].nunique() > 8:
+                try: plot_df[p] = pd.qcut(plot_df[p], q=4, duplicates='drop')
+                except: pass 
+            sns.boxplot(data=plot_df, x=p, y="val_sample_pr_auc", palette="Blues")
             plt.title(f"Impact of {p} on PR-AUC")
             plt.xticks(rotation=45)
             plt.tight_layout()
-            plt.savefig(os.path.join(static_dir, f"boxplot_{p}.png"), dpi=100)
+            plt.savefig(os.path.join(box_dir, f"boxplot_{_clean_filename(p)}.png"))
             plt.close()
         except: plt.close()
 
-    # B. CORRELATION HEATMAP
+    # B. Pairplot
     try:
-        obj_cols_all = [c for c in ["val_sample_pr_auc","val_fp_per_min", "val_latency_score", "val_recall_at_0p7"] if c in df.columns]
-        num_cols = [c for c in df.columns if c in hyperparams and pd.api.types.is_numeric_dtype(df[c])]
-        
-        if num_cols:
-            corr_df = df[num_cols + obj_cols_all].corr(method='spearman')
-            plt.figure(figsize=(14, 12))
-            sns.heatmap(corr_df, annot=True, fmt=".2f", cmap="coolwarm", cbar=True)
-            plt.title("Spearman Correlation: Params vs Objectives")
+        pair_cols = top_params[:6] + ["val_sample_pr_auc", "val_fp_per_min", "val_latency_score"]
+        pair_cols = [c for c in pair_cols if c in df.columns]
+        pp = sns.pairplot(df[pair_cols], diag_kind="kde", corner=True, 
+                          plot_kws={'alpha': 0.6, 's': 20, 'edgecolor': 'none'})
+        pp.fig.suptitle("Pairwise Interactions", y=1.02)
+        pp.savefig(os.path.join(diag_dir, "smart_pairplot.png"), dpi=100)
+        plt.close()
+    except: pass
+
+    # C. Heatmap
+    if num_params and known_metrics:
+        try:
+            valid_m = [m for m in known_metrics if m in df.columns and m != "sel_epoch"] 
+            full_corr = df[num_params + valid_m].corr(method='spearman')
+            sliced_corr = full_corr.loc[num_params, valid_m]
+            plt.figure(figsize=(max(8, len(valid_m)*1.2), max(8, len(num_params)*0.4)))
+            sns.heatmap(sliced_corr, annot=True, fmt=".2f", cmap="RdBu_r", center=0, cbar_kws={"shrink": 0.5})
+            plt.title("Correlation: Params vs Metrics")
             plt.tight_layout()
-            plt.savefig(os.path.join(static_dir, "global_correlation_matrix.png"), dpi=130)
+            plt.savefig(os.path.join(diag_dir, "global_correlation_heatmap.png"))
             plt.close()
-    except Exception as e: print(e)
+        except: pass
+
+    # D. Grid
+    if top_params and known_metrics:
+        grid_m = [m for m in known_metrics if m in df.columns and m != "sel_epoch"][:5]
+        n_rows, n_cols = len(grid_m), len(top_params)
+        fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.5*n_cols, 2.5*n_rows), constrained_layout=True)
+        if n_rows == 1 and n_cols == 1: axes = np.array([[axes]])
+        elif n_rows == 1: axes = np.array([axes])
+        elif n_cols == 1: axes = np.array([[ax] for ax in axes])
+        for r, metric in enumerate(grid_m):
+            for c, param in enumerate(top_params):
+                ax = axes[r][c]
+                if pd.api.types.is_numeric_dtype(df[param]):
+                    sns.scatterplot(data=df, x=param, y=metric, ax=ax, alpha=0.5, s=15, color='#2b7bba')
+                    try: sns.regplot(data=df, x=param, y=metric, ax=ax, scatter=False, color='red', line_kws={'alpha':0.5})
+                    except: pass
+                else:
+                    sns.boxplot(data=df, x=param, y=metric, ax=ax, palette="light:b")
+                if r == 0: ax.set_title(param, fontsize=9)
+                if c == 0: ax.set_ylabel(metric, fontsize=8)
+                else: ax.set_ylabel("")
+                ax.set_xlabel("")
+                ax.tick_params(labelsize=8)
+        plt.savefig(os.path.join(diag_dir, "top_params_impact_grid.png"))
+        plt.close()
 
     # =========================================================
-    # 5. HTML REPORT
+    # 4. TABLES & REPORT
     # =========================================================
+    table_htmls = {}
+    sort_metrics = [("val_sample_pr_auc", False), ("val_fp_per_min", True)]
+    if "val_latency_score" in df.columns: sort_metrics.append(("val_latency_score", False))
+    if "val_sample_max_mcc" in df.columns: sort_metrics.append(("val_sample_max_mcc", False)) 
+    if "val_recall_at_0p7" in df.columns: sort_metrics.append(("val_recall_at_0p7", False)) 
+
+    # Generate Top-K Tables
+    for m, ascending in sort_metrics:
+        if m not in df.columns: continue
+        top_df = df.sort_values(m, ascending=ascending).head(20).copy()
+        top_df["study_dir"] = top_df["trial_number"].apply(_trial_link)
+        d_cols = get_display_cols(top_df)
+        table_htmls[m] = top_df[d_cols].to_html(escape=False, index=False, classes='table table-sm table-hover')
+
+    # Generate Standalone Pareto HTML
+    pareto_html_content = ""
+    if not pareto_df.empty:
+        p_view = pareto_df.copy()
+        p_view["study_dir"] = p_view["trial_number"].apply(_trial_link)
+        p_cols = get_display_cols(p_view)
+        pareto_html_content = p_view[p_cols].to_html(escape=False, index=False, classes='table table-sm table-striped table-bordered')
+        with open(os.path.join(viz_dir, "pareto_trials.html"), "w") as f:
+            f.write(f"<html><head><link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css'></head><body class='p-4'><h3>Pareto Trials</h3>{pareto_html_content}</body></html>")
+
+    # HTML Assembly
     html = []
     html.append(f"""<!doctype html><html><head><meta charset="utf-8">
-    <title>Comprehensive Viz v13: {tag}</title>
+    <title>Viz v9 (Final): {tag}</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
-    body{{font-family:'Segoe UI', sans-serif; margin:20px; background:#f4f4f4; color:#333;}} 
-    h1, h2{{color:#2c3e50; border-bottom: 2px solid #ddd; padding-bottom:10px;}}
-    .grid{{display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:20px; margin-bottom:30px;}}
-    .card{{background:white; padding:15px; border-radius:8px; box-shadow:0 2px 5px rgba(0,0,0,0.1);}}
-    .btn{{display:inline-block; padding:8px 15px; background:#3498db; color:white; text-decoration:none; border-radius:4px; margin:5px;}}
-    iframe{{width:100%; height:500px; border:none;}}
-    img{{max-width:100%;}}
-    </style></head><body>
-    <h1>Study Analysis: {tag}</h1>
-    <div class="card">
-        <p><b>Trials:</b> {len(df)} | <b>Pareto Optimal:</b> {len(pareto_df)}</p>
-        <p>
-            <a href="all_completed_trials.csv" class="btn">All Trials (CSV)</a>
-            <a href="pareto_trials.csv" class="btn">Pareto Trials (CSV)</a>
-            <a href="pareto_trials.html" class="btn">Pareto Table (HTML)</a>
-        </p>
-    </div>
+        body{{background:#f8f9fa; font-family:'Segoe UI', Roboto, sans-serif;}}
+        .card{{margin-bottom:20px; border:none; box-shadow:0 2px 5px rgba(0,0,0,0.05);}}
+        .card-header{{background-color:#fff; border-bottom:1px solid #eee; font-weight:600; color:#495057;}}
+        .nav-tabs .nav-link.active {{font-weight:bold; border-bottom:3px solid #0d6efd; color:#0d6efd;}}
+        iframe{{width:100%; height:500px; border:none;}}
+        img{{max-width:100%; height:auto;}}
+    </style></head><body class="container-fluid py-4" style="max-width:1600px;">
     
-    <h2>1. Interactive Pareto & Trade-offs</h2>
-    <div class="card">
-        <h3>Main Trade-off: FP/min vs PR-AUC</h3>
-        <p>Color indicates Latency Score Range.</p>
-        <iframe src="interactive_pareto_main.html"></iframe>
+    <div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3">
+        <div>
+            <h1 class="h3 text-dark mb-0">Analysis: {tag}</h1>
+            <small class="text-muted">Trials: {len(df)} | Pareto: {len(pareto_df)}</small>
+        </div>
+        <div>
+            <a href="all_trials_data.csv" class="btn btn-sm btn-outline-secondary">Download CSV</a>
+            <a href="all_trials.html" class="btn btn-sm btn-outline-primary">View All Trials HTML</a>
+            <a href="pareto_trials.csv" class="btn btn-sm btn-success">Pareto CSV</a>
+        </div>
     </div>
 
-    <h2>2. Optuna Standard Plots</h2>
-    <div class="grid">
-        <div class="card"><h3>History (PR-AUC)</h3><iframe src="history_pr_auc.html"></iframe></div>
-        <div class="card"><h3>Importance (PR-AUC)</h3><iframe src="param_importances_pr_auc.html"></iframe></div>
-        <div class="card"><h3>History (FP/min)</h3><iframe src="history_fp_per_min.html"></iframe></div>
-        <div class="card"><h3>Pareto Front (Optuna)</h3><iframe src="pareto_front_optuna.html"></iframe></div>
-    </div>
+    <ul class="nav nav-tabs mb-4" id="myTab" role="tablist">
+        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-interactive">Interactive</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-diagnostics">Diagnostics</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-xray">X-Rays & History</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-boxplots">Box Plots</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tables">Top Models</button></li>
+    </ul>
 
-    <h2>3. Hyperparameter X-Rays (Interactive)</h2>
-    <p>FP vs PR Trade-off, colored by specific hyperparameters.</p>
-    <div class="grid">
+    <div class="tab-content" id="myTabContent">
+        
+        <div class="tab-pane fade show active" id="tab-interactive">
+            <div class="row">
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">Main Trade-off (2D)</div>
+                        <div class="card-body p-0"><iframe src="main_interactive_scatter.html"></iframe></div>
+                    </div>
+                </div>
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">3D Exploration</div>
+                        <div class="card-body p-0"><iframe src="3d_tradeoff.html"></iframe></div>
+                    </div>
+                </div>
+            </div>
+             <div class="row">
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">Importance (PR-AUC)</div>
+                        <div class="card-body p-0"><iframe src="importance_analysis/importance_val_sample_pr_auc.html"></iframe></div>
+                    </div>
+                </div>
+                <div class="col-lg-6">
+                    <div class="card">
+                        <div class="card-header">Parallel Coordinates</div>
+                        <div class="card-body p-0"><iframe src="parallel_coords_pr_auc.html"></iframe></div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-diagnostics">
+            <div class="row">
+                <div class="col-lg-8">
+                    <div class="card">
+                        <div class="card-header">Global Correlation Heatmap</div>
+                        <div class="card-body text-center"><img src="diagnostic_plots/global_correlation_heatmap.png"></div>
+                    </div>
+                </div>
+                <div class="col-lg-4">
+                    <div class="card">
+                        <div class="card-header">Smart Scatter Matrix</div>
+                        <div class="card-body text-center"><img src="diagnostic_plots/smart_pairplot.png"></div>
+                    </div>
+                </div>
+            </div>
+            <div class="card">
+                <div class="card-header">Top Parameters vs Metrics Grid</div>
+                <div class="card-body text-center"><img src="diagnostic_plots/top_params_impact_grid.png"></div>
+            </div>
+        </div>
+
+        <div class="tab-pane fade" id="tab-xray">
+            <h5 class="mt-2">Optimization History</h5>
+            <div class="row">
+                <div class="col-md-6"><div class="card"><div class="card-header">PR-AUC History</div><div class="card-body p-0"><iframe src="history_pr_auc.html" height="400"></iframe></div></div></div>
+                <div class="col-md-6"><div class="card"><div class="card-header">FP/min History</div><div class="card-body p-0"><iframe src="history_fp_per_min.html" height="400"></iframe></div></div></div>
+            </div>
+            <h5 class="mt-4">Hyperparameter X-Rays (Colored Trade-offs)</h5>
+            <div class="row">
     """)
-    
-    xray_files = sorted(glob.glob(os.path.join(xray_dir, "*.html")))
+    xray_files = sorted(glob.glob(os.path.join(xray_dir, "xray_*.html")))
     for xf in xray_files:
+        rel = os.path.relpath(xf, viz_dir)
         name = os.path.basename(xf).replace("xray_", "").replace(".html", "")
-        rel_path = os.path.relpath(xf, viz_dir)
-        html.append(f'<div class="card"><h3>{name}</h3><iframe src="{rel_path}" style="height:400px;"></iframe></div>')
-    
-    html.append("""</div>
-    <h2>4. Stability Analysis (Box Plots)</h2>
-    <div class="grid">""")
-    
-    box_files = sorted(glob.glob(os.path.join(static_dir, "boxplot_*.png")))
-    for bf in box_files:
-        rel_path = os.path.relpath(bf, viz_dir)
-        html.append(f'<div class="card"><img src="{rel_path}"></div>')
+        html.append(f'<div class="col-md-4"><div class="card"><div class="card-header">{name}</div><div class="card-body p-0"><iframe src="{rel}" height="350"></iframe></div></div></div>')
+    html.append("""</div></div>""")
 
-    html.append("""</div>
-    <h2>5. Global Correlations</h2>
-    <div class="card">
-        <img src="static_analysis/global_correlation_matrix.png">
-    </div>
-    </body></html>""")
+    # 4. BOX PLOTS TAB
+    html.append("""<div class="tab-pane fade" id="tab-boxplots">
+            <p class="text-muted ms-2">Visualizing impact of individual parameters on PR-AUC.</p>
+            <div class="row">""")
+    box_imgs = sorted(glob.glob(os.path.join(box_dir, "*.png")))
+    for img_p in box_imgs:
+        rel = os.path.relpath(img_p, viz_dir)
+        p_name = os.path.basename(img_p).replace("boxplot_", "").replace(".png", "")
+        html.append(f'<div class="col-md-4"><div class="card"><div class="card-header">{p_name}</div><div class="card-body p-1"><img src="{rel}"></div></div></div>')
+    html.append("""</div></div>""")
+
+    # 5. TABLES TAB
+    html.append("""<div class="tab-pane fade" id="tab-tables">
+            <div class="accordion" id="accTables">""")
+    
+    # Pareto Table
+    if pareto_html_content:
+        html.append(f"""<div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button" data-bs-toggle="collapse" data-bs-target="#cPareto">Pareto Set ({len(pareto_df)})</button></h2><div id="cPareto" class="accordion-collapse collapse show" data-bs-parent="#accTables"><div class="accordion-body" style="overflow-x:auto;">{pareto_html_content}</div></div></div>""")
+
+    for i, (m, tbl) in enumerate(table_htmls.items()):
+        html.append(f"""<div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button collapsed" data-bs-toggle="collapse" data-bs-target="#c{i}">Top 20 by {m}</button></h2><div id="c{i}" class="accordion-collapse collapse" data-bs-parent="#accTables"><div class="accordion-body" style="overflow-x:auto;">{tbl}</div></div></div>""")
+        
+    html.append("""</div></div></div><script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script></body></html>""")
 
     with open(os.path.join(viz_dir, "index.html"), "w") as f:
         f.write("\n".join(html))
 
-    print(f"Viz v13 Complete → {viz_dir}")
+    print(f"Viz v9 Final Complete → {viz_dir}")

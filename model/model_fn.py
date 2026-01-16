@@ -3386,6 +3386,8 @@ def mixed_hybrid_loss_final(horizon=0, loss_weight=1, params=None, model=None, t
 
     return loss_fn
 
+
+
 def mixed_hybrid_loss_proxy_v1(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
     # =========================================================================
     # 0. SETUP & SAFETY CHECKS
@@ -3471,6 +3473,29 @@ def mixed_hybrid_loss_proxy_v1(horizon=0, loss_weight=1, params=None, model=None
 
         return loss_pos + loss_neg
 
+    def bce(y, z, smoothing_val=0.0):
+        y = tf.cast(y, tf.float32)
+        if tf.rank(z) > tf.rank(y): y = tf.expand_dims(y, -1)
+        # Apply dynamic smoothing (linear interpolation)
+        y = y * (1.0 - smoothing_val) + 0.5 * smoothing_val
+        return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
+    
+    def _weighted_pool(emb, probs):
+        print("Using probability-weighted pooling.")
+        # emb: [Batch, Time, Dim] (Unit vectors)
+        # probs: [Batch, Time, 1] (0.0 to 1.0)
+        
+        # 1. Re-inject Magnitude
+        # We treat the classification probability as the "Energy" of that timepoint.
+        weighted = emb * probs 
+        
+        # 2. Sum over time
+        sum_emb = tf.reduce_sum(weighted, axis=1)
+        
+        # 3. Normalize by total probability mass (Weighted Average)
+        # Add epsilon to prevent division by zero in empty windows
+        mass = tf.reduce_sum(probs, axis=1) + 1e-6
+        return sum_emb / mass    
     @tf.function
     def loss_fn(y_true, y_pred):
         # 1. PARSE & CAST
@@ -3491,8 +3516,30 @@ def mixed_hybrid_loss_proxy_v1(horizon=0, loss_weight=1, params=None, model=None
         p_lab_pool = tf.reduce_max(p_true[..., 0], axis=1)
         n_lab_pool = tf.reduce_max(n_true[..., 0], axis=1)
 
-        # 2. METRIC LOSS
-        all_emb = tf.concat([_mean_pool_bt(a_emb), _mean_pool_bt(p_emb), _mean_pool_bt(n_emb)], axis=0)
+        # =====================================================================
+        # 2. METRIC LOSS (With Probability-Weighted Pooling)
+        # =====================================================================
+
+
+        # Get probabilities (sigmoid of logits)
+        # Note: We use the probabilities from the model output directly if available,
+        # or compute sigmoid(logits) if using raw logits.
+        # Your model outputs: [logits, probs, emb...]
+        prob_idx = getattr(model, '_cls_prob_index', 1)        
+        
+        a_prob = a_out[..., prob_idx:prob_idx+1]
+        p_prob = p_out[..., prob_idx:prob_idx+1]
+        n_prob = n_out[..., prob_idx:prob_idx+1]
+
+        # Pool using the sibling head's confidence
+        a_pool = _weighted_pool(a_emb, a_prob)
+        p_pool = _weighted_pool(p_emb, p_prob)
+        n_pool = _weighted_pool(n_emb, n_prob)
+                
+        # all_emb = tf.concat([_mean_pool_bt(a_emb), _mean_pool_bt(p_emb), _mean_pool_bt(n_emb)], axis=0)
+        all_emb = tf.concat([a_pool, p_pool, n_pool], axis=0)
+        
+        # Max pool labels (same as before)        
         all_lab = tf.concat([a_lab_pool, p_lab_pool, n_lab_pool], axis=0)
 
         L_proxy = simple_proxy_anchor_loss(
@@ -3516,20 +3563,13 @@ def mixed_hybrid_loss_proxy_v1(horizon=0, loss_weight=1, params=None, model=None
 
         # Helper: Binary Cross Entropy with Dynamic Smoothing
         smoothing_val = float(params.get('LABEL_SMOOTHING', 0.0))
-        
-        def bce(y, z):
-            y = tf.cast(y, tf.float32)
-            if tf.rank(z) > tf.rank(y): y = tf.expand_dims(y, -1)
-            # Apply dynamic smoothing (linear interpolation)
-            y = y * (1.0 - smoothing_val) + 0.5 * smoothing_val
-            return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z))
 
         # Main Classification Loss
         # Note: Positives are weighted 1.0 by default, negatives scaled by ramp
-        L_cls = bce(a_true[..., 0], a_out[..., logit_idx]) + \
-                bce(p_true[..., 0], p_out[..., logit_idx]) + \
-                loss_fp_weight * bce(n_true[..., 0], n_out[..., logit_idx])
-        
+        L_cls = bce(a_true[..., 0], a_out[..., logit_idx], smoothing_val) + \
+                bce(p_true[..., 0], p_out[..., logit_idx], smoothing_val) + \
+                loss_fp_weight * bce(n_true[..., 0], n_out[..., logit_idx], smoothing_val)
+
         # Temporal Variation (Smoothness) Regularization
         # [FIX] Now uses params['LOSS_TV'] instead of hardcoded 0.15
         tv_weight = float(params.get('LOSS_TV', 0.0))
