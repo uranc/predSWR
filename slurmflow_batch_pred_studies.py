@@ -7,7 +7,7 @@ import time
 import copy
 
 
-tag = 'tripletOnlyClean2500' # FiltL, FiltH, FiltM, SingleCh
+tag = 'tripletOnlyProxy2500' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'tripletOnlyLatents2500' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'mixerOnly' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'mixerHori' # FiltL, FiltH, FiltM, SingleCh
@@ -27,7 +27,10 @@ tag = 'tripletOnlyClean2500' # FiltL, FiltH, FiltM, SingleCh
 
 # model_lib = [1022, 426,717,829,867,1033, 623, 946, 554, 1194] # latents
 # model_lib = [926, 398, 597, 377, 438] # latentsTuned
-model_lib = [1383,1392,1417,1440,1450,1530,1550,1559,1594,1601,1624,1633,1723]
+# model_lib = [1383,1392,1417,1440,1450,1530,1550,1559,1594,1601,1624,1633,1723]
+# model_lib = [0, 2, 4, 7, 8, 16, 18, 22, 26, 28, 29, 32, 33, 35, 38, 39, 44, 45, 50, 55, 58, 59, 62, 65, 66, 68, 70, 74, 87, 88, 100, 105, 106, 107, 109, 111, 116, 119, 120, 121, 123, 124, 126, 136, 137, 142, 145, 147, 149, 153, 154, 155, 164, 167, 168, 206, 207, 208, 209, 210, 216, 226, 231, 234, 238]
+# model_lib = [268, 272, 276, 284, 286, 292, 299, 303, 305, 306, 315, 333, 334, 338]
+model_lib = [362, 364, 368, 370, 382, 384, 385, 386, 387, 388, 389, 397, 400, 401, 403, 404, 405, 407, 415, 416, 430]
 n=0
 for im, model in enumerate(model_lib):
     # subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model])

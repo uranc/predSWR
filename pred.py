@@ -6239,5 +6239,37 @@ elif mode == 'tune_viz_multi_v9':
 
     with open(os.path.join(viz_dir, "index.html"), "w") as f:
         f.write("\n".join(html))
+    
+    # =========================================================
+    # 5. EXPORT CANDIDATE TRIALS (New)
+    # =========================================================
+    print("Exporting Candidate Trials for Evaluation...")
+    candidates = set()
+    
+    # Add all Pareto trials
+    if not pareto_df.empty:
+        candidates.update(pareto_df["trial_number"].tolist())
+    
+    # Add Top-K for key metrics
+    cand_config = [
+        ("val_sample_pr_auc", False, 20),
+        ("val_sample_max_mcc", False, 20),
+        ("val_sample_max_f1", False, 20),
+        ("val_recall_at_0p7", False, 15),
+        ("val_latency_score", False, 15),
+        ("val_fp_per_min", True, 15)
+    ]
+    for col, asc, k in cand_config:
+        if col in df.columns:
+            candidates.update(df.sort_values(col, ascending=asc).head(k)["trial_number"].tolist())
+            
+    candidate_list = sorted(list(candidates))
+    print(f"\n[CANDIDATES] {len(candidate_list)} unique trials found.")
+    print(candidate_list)
+    
+    with open(os.path.join(viz_dir, "candidate_trials.json"), "w") as f:
+        json.dump(candidate_list, f)
+    with open(os.path.join(viz_dir, "candidate_trials.txt"), "w") as f:
+        f.write(", ".join(map(str, candidate_list)))
 
     print(f"Viz v9 Final Complete → {viz_dir}")
