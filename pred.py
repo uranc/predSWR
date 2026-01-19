@@ -5762,7 +5762,7 @@ elif mode == 'tune_viz_multi_v8':
     print(f"Visualization complete → {viz_dir}")
 
 elif mode == 'tune_viz_multi_v9':
-    import os, sys, json, math, warnings, glob, re
+    import os, sys, json, math, warnings, glob, re, itertools
     import numpy as np
     import pandas as pd
     import matplotlib.pyplot as plt
@@ -5825,6 +5825,10 @@ elif mode == 'tune_viz_multi_v9':
 
     def _clean_filename(s):
         return re.sub(r'[\\/*?:"<>|]', "_", str(s))
+
+    def _make_target(df_source, metric_name):
+        lookup = df_source.set_index("trial_number")[metric_name].to_dict()
+        return lambda t: lookup.get(t.number, float('nan'))
 
     # ---------- COLLECT DATA ----------
     trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
@@ -5906,7 +5910,6 @@ elif mode == 'tune_viz_multi_v9':
     # =========================================================
     print("Generating Standard Optuna Plots...")
     
-    # History
     try:
         fig_hist_pr = optuna.visualization.plot_optimization_history(
             study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'), target_name="PR-AUC")
@@ -5918,7 +5921,6 @@ elif mode == 'tune_viz_multi_v9':
         fig_hist_fp.write_html(os.path.join(viz_dir, "history_fp_per_min.html"))
     except: pass
 
-    # Pareto Front
     names_by_index = [""] * nvals
     names_by_index[OBJECTIVE_INDEX['pr_auc']] = "PR-AUC"
     if 'fp_min' in OBJECTIVE_INDEX: names_by_index[OBJECTIVE_INDEX['fp_min']] = "FP/min"
@@ -5927,20 +5929,34 @@ elif mode == 'tune_viz_multi_v9':
         fig_pareto.write_html(os.path.join(viz_dir, "pareto_front_optuna.html"))
     except: pass
 
-    # Importance
+    # ---------------------------------------------------------
+    # IMPORTANCE FOR ALL METRICS
+    # ---------------------------------------------------------
     imp_dir = os.path.join(viz_dir, "importance_analysis")
     os.makedirs(imp_dir, exist_ok=True)
-    valid_imp_metrics = [m for m in known_metrics if m in df.columns and df[m].nunique() > 1 and m != "sel_epoch"]
-    for metric in valid_imp_metrics:
+    
+    if trials: tunable_params = list(trials[0].params.keys())
+    else: tunable_params = []
+    valid_plot_params = [p for p in tunable_params if p in df.columns]
+
+    target_imp_metrics = ["val_sample_pr_auc", "val_fp_per_min", "val_latency_score", 
+                          "val_recall_at_0p7", "val_sample_max_mcc", "val_sample_max_f1"]
+    
+    for metric in target_imp_metrics:
+        if metric not in df.columns or df[metric].nunique() <= 1: continue
         try:
-            t_map = df.set_index("trial_number")[metric].to_dict()
-            fig_imp = optuna.visualization.plot_param_importances(study, target=lambda t: t_map.get(t.number, float('nan')), target_name=metric)
+            target_func = _make_target(df, metric)
+            fig_imp = optuna.visualization.plot_param_importances(
+                study, target=target_func, target_name=metric, params=valid_plot_params
+            )
             fig_imp.write_html(os.path.join(imp_dir, f"importance_{metric}.html"))
         except: pass
 
     # =========================================================
-    # 2. INTERACTIVE PLOTS
+    # 2. INTERACTIVE PLOTS (X-RAYS & SCATTERS)
     # =========================================================
+    xray_html_blocks = [] # To store HTML snippets for later
+    
     if HAVE_PLOTLY:
         print("Generating Interactive Plots...")
         
@@ -5955,7 +5971,6 @@ elif mode == 'tune_viz_multi_v9':
                     hover_name="trial_number", hover_data=param_cols[:6],
                     title=f"3D: FP vs PR vs {z_axis} (Color={c_col})"
                 )
-                fig_3d.update_layout(scene=dict(xaxis_title='FP/min', yaxis_title='PR-AUC', zaxis_title=z_axis))
                 fig_3d.write_html(os.path.join(viz_dir, "3d_tradeoff.html"))
             except: pass
 
@@ -5974,30 +5989,40 @@ elif mode == 'tune_viz_multi_v9':
                 name='Pareto'))
         fig_main.write_html(os.path.join(viz_dir, "main_interactive_scatter.html"))
 
-        # X-Rays
+        # ---------------------------------------------------------
+        # ALL PAIRWISE X-RAYS
+        # ---------------------------------------------------------
         xray_dir = os.path.join(viz_dir, "xray_plots")
         os.makedirs(xray_dir, exist_ok=True)
-        for p in param_cols:
-            if df[p].nunique() <= 1: continue
-            try:
-                fig_x = px.scatter(df, x="val_fp_per_min", y="val_sample_pr_auc", color=p,
-                    color_continuous_scale="Spectral_r" if pd.api.types.is_numeric_dtype(df[p]) else None,
-                    title=f"Trade-off colored by: {p}", hover_name="trial_number")
-                fig_x.write_html(os.path.join(xray_dir, f"xray_{_clean_filename(p)}.html"))
-            except: pass
+        
+        # Valid metrics for X-Rays (excluding epoch/ind)
+        xray_metrics = [m for m in known_metrics if m in df.columns and m not in ["sel_epoch", "sel_ind"]]
+        
+        # Generate ALL combinations of 2 metrics
+        all_combinations = list(itertools.combinations(xray_metrics, 2))
+        
+        for x_ax, y_ax in all_combinations:
+            label = f"{y_ax}_vs_{x_ax}"
+            # Create sub-directory
+            pair_dir = os.path.join(xray_dir, label)
+            os.makedirs(pair_dir, exist_ok=True)
             
-        # Parallel Coords
-        try:
-            tunable = list(study.best_trial.params.keys())
-            valid_p = [p for p in tunable if p in df.columns]
-            if valid_p:
-                corr_pr = df[valid_p].corrwith(df["val_sample_pr_auc"], method="spearman").abs()
-                top_p = corr_pr.sort_values(ascending=False).head(8).index.tolist()
-                t_map_pr = df.set_index("trial_number")["val_sample_pr_auc"].to_dict()
-                fig_par = optuna.visualization.plot_parallel_coordinate(
-                    study, params=top_p, target=lambda t: t_map_pr.get(t.number, np.nan), target_name="PR-AUC")
-                fig_par.write_html(os.path.join(viz_dir, "parallel_coords_pr_auc.html"))
-        except: pass
+            # Generate plots
+            has_plots = False
+            for p in param_cols:
+                if df[p].nunique() <= 1: continue
+                try:
+                    fig_x = px.scatter(df, x=x_ax, y=y_ax, color=p,
+                        color_continuous_scale="Spectral_r" if pd.api.types.is_numeric_dtype(df[p]) else None,
+                        title=f"{y_ax} vs {x_ax} | Color: {p}", hover_name="trial_number")
+                    
+                    fname = f"xray_{_clean_filename(p)}.html"
+                    fig_x.write_html(os.path.join(pair_dir, fname))
+                    has_plots = True
+                except: pass
+            
+            if has_plots:
+                xray_html_blocks.append((label, pair_dir))
 
     # =========================================================
     # 3. STATIC DIAGNOSTICS
@@ -6016,21 +6041,37 @@ elif mode == 'tune_viz_multi_v9':
     # A. Box Plots
     box_dir = os.path.join(viz_dir, "box_plots")
     os.makedirs(box_dir, exist_ok=True)
+    
+    metrics_to_plot = [m for m in known_metrics if m in df.columns and m != "sel_epoch"]
+    
     for p in param_cols:
         if df[p].nunique() <= 1: continue
-        try:
-            plt.figure(figsize=(8, 5))
-            plot_df = df.copy()
-            if pd.api.types.is_numeric_dtype(df[p]) and df[p].nunique() > 8:
-                try: plot_df[p] = pd.qcut(plot_df[p], q=4, duplicates='drop')
-                except: pass 
-            sns.boxplot(data=plot_df, x=p, y="val_sample_pr_auc", palette="Blues")
-            plt.title(f"Impact of {p} on PR-AUC")
-            plt.xticks(rotation=45)
-            plt.tight_layout()
-            plt.savefig(os.path.join(box_dir, f"boxplot_{_clean_filename(p)}.png"))
-            plt.close()
-        except: plt.close()
+        
+        is_numeric = pd.api.types.is_numeric_dtype(df[p])
+        plot_df = df.copy()
+        
+        if is_numeric and df[p].nunique() > 6:
+            try: plot_df[p] = pd.qcut(plot_df[p], q=4, duplicates='drop')
+            except: pass
+            
+        n_plots = len(metrics_to_plot)
+        fig, axes = plt.subplots(n_plots, 1, figsize=(6, 3.0 * n_plots), sharex=True)
+        if n_plots == 1: axes = [axes]
+        
+        for ax, metric in zip(axes, metrics_to_plot):
+            sns.boxplot(data=plot_df, x=p, y=metric, ax=ax, palette="Blues")
+            ax.set_ylabel(metric, fontsize=9)
+            ax.set_xlabel("")
+            ax.grid(True, alpha=0.3)
+        
+        axes[-1].set_xlabel(p, fontweight='bold')
+        if hasattr(axes[-1], "get_xticklabels"):
+            plt.setp(axes[-1].get_xticklabels(), rotation=45)
+            
+        fig.suptitle(f"Impact of {p}", y=1.005, fontweight='bold')
+        plt.tight_layout()
+        plt.savefig(os.path.join(box_dir, f"impact_{_clean_filename(p)}.png"))
+        plt.close()
 
     # B. Pairplot
     try:
@@ -6139,7 +6180,7 @@ elif mode == 'tune_viz_multi_v9':
         <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-interactive">Interactive</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-diagnostics">Diagnostics</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-xray">X-Rays & History</button></li>
-        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-boxplots">Box Plots</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-boxplots">Box Plots (All Metrics)</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tables">Top Models</button></li>
     </ul>
 
@@ -6161,17 +6202,20 @@ elif mode == 'tune_viz_multi_v9':
                 </div>
             </div>
              <div class="row">
-                <div class="col-lg-6">
-                    <div class="card">
-                        <div class="card-header">Importance (PR-AUC)</div>
-                        <div class="card-body p-0"><iframe src="importance_analysis/importance_val_sample_pr_auc.html"></iframe></div>
-                    </div>
-                </div>
-                <div class="col-lg-6">
-                    <div class="card">
-                        <div class="card-header">Parallel Coordinates</div>
-                        <div class="card-body p-0"><iframe src="parallel_coords_pr_auc.html"></iframe></div>
-                    </div>
+                <div class="col-lg-12">
+                     <h5 class="mb-3">Feature Importance (All Metrics)</h5>
+                     <div class="row">
+    """)
+    
+    # Embed All Importance Plots
+    imp_files = sorted(glob.glob(os.path.join(imp_dir, "importance_*.html")))
+    for ifile in imp_files:
+         rel = os.path.relpath(ifile, viz_dir)
+         m_name = os.path.basename(ifile).replace("importance_", "").replace(".html", "")
+         html.append(f'<div class="col-md-4"><div class="card"><div class="card-header">{m_name}</div><div class="card-body p-0"><iframe src="{rel}" height="400"></iframe></div></div></div>')
+    
+    html.append("""
+                     </div>
                 </div>
             </div>
         </div>
@@ -6203,30 +6247,50 @@ elif mode == 'tune_viz_multi_v9':
                 <div class="col-md-6"><div class="card"><div class="card-header">PR-AUC History</div><div class="card-body p-0"><iframe src="history_pr_auc.html" height="400"></iframe></div></div></div>
                 <div class="col-md-6"><div class="card"><div class="card-header">FP/min History</div><div class="card-body p-0"><iframe src="history_fp_per_min.html" height="400"></iframe></div></div></div>
             </div>
-            <h5 class="mt-4">Hyperparameter X-Rays (Colored Trade-offs)</h5>
-            <div class="row">
+            
+            <hr class="my-4">
+            
+            <h5 class="mt-4">X-Ray Analysis (All Pairs)</h5>
+            <ul class="nav nav-pills mb-3" id="pills-tab" role="tablist">
     """)
-    xray_files = sorted(glob.glob(os.path.join(xray_dir, "xray_*.html")))
-    for xf in xray_files:
-        rel = os.path.relpath(xf, viz_dir)
-        name = os.path.basename(xf).replace("xray_", "").replace(".html", "")
-        html.append(f'<div class="col-md-4"><div class="card"><div class="card-header">{name}</div><div class="card-body p-0"><iframe src="{rel}" height="350"></iframe></div></div></div>')
+    
+    # Generate X-Ray Pills Dynamically
+    for i, (label, _) in enumerate(xray_html_blocks):
+        active = "active" if i == 0 else ""
+        html.append(f'<li class="nav-item"><button class="nav-link {active}" data-bs-toggle="pill" data-bs-target="#pill-{i}">{label}</button></li>')
+    
+    html.append('</ul><div class="tab-content" id="pills-tabContent">')
+    
+    # Generate X-Ray Content Panes
+    for i, (label, folder) in enumerate(xray_html_blocks):
+        cls = "show active" if i == 0 else ""
+        html.append(f'<div class="tab-pane fade {cls}" id="pill-{i}"><div class="row">')
+        files = sorted(glob.glob(os.path.join(folder, "xray_*.html")))
+        for xf in files:
+            rel = os.path.relpath(xf, viz_dir)
+            pname = os.path.basename(xf).replace("xray_", "").replace(".html", "")
+            html.append(f'<div class="col-md-4"><div class="card"><div class="card-header small">{pname}</div><div class="card-body p-0"><iframe src="{rel}" height="350"></iframe></div></div></div>')
+        html.append('</div></div>')
+        
     html.append("""</div></div>""")
 
-    # 4. BOX PLOTS TAB
+    # 4. BOX PLOTS TAB (IMPROVED LAYOUT)
     html.append("""<div class="tab-pane fade" id="tab-boxplots">
-            <p class="text-muted ms-2">Visualizing impact of individual parameters on PR-AUC.</p>
+            <p class="text-muted ms-2 mt-2">Distribution of metrics across parameter ranges.</p>
             <div class="row">""")
+    
     box_imgs = sorted(glob.glob(os.path.join(box_dir, "*.png")))
     for img_p in box_imgs:
         rel = os.path.relpath(img_p, viz_dir)
-        p_name = os.path.basename(img_p).replace("boxplot_", "").replace(".png", "")
-        html.append(f'<div class="col-md-4"><div class="card"><div class="card-header">{p_name}</div><div class="card-body p-1"><img src="{rel}"></div></div></div>')
+        p_name = os.path.basename(img_p).replace("impact_", "").replace(".png", "")
+        # Use col-md-3 to fit 4 per row, making it grid-like and compact
+        html.append(f'<div class="col-md-4 mb-3"><div class="card h-100"><div class="card-header text-center fw-bold">{p_name}</div><div class="card-body p-1"><a href="{rel}" target="_blank"><img src="{rel}" class="img-fluid" title="Click to zoom"></a></div></div></div>')
+    
     html.append("""</div></div>""")
 
     # 5. TABLES TAB
     html.append("""<div class="tab-pane fade" id="tab-tables">
-            <div class="accordion" id="accTables">""")
+            <div class="accordion mt-3" id="accTables">""")
     
     # Pareto Table
     if pareto_html_content:
@@ -6241,16 +6305,14 @@ elif mode == 'tune_viz_multi_v9':
         f.write("\n".join(html))
     
     # =========================================================
-    # 5. EXPORT CANDIDATE TRIALS (New)
+    # 5. EXPORT CANDIDATE TRIALS
     # =========================================================
     print("Exporting Candidate Trials for Evaluation...")
     candidates = set()
     
-    # Add all Pareto trials
     if not pareto_df.empty:
         candidates.update(pareto_df["trial_number"].tolist())
     
-    # Add Top-K for key metrics
     cand_config = [
         ("val_sample_pr_auc", False, 20),
         ("val_sample_max_mcc", False, 20),
