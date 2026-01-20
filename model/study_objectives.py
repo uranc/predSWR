@@ -2255,24 +2255,17 @@ def objective_time_to_event(trial, model_name, tag, logger):
     model.summary()
 
     callbacks = [
-        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=50,mode='max',verbose=1,restore_best_weights=True),        
-                 
+        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=100,mode='max',verbose=1,restore_best_weights=True),        
         cb.TensorBoard(log_dir=f"{study_dir}/", write_graph=True, write_images=True, update_freq='epoch'),
-
         # Save best by F1 (max)
         cb.ModelCheckpoint(f"{study_dir}/mcc.weights.h5", monitor="val_sample_max_mcc",
                         mode="max", save_best_only=True, save_weights_only=True, verbose=1),
-        
         # Save best by F1 (max)
         cb.ModelCheckpoint(f"{study_dir}/max.weights.h5", monitor='val_sample_max_f1',
                         save_best_only=True, save_weights_only=True, mode='max', verbose=1),
-
         # Save best by PR-AUC (max)
         cb.ModelCheckpoint(f"{study_dir}/event.weights.h5", monitor='val_sample_pr_auc',
                         save_best_only=True, save_weights_only=True, mode='max', verbose=1),
-        
-        # optuna.integration.TFKerasPruningCallback(trial, 'val_sample_pr_auc'),
-
     ]
     val_steps = dataset_params['VAL_STEPS']
 
