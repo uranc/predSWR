@@ -1256,6 +1256,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # # Crop to last T so the classifier head is length T (aligns with emb)
         # cls_logits_in = Lambda(lambda tt: tt[:, -(input_timepoints):, :], name='slice_pre_logits')(h_tail)        
         cls_logits_in = tf.stop_gradient(feats) if 'StopGrad' in params['TYPE_ARCH'] else feats
+        print('Stop Gradient on Classification Head:', 'StopGrad' in params['TYPE_ARCH'])
 
         cls_logits = tf.keras.layers.Conv1D(
             1, 1, use_bias=True,
@@ -3587,14 +3588,20 @@ def mixed_hybrid_loss_proxy_v1_finetune(horizon=0, loss_weight=1, params=None, m
     num_classes = int(params.get('NUM_CLASSES', 2)) 
     n_subcenters = int(params.get('NUM_SUBCENTERS', 3)) 
     embedding_dim = int(params.get('EMBEDDING_DIM', 128))
+    
+    # Default to True for Fine-Tuning safety
     should_freeze = params.get('FREEZE_PROXIES', True) 
     
     if model is not None:
         if not hasattr(model, 'proxy_vectors'):
             print(f"FT: Initializing Proxies (Frozen={should_freeze})")
+            # We set trainable=False here, but we ALSO use stop_gradient below 
+            # to be doubly sure.
             model.proxy_vectors = model.add_weight(
-                name='proxy_vectors', shape=(num_classes, n_subcenters, embedding_dim),
-                initializer='he_normal', trainable=not should_freeze 
+                name='proxy_vectors',
+                shape=(num_classes, n_subcenters, embedding_dim),
+                initializer='he_normal',
+                trainable=not should_freeze 
             )
         else:
             print(f"FT: Proxies found (Trainable={model.proxy_vectors.trainable})")
@@ -3603,13 +3610,15 @@ def mixed_hybrid_loss_proxy_v1_finetune(horizon=0, loss_weight=1, params=None, m
     # 1. HELPERS
     # =================================================================
     def tv_on_logits(z):
-        # L1 Smoothness
+        # L1 Smoothness: Prevents high-frequency flickering in the output
         return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
 
     def simple_proxy_anchor_loss(embeddings, labels, proxies, alpha, margin):
         # Standard Stable Implementation
         C, K, D = tf.shape(proxies)[0], tf.shape(proxies)[1], tf.shape(proxies)[2]
         P_flat = tf.reshape(proxies, [C * K, D])
+        
+        # Stability: Epsilon prevents 0/0 -> NaN
         P_norm = tf.math.l2_normalize(P_flat, axis=1, epsilon=1e-12)
         X_norm = tf.math.l2_normalize(embeddings, axis=1, epsilon=1e-12)
         
@@ -3619,16 +3628,19 @@ def mixed_hybrid_loss_proxy_v1_finetune(horizon=0, loss_weight=1, params=None, m
         
         labels = tf.cast(tf.reshape(labels, [-1]), tf.int32)
         
+        # Positive Loss
         target_sims = tf.gather(cos_sim_shaped, labels, batch_dims=1)
         soft_sims = 0.1 * tf.reduce_logsumexp(10.0 * target_sims, axis=1)
         loss_pos = tf.reduce_mean(tf.math.softplus(-alpha * (soft_sims - margin)))
         
+        # Negative Loss
         mask_neg = tf.expand_dims(1.0 - tf.one_hot(labels, depth=C), axis=2)
         mask_neg_flat = tf.reshape(tf.broadcast_to(mask_neg, tf.shape(cos_sim_shaped)), [-1, C*K])
         sim_flat = tf.reshape(cos_sim_shaped, [-1, C*K])
         neg_logits = alpha * (sim_flat + margin) + (1.0 - mask_neg_flat) * -1e9
         zeros = tf.zeros([tf.shape(neg_logits)[0], 1], dtype=tf.float32)
         loss_neg = tf.reduce_mean(tf.reduce_logsumexp(tf.concat([zeros, neg_logits], axis=1), axis=1))
+        
         return loss_pos + loss_neg
 
     @tf.function
@@ -3636,45 +3648,51 @@ def mixed_hybrid_loss_proxy_v1_finetune(horizon=0, loss_weight=1, params=None, m
         y_pred = tf.cast(y_pred, tf.float32)
         
         # 1. PARSE OUTPUTS
+        # Split into Anchor, Positive, Negative streams
         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+
         logit_idx = getattr(model, '_cls_logit_index', 0)
         prob_idx  = getattr(model, '_cls_prob_index', 1)
         emb_start = getattr(model, '_emb_start_index', 2)
 
-        # 2. ROBUST DENSE BCE (No Fancy Stuff)
+        # 2. ROBUST DENSE BCE (Classification)
         # -----------------------------------------------------------
         loss_fp_weight = float(params.get('LOSS_NEGATIVES', 2.0)) 
         pos_weight     = float(params.get('BCE_POS_ALPHA', 1.0))
 
         def bce_simple(y_raw, z_logits):
-            # 1. Ensure Float32
+            # Ensure Float32
             y = tf.cast(y_raw, tf.float32)
             
-            # 2. FORCE SHAPE MATCHING (The fix for INVALID_ARGUMENT)
+            # FORCE SHAPE MATCHING (Fixes INVALID_ARGUMENT crashes)
             # If logits are [Batch, Time, 1] and labels are [Batch, Time], expand labels.
             if tf.rank(z_logits) == 3 and tf.rank(y) == 2:
                 y = tf.expand_dims(y, -1)
             
-            # 3. Standard Sigmoid Cross Entropy
+            # Standard Sigmoid Cross Entropy
             return tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z_logits))
 
+        # Calculate Classification Loss for all three streams
         L_cls = pos_weight * bce_simple(a_true[..., 0], a_out[..., logit_idx]) + \
                 pos_weight * bce_simple(p_true[..., 0], p_out[..., logit_idx]) + \
                 loss_fp_weight * bce_simple(n_true[..., 0], n_out[..., logit_idx])
 
-        # 3. TV REGULARIZATION
+        # 3. TV REGULARIZATION (Smoothness)
+        # -----------------------------------------------------------
         tv_weight = float(params.get('LOSS_TV', 0.01))
         if tv_weight > 1e-6:
             L_cls += tv_weight * (tv_on_logits(a_out[..., logit_idx]) + 
                                   tv_on_logits(p_out[..., logit_idx]) + 
                                   tv_on_logits(n_out[..., logit_idx]))
 
-        # 4. METRIC TETHER (Weighted Pooling)
+        # 4. METRIC TETHER (Weighted Pooling & Hard Freeze)
+        # -----------------------------------------------------------
+        # Controls how strictly we enforce cluster structure
         tether_weight = float(params.get('LOSS_PROXY_FT', 0.01)) 
         
         if tether_weight > 1e-6:
-            # Safe Weighted Pooling
+            # Weighted Pooling: Filters noise based on classification confidence
             def _weighted_pool(emb, probs):
                 w_sum = tf.reduce_sum(emb * probs, axis=1)
                 mass = tf.reduce_sum(probs, axis=1) + 1e-6
@@ -3684,20 +3702,29 @@ def mixed_hybrid_loss_proxy_v1_finetune(horizon=0, loss_weight=1, params=None, m
             p_emb = p_out[..., emb_start:]; p_prob = p_out[..., prob_idx:prob_idx+1]
             n_emb = n_out[..., emb_start:]; n_prob = n_out[..., prob_idx:prob_idx+1]
             
+            # Create pooled embeddings for metric loss
             all_emb = tf.concat([
                 _weighted_pool(a_emb, a_prob), 
                 _weighted_pool(p_emb, p_prob), 
                 _weighted_pool(n_emb, n_prob)
             ], axis=0)
             
-            # Max Pool labels
+            # Max Pool labels (Sequence -> Single Label)
             a_lab = tf.reduce_max(a_true[..., 0], axis=1)
             p_lab = tf.reduce_max(p_true[..., 0], axis=1)
             n_lab = tf.reduce_max(n_true[..., 0], axis=1)
             all_lab = tf.concat([a_lab, p_lab, n_lab], axis=0)
 
+            # --- HARD FREEZE LOGIC ---
+            # If proxies are meant to be frozen, stop gradients explicitly here.
+            # This overrides any lingering 'trainable=True' attribute.
+            proxies_to_use = model.proxy_vectors
+            if should_freeze:
+                proxies_to_use = tf.stop_gradient(proxies_to_use)
+
             L_proxy = simple_proxy_anchor_loss(
-                all_emb, all_lab, model.proxy_vectors,
+                all_emb, all_lab, 
+                proxies_to_use,
                 alpha=float(params.get('PROXY_ALPHA', 32.0)),
                 margin=float(params.get('PROXY_MARGIN', 0.1))
             )

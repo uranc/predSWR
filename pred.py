@@ -576,8 +576,8 @@ elif mode == 'predict':
         # max_weights = event_weights
         # mcc_weights = event_weights
 
-        # event_weights = f"{study_dir}/event.finetune.weights.h5"
-        # max_weights = f"{study_dir}/max.finetune.weights.h5"
+        event_weights = f"{study_dir}/event.finetune.weights.h5"
+        max_weights = f"{study_dir}/max.finetune.weights.h5"
         if os.path.exists(event_weights) and os.path.exists(max_weights):
             # Both files exist, select the most recently modified one
             event_mtime = os.path.getmtime(event_weights)
@@ -1120,13 +1120,12 @@ elif mode == 'fine_tune':
                 
                 'USE_StopGrad': False,
                 'USE_LR_SCHEDULE': False,
-                'LEARNING_RATE': 1e-6,        # Very low (Protect the backbone)
+                'LEARNING_RATE': 1e-5,        # Very low (Protect the backbone)
                 'BATCH_SIZE': 128,            # Maximize stability
 
-                'LABEL_SIGMA': 0.3,          # Tighten labels
-                'LOSS_NEGATIVES': 2.5,
-                'LOSS_PROXY_FT':0.01,
-                'LOSS_TV':0.01,
+                # 'LOSS_NEGATIVES': 2,
+                # 'LOSS_PROXY_FT':0.1,
+                # 'LOSS_TV':0.05,
                 'FREEZE_PROXIES': True,
                 'NO_EPOCHS': 500,
             })
