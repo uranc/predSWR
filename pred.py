@@ -573,6 +573,8 @@ elif mode == 'predict':
         event_weights = f"{study_dir}/event.weights.h5"
         max_weights = f"{study_dir}/max.weights.h5"
         mcc_weights = f"{study_dir}/mcc.weights.h5"
+        # max_weights = event_weights
+        # mcc_weights = event_weights
 
         # event_weights = f"{study_dir}/event.finetune.weights.h5"
         # max_weights = f"{study_dir}/max.finetune.weights.h5"
@@ -1118,34 +1120,15 @@ elif mode == 'fine_tune':
                 
                 'USE_StopGrad': False,
                 'USE_LR_SCHEDULE': False,
-                'LEARNING_RATE': 1e-4,        # Very low (Protect the backbone)
+                'LEARNING_RATE': 1e-6,        # Very low (Protect the backbone)
                 'BATCH_SIZE': 128,            # Maximize stability
 
-                # 2. DISABLE GEOMETRY (Crucial)
-                # The backbone structure is already good. Don't let Triplet/Circle
-                # distract the classifier. Silence them.
-                'LOSS_TupMPN': 50.0,
-                # 'LOSS_Circle': 0.0,
-                # 'LOSS_SupCon': 0.0,
-                'MARGIN_WEAK': 0.05,
-                # 3. FIX THE COLLAPSE (Rebalance)
-                # The Ramp was killing you. Disable it.
-                'NEG_RAMP_DELAY': 0,          # No warmup
-                'NEG_RAMP_STEPS': 1,          # Instant on
-                
-                # Drastically reduce negative weight (was ~26.0 -> Now 1.0)
-                'LOSS_NEGATIVES': 5.0,        
-                'LOSS_NEGATIVES_MIN': 1.0,
-
-                # Drastically INCREASE positive weight (was ~2.0 -> Now 5.0)
-                # This forces the model to recover Recall immediately.
-                'BCE_POS_ALPHA': 2.5,
-                'DROP_RATE': 0.05,
-                # 4. SHARPEN PREDICTIONS (Latency & Certainty)
-                # Remove smoothing so the model can hit 1.0
-                'LABEL_SMOOTHING': 0.1,
-                'LOSS_TV': 0.3,
-                'NO_EPOCHS': 200,
+                'LABEL_SIGMA': 0.3,          # Tighten labels
+                'LOSS_NEGATIVES': 2.5,
+                'LOSS_PROXY_FT':0.01,
+                'LOSS_TV':0.01,
+                'FREEZE_PROXIES': True,
+                'NO_EPOCHS': 500,
             })
             params.update({'mode': 'fine_tune'})
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
@@ -1207,7 +1190,7 @@ elif mode == 'fine_tune':
     #                         save_weights_only=True,
     #                         mode='max')]
     callbacks = [cb.EarlyStopping(monitor='val_sample_pr_auc',  # Change monitor
-                        patience=20,
+                        patience=100,
                         mode='max',
                         verbose=1,
                         restore_best_weights=True),
