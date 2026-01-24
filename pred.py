@@ -1123,9 +1123,9 @@ elif mode == 'fine_tune':
                 'LEARNING_RATE': 1e-5,        # Very low (Protect the backbone)
                 'BATCH_SIZE': 128,            # Maximize stability
 
-                # 'LOSS_NEGATIVES': 2,
-                # 'LOSS_PROXY_FT':0.1,
-                # 'LOSS_TV':0.05,
+                'LOSS_NEGATIVES': 2,
+                'LOSS_PROXY_FT':0.01,
+                'LOSS_TV':0.01,
                 'FREEZE_PROXIES': True,
                 'NO_EPOCHS': 500,
             })
