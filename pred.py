@@ -498,7 +498,11 @@ elif mode == 'predict':
             # spec = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/study_{2211}_*')[0]
             # spec = importlib.util.spec_from_file_location("model_fn", f"{tmp_dir}/model/model_fn.py")
             # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn_BACKUP.py")
-            spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
+            # pdb.set_trace()
+            if int(study_num)<850:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr859/model_fn.py")
+            else:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
             model_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
@@ -576,8 +580,8 @@ elif mode == 'predict':
         # max_weights = event_weights
         # mcc_weights = event_weights
 
-        event_weights = f"{study_dir}/event.finetune.weights.h5"
-        max_weights = f"{study_dir}/max.finetune.weights.h5"
+        # event_weights = f"{study_dir}/event.finetune.weights.h5"
+        # max_weights = f"{study_dir}/max.finetune.weights.h5"
         if os.path.exists(event_weights) and os.path.exists(max_weights):
             # Both files exist, select the most recently modified one
             event_mtime = os.path.getmtime(event_weights)
@@ -956,6 +960,7 @@ elif mode == 'fine_tune':
         if not study_dirs:
             raise ValueError(f"No study directory found for study number {study_num}")
         study_dir = study_dirs[0]  # Take the first matching directory
+        base_dir = f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/'
 
         # Load trial info to get parameters
         with open(f"{study_dir}/trial_info.json", 'r') as f:
@@ -993,18 +998,23 @@ elif mode == 'fine_tune':
             build_DBI_TCN = model_module.build_DBI_TCN_CorizonMixer
         elif 'TripletOnly' in params['TYPE_ARCH']:
             # tf.config.run_functions_eagerly(True)
-            from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            
+            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
 
             # model_dir = f"studies/{param_dir}/base_model"
             # spec = importlib.util.spec_from_file_location("model_fn", f"{model_dir}/model_fn.py")
             # model_module = importlib.util.module_from_spec(spec)
             # spec.loader.exec_module(model_module)
             # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly            
-            # import importlib.util
-            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
-            # model_module = importlib.util.module_from_spec(spec)
-            # spec.loader.exec_module(model_module)
-            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
+            import importlib.util
+            
+            if int(study_num)<850:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr859/model_fn.py")
+            else:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
 
             # spec_inp = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/input_proto_new.py")
             # inp_module = importlib.util.module_from_spec(spec_inp)
@@ -1123,7 +1133,7 @@ elif mode == 'fine_tune':
                 'LEARNING_RATE': 1e-5,        # Very low (Protect the backbone)
                 'BATCH_SIZE': 128,            # Maximize stability
 
-                'LOSS_NEGATIVES': 2,
+                'LOSS_NEGATIVES': 4,
                 'LOSS_PROXY_FT':0.01,
                 'LOSS_TV':0.01,
                 'FREEZE_PROXIES': True,

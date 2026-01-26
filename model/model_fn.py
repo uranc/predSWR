@@ -1130,8 +1130,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             inputs_nets = MultiScaleCausalGate(
                 scales=((7,1),(7,2),(11,4)),                   # RFs: 7, 13, 41 (all ≤ 43)
                 groups=groups,
-                gate_bias=(-3.0),  # tighter in pretrain
-                # gate_bias=(-3.0 if params['mode']=="train" else -2.0),  # tighter in pretrain
+                gate_bias=(-3.0 if params['mode']=="train" else -2.0),  # tighter in pretrain
                 l1_gate=params.get("l1_gate", 1e-5), 
                 use_residual_mix=True,
                 name="ms_causal_gate"
@@ -1257,19 +1256,29 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # cls_logits_in = Lambda(lambda tt: tt[:, -(input_timepoints):, :], name='slice_pre_logits')(h_tail)        
         cls_logits_in = tf.stop_gradient(feats) if 'StopGrad' in params['TYPE_ARCH'] else feats
         print('Stop Gradient on Classification Head:', 'StopGrad' in params['TYPE_ARCH'])
-
-        cls_logits = tf.keras.layers.Conv1D(
-            1, 1, use_bias=True,
+        h = LayerNormalization(name='cls_ln')(cls_logits_in)
+        # C. Projection with Stabilizers (L1 + Dropout)
+        h = Conv1D(64, 1, 
+                   kernel_initializer='glorot_uniform', 
+                   kernel_regularizer=tf.keras.regularizers.L1(1e-4), # Sparsity
+                   name="cls_pw1")(h)
+        h = Activation('gelu')(h)
+        h = Dropout(0.1)(h) # Robustness
+        
+        cls_logits = Conv1D(1, 1, 
+            use_bias=True,
             kernel_initializer='glorot_uniform',
+            bias_initializer='zeros',
+            kernel_regularizer=tf.keras.regularizers.L1(1e-4), # Sparsity
             activation=None,
             name='cls_logits'
-        )(cls_logits_in)
+        )(h)
         cls_prob = tf.keras.layers.Activation('sigmoid', name='cls_prob')(cls_logits)
 
         
         # ---- projection head for contrastive (L2N ONLY here) ----
         emb = LayerNormalization(name='emb_ln')(feats)
-        emb = Dense(n_filters * 2, activation=None,
+        emb = Dense(n_filters * 2, activation='gelu',
                     kernel_initializer=this_kernel_initializer, name='emb_p1')(emb)
         emb = Dense(n_filters, activation=None,
                     kernel_initializer=this_kernel_initializer, name='emb_p2')(emb)
@@ -1452,7 +1461,6 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         anchor_output = tcn_backbone(all_inputs)
         # positive_output = tcn_backbone(positive_input)
         # negative_output = tcn_backbone(negative_input)
-
 
         if params['mode']=='embedding':
             all_outputs = Lambda(lambda tt: tt[:, -1:, :], name='Last_Output')(anchor_output)
@@ -3733,3 +3741,4 @@ def mixed_hybrid_loss_proxy_v1_finetune(horizon=0, loss_weight=1, params=None, m
         return L_cls
 
     return loss_fn
+
