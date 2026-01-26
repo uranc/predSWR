@@ -580,8 +580,8 @@ elif mode == 'predict':
         # max_weights = event_weights
         # mcc_weights = event_weights
 
-        # event_weights = f"{study_dir}/event.finetune.weights.h5"
-        # max_weights = f"{study_dir}/max.finetune.weights.h5"
+        event_weights = f"{study_dir}/event.finetune.weights.h5"
+        max_weights = f"{study_dir}/max.finetune.weights.h5"
         if os.path.exists(event_weights) and os.path.exists(max_weights):
             # Both files exist, select the most recently modified one
             event_mtime = os.path.getmtime(event_weights)
@@ -1125,18 +1125,18 @@ elif mode == 'fine_tune':
                 'NAME': params['NAME'].replace("StopGrad", ""),
                 
                 # change optimizer
-                'TYPE_REG': params['TYPE_REG'].replace("AdamWA", "AdamMixer"),
-                'NAME': params['NAME'].replace("AdamWA", "AdamMixer"),
+                # 'TYPE_REG': params['TYPE_REG'].replace("AdamWA", "AdamMixer"),
+                # 'NAME': params['NAME'].replace("AdamWA", "AdamMixer"),
                 
                 'USE_StopGrad': False,
                 'USE_LR_SCHEDULE': False,
                 'LEARNING_RATE': 1e-5,        # Very low (Protect the backbone)
                 'BATCH_SIZE': 128,            # Maximize stability
 
-                'LOSS_NEGATIVES': 4,
+                'LOSS_NEGATIVES': 2.5,
                 'LOSS_PROXY_FT':0.01,
                 'LOSS_TV':0.01,
-                'FREEZE_PROXIES': True,
+                'FREEZE_PROXIES': False,
                 'NO_EPOCHS': 500,
             })
             params.update({'mode': 'fine_tune'})
