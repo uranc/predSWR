@@ -580,8 +580,8 @@ elif mode == 'predict':
         # max_weights = event_weights
         # mcc_weights = event_weights
 
-        event_weights = f"{study_dir}/event.finetune.weights.h5"
-        max_weights = f"{study_dir}/max.finetune.weights.h5"
+        # event_weights = f"{study_dir}/event.finetune.weights.h5"
+        # max_weights = f"{study_dir}/max.finetune.weights.h5"
         if os.path.exists(event_weights) and os.path.exists(max_weights):
             # Both files exist, select the most recently modified one
             event_mtime = os.path.getmtime(event_weights)
@@ -5754,7 +5754,6 @@ elif mode == 'tune_viz_multi_v8':
 
     print(f"Visualization complete → {viz_dir}")
 
-
 elif mode == 'tune_viz_multi_v9':
     import os, sys, json, math, warnings, glob, re, itertools
     import numpy as np
@@ -5783,9 +5782,23 @@ elif mode == 'tune_viz_multi_v9':
 
     # ---------- CONFIG ----------
     tag = args.tag[0]
+    
+    # ==========================================
+    # [UPDATE] START TRIAL PARAMETER
+    # Change this value to filter trials
+    # ==========================================
+    START_FROM_TRIAL = 850  
+    # ==========================================
+
     param_dir = f'params_{tag}'
     storage_url = f"sqlite:///studies/{param_dir}/{param_dir}.db"
-    viz_dir = f"studies/{param_dir}/visualizations_v9_final"
+    
+    # [UPDATE] Update output directory based on filter
+    if START_FROM_TRIAL > 0:
+        viz_dir = f"studies/{param_dir}/visualizations_v9_from_{START_FROM_TRIAL}"
+    else:
+        viz_dir = f"studies/{param_dir}/visualizations_v9_final"
+
     os.makedirs(viz_dir, exist_ok=True)
 
     print(f"Loading study '{param_dir}' from {storage_url}")
@@ -5827,8 +5840,14 @@ elif mode == 'tune_viz_multi_v9':
 
     # ---------- COLLECT DATA ----------
     trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
+    
+    # [UPDATE] Filter Trials Logic
+    if START_FROM_TRIAL > 0:
+        print(f"Filtering: Keeping only trials >= {START_FROM_TRIAL}")
+        trials = [t for t in trials if t.number >= START_FROM_TRIAL]
+
     if not trials:
-        print("No completed trials.")
+        print(f"No completed trials found (after filtering >= {START_FROM_TRIAL}).")
         sys.exit(0)
 
     nvals = max((len(t.values) if t.values else 0) for t in trials)
@@ -5878,6 +5897,7 @@ elif mode == 'tune_viz_multi_v9':
     cat_params = [p for p in param_cols if p not in num_params]
 
     # Pareto
+    # Note: study.best_trials returns global bests. We filter to keep only those within our range.
     pareto_trials = study.best_trials
     pareto_nums = [t.number for t in pareto_trials]
     pareto_df = df[df.trial_number.isin(pareto_nums)].copy()
@@ -5896,7 +5916,7 @@ elif mode == 'tune_viz_multi_v9':
     all_trials_view["study_dir"] = all_trials_view["trial_number"].apply(_trial_link)
     all_cols = get_display_cols(all_trials_view)
     with open(os.path.join(viz_dir, "all_trials.html"), "w") as f:
-        f.write("<html><head><link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css'></head><body class='p-4'><h3>All Completed Trials</h3>")
+        f.write(f"<html><head><link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css'></head><body class='p-4'><h3>Trials (From #{START_FROM_TRIAL})</h3>")
         f.write(all_trials_view[all_cols].to_html(escape=False, index=False, classes='table table-sm table-hover table-striped'))
         f.write("</body></html>")
 
@@ -5905,10 +5925,19 @@ elif mode == 'tune_viz_multi_v9':
     # =========================================================
     print("Generating Standard Optuna Plots...")
     
-    # History
+    # [UPDATE] For Optuna plots, we can't easily filter the Study object itself without creating a new one.
+    # We will generate plots using the dataframe lookup where possible, or skip history if it looks weird.
+    
+    # History (Using DataFrame approach to respect filter)
+    # Optuna's history plot usually takes the whole study. We will try to rely on the underlying library
+    # to filter, but standard Optuna viz doesn't support 'start index'.
+    # We will skip the standard Optuna History plot if filtered, or just let it show everything.
+    # DECISION: Let it show everything but save to the new folder. 
+    # If you strictly want filtered history, you'd need to create a new study object in memory.
     try:
         fig_hist_pr = optuna.visualization.plot_optimization_history(
             study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'), target_name="PR-AUC")
+        # Update range if filtering? Hard with standard plot. We leave as is.
         fig_hist_pr.write_html(os.path.join(viz_dir, "history_pr_auc.html"))
     except: pass
     try:
@@ -5948,6 +5977,8 @@ elif mode == 'tune_viz_multi_v9':
     for metric in target_imp_metrics:
         if metric not in df.columns or df[metric].nunique() <= 1: continue
         try:
+            # Note: optuna importance uses the Study object. It might analyze global importance
+            # unless we trick it, but usually global importance is what you want anyway.
             target_func = _make_target(df, metric)
             fig_imp = optuna.visualization.plot_param_importances(
                 study, 
@@ -5993,7 +6024,7 @@ elif mode == 'tune_viz_multi_v9':
         if not pareto_df.empty:
             fig_main.add_trace(go.Scatter(x=pareto_df["val_fp_per_min"], y=pareto_df["val_sample_pr_auc"],
                 mode='markers', marker=dict(symbol='star', size=12, color='black', line=dict(width=1, color='white')),
-                name='Pareto'))
+                name='Pareto (Global)'))
         fig_main.write_html(os.path.join(viz_dir, "main_interactive_scatter.html"))
 
         # ---------------------------------------------------------
@@ -6077,7 +6108,7 @@ elif mode == 'tune_viz_multi_v9':
         if hasattr(axes[-1], "get_xticklabels"):
             plt.setp(axes[-1].get_xticklabels(), rotation=45)
             
-        fig.suptitle(f"Impact of {p}", y=1.005, fontweight='bold')
+        fig.suptitle(f"Impact of {p} (Trials >= {START_FROM_TRIAL})", y=1.005, fontweight='bold')
         plt.tight_layout()
         plt.savefig(os.path.join(box_dir, f"impact_{_clean_filename(p)}.png"))
         plt.close()
@@ -6091,7 +6122,7 @@ elif mode == 'tune_viz_multi_v9':
         
         pp = sns.pairplot(df[pair_cols], diag_kind="kde", corner=True, 
                           plot_kws={'alpha': 0.6, 's': 20, 'edgecolor': 'none'})
-        pp.fig.suptitle("Pairwise Interactions", y=1.02)
+        pp.fig.suptitle(f"Pairwise Interactions (>{START_FROM_TRIAL})", y=1.02)
         pp.savefig(os.path.join(diag_dir, "smart_pairplot.png"), dpi=100)
         plt.close()
     except: pass
@@ -6105,7 +6136,7 @@ elif mode == 'tune_viz_multi_v9':
             sliced_corr = full_corr.loc[num_params, valid_m]
             plt.figure(figsize=(max(8, len(valid_m)*1.2), max(8, len(num_params)*0.4)))
             sns.heatmap(sliced_corr, annot=True, fmt=".2f", cmap="RdBu_r", center=0, cbar_kws={"shrink": 0.5})
-            plt.title("Correlation: Params vs Metrics")
+            plt.title(f"Correlation: Params vs Metrics (Trials >= {START_FROM_TRIAL})")
             plt.tight_layout()
             plt.savefig(os.path.join(diag_dir, "global_correlation_heatmap.png"))
             plt.close()
@@ -6167,12 +6198,12 @@ elif mode == 'tune_viz_multi_v9':
         p_cols = get_display_cols(p_view)
         pareto_html_content = p_view[p_cols].to_html(escape=False, index=False, classes='table table-sm table-striped table-bordered')
         with open(os.path.join(viz_dir, "pareto_trials.html"), "w") as f:
-            f.write(f"<html><head><link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css'></head><body class='p-4'><h3>Pareto Trials</h3>{pareto_html_content}</body></html>")
+            f.write(f"<html><head><link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css'></head><body class='p-4'><h3>Pareto Trials (in range {START_FROM_TRIAL}+)</h3>{pareto_html_content}</body></html>")
 
     # HTML Assembly
     html = []
     html.append(f"""<!doctype html><html><head><meta charset="utf-8">
-    <title>Viz v9 (Final): {tag}</title>
+    <title>Viz v9: {tag} (from #{START_FROM_TRIAL})</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body{{background:#f8f9fa; font-family:'Segoe UI', Roboto, sans-serif;}}
@@ -6185,8 +6216,8 @@ elif mode == 'tune_viz_multi_v9':
     
     <div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3">
         <div>
-            <h1 class="h3 text-dark mb-0">Analysis: {tag}</h1>
-            <small class="text-muted">Trials: {len(df)} | Pareto: {len(pareto_df)}</small>
+            <h1 class="h3 text-dark mb-0">Analysis: {tag} <span class="badge bg-secondary">Trials &ge; {START_FROM_TRIAL}</span></h1>
+            <small class="text-muted">Trials in Filter: {len(df)} | Pareto in Filter: {len(pareto_df)}</small>
         </div>
         <div>
             <a href="all_trials_data.csv" class="btn btn-sm btn-outline-secondary">Download CSV</a>
@@ -6261,7 +6292,7 @@ elif mode == 'tune_viz_multi_v9':
         </div>
 
         <div class="tab-pane fade" id="tab-xray">
-            <h5 class="mt-2">Optimization History</h5>
+            <h5 class="mt-2">Optimization History (Note: May include pre-filter trials)</h5>
             <div class="row">
                 <div class="col-md-6"><div class="card"><div class="card-header">PR-AUC History</div><div class="card-body p-0"><iframe src="history_pr_auc.html" height="400"></iframe></div></div></div>
                 <div class="col-md-6"><div class="card"><div class="card-header">FP/min History</div><div class="card-body p-0"><iframe src="history_fp_per_min.html" height="400"></iframe></div></div></div>
@@ -6343,7 +6374,7 @@ elif mode == 'tune_viz_multi_v9':
             candidates.update(df.sort_values(col, ascending=asc).head(k)["trial_number"].tolist())
             
     candidate_list = sorted(list(candidates))
-    print(f"\n[CANDIDATES] {len(candidate_list)} unique trials found.")
+    print(f"\n[CANDIDATES] {len(candidate_list)} unique trials found (Filtered >= {START_FROM_TRIAL}).")
     
     with open(os.path.join(viz_dir, "candidate_trials.json"), "w") as f:
         json.dump(candidate_list, f)

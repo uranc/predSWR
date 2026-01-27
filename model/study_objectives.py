@@ -2077,7 +2077,7 @@ def objective_proxy_finetune(trial, model_name, tag, logger):
     
     # --- A. Metric Learning (The Core) ---
     params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.0001, 0.5, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 8, 12, step=2)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 10, 16, step=2)
     params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 64.0, step=16.0)
     params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.4, 1.2, step=0.1)
     
@@ -2088,7 +2088,7 @@ def objective_proxy_finetune(trial, model_name, tag, logger):
     
     # Dropout (Categorical)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
-    params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, len(drop_lib)-3)]
+    params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, 1)]
     # params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, len(drop_lib)-1)]
 
     # --- C. Constants / Fixed ---
