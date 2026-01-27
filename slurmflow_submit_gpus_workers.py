@@ -48,9 +48,9 @@ for model_name in range(18):
         print('skip')
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
-        # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
+        subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
-    # #     # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
+        # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
     elif ijob < 14:
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
         subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
@@ -69,13 +69,13 @@ for model_name in range(18):
     # #     subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
     # #     subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
     # #     subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
-    # # # elif ijob < 20:
+    # # elif ijob < 20:
     #     subprocess.call(['sbatch', 'gpu_batch_103_worker_titan.sh', tag])
     # else:
-    # #     subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    # # # #    # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
-    # # # #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
-    # #     # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
+    #     subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
+    #     subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
+    #     subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
+    #     subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
 
 
 # ijob = -1

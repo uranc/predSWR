@@ -5784,8 +5784,8 @@ elif mode == 'tune_viz_multi_v9':
     tag = args.tag[0]
     
     # ==========================================
-    # [UPDATE] START TRIAL PARAMETER
-    # Change this value to filter trials
+    # [CONFIG] START TRIAL PARAMETER
+    # Set this to 850 (or any number) to analyze only recent trials
     # ==========================================
     START_FROM_TRIAL = 850  
     # ==========================================
@@ -5793,7 +5793,7 @@ elif mode == 'tune_viz_multi_v9':
     param_dir = f'params_{tag}'
     storage_url = f"sqlite:///studies/{param_dir}/{param_dir}.db"
     
-    # [UPDATE] Update output directory based on filter
+    # Dynamic Directory Naming based on filter
     if START_FROM_TRIAL > 0:
         viz_dir = f"studies/{param_dir}/visualizations_v9_from_{START_FROM_TRIAL}"
     else:
@@ -5834,14 +5834,13 @@ elif mode == 'tune_viz_multi_v9':
         return re.sub(r'[\\/*?:"<>|]', "_", str(s))
 
     def _make_target(df_source, metric_name):
-        """Factory to capture metric name for lambda binding."""
         lookup = df_source.set_index("trial_number")[metric_name].to_dict()
         return lambda t: lookup.get(t.number, float('nan'))
 
     # ---------- COLLECT DATA ----------
     trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
     
-    # [UPDATE] Filter Trials Logic
+    # [FILTER] Apply the trial number filter immediately
     if START_FROM_TRIAL > 0:
         print(f"Filtering: Keeping only trials >= {START_FROM_TRIAL}")
         trials = [t for t in trials if t.number >= START_FROM_TRIAL]
@@ -5896,11 +5895,23 @@ elif mode == 'tune_viz_multi_v9':
     num_params = [p for p in param_cols if pd.api.types.is_numeric_dtype(df[p]) and df[p].nunique() > 1]
     cat_params = [p for p in param_cols if p not in num_params]
 
-    # Pareto
-    # Note: study.best_trials returns global bests. We filter to keep only those within our range.
-    pareto_trials = study.best_trials
-    pareto_nums = [t.number for t in pareto_trials]
-    pareto_df = df[df.trial_number.isin(pareto_nums)].copy()
+    # --- CALCULATE FILTERED PARETO ---
+    # Since study.best_trials is global, we calculate the Pareto front for this specific filtered dataframe
+    # Assumption: Minimize FP (x), Maximize PR-AUC (y)
+    pareto_df = pd.DataFrame()
+    if not df.empty:
+        # Sort by FP ascending
+        sorted_for_pareto = df.sort_values("val_fp_per_min", ascending=True)
+        pareto_indices = []
+        max_pr_so_far = -1.0
+        
+        for idx, row in sorted_for_pareto.iterrows():
+            if row["val_sample_pr_auc"] > max_pr_so_far:
+                pareto_indices.append(idx)
+                max_pr_so_far = row["val_sample_pr_auc"]
+        
+        pareto_df = df.loc[pareto_indices].copy()
+        
     pareto_df.to_csv(os.path.join(viz_dir, "pareto_trials.csv"), index=False)
 
     # --- HELPER FOR TABLES ---
@@ -5924,20 +5935,9 @@ elif mode == 'tune_viz_multi_v9':
     # 1. OPTUNA STANDARD VISUALIZATIONS
     # =========================================================
     print("Generating Standard Optuna Plots...")
-    
-    # [UPDATE] For Optuna plots, we can't easily filter the Study object itself without creating a new one.
-    # We will generate plots using the dataframe lookup where possible, or skip history if it looks weird.
-    
-    # History (Using DataFrame approach to respect filter)
-    # Optuna's history plot usually takes the whole study. We will try to rely on the underlying library
-    # to filter, but standard Optuna viz doesn't support 'start index'.
-    # We will skip the standard Optuna History plot if filtered, or just let it show everything.
-    # DECISION: Let it show everything but save to the new folder. 
-    # If you strictly want filtered history, you'd need to create a new study object in memory.
     try:
         fig_hist_pr = optuna.visualization.plot_optimization_history(
             study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'), target_name="PR-AUC")
-        # Update range if filtering? Hard with standard plot. We leave as is.
         fig_hist_pr.write_html(os.path.join(viz_dir, "history_pr_auc.html"))
     except: pass
     try:
@@ -5946,30 +5946,18 @@ elif mode == 'tune_viz_multi_v9':
         fig_hist_fp.write_html(os.path.join(viz_dir, "history_fp_per_min.html"))
     except: pass
 
-    # Pareto Front
-    names_by_index = [""] * nvals
-    names_by_index[OBJECTIVE_INDEX['pr_auc']] = "PR-AUC"
-    if 'fp_min' in OBJECTIVE_INDEX: names_by_index[OBJECTIVE_INDEX['fp_min']] = "FP/min"
-    try:
-        fig_pareto = optuna.visualization.plot_pareto_front(study, target_names=names_by_index)
-        fig_pareto.write_html(os.path.join(viz_dir, "pareto_front_optuna.html"))
-    except: pass
-
     # ---------------------------------------------------------
-    # IMPORTANCE FOR ALL METRICS (Including Epoch & F1/MCC)
+    # IMPORTANCE FOR ALL METRICS
     # ---------------------------------------------------------
     imp_dir = os.path.join(viz_dir, "importance_analysis")
     os.makedirs(imp_dir, exist_ok=True)
     
-    # Get parameters safely from the first trial to pass to fANOVA
     if trials:
         tunable_params = list(trials[0].params.keys())
     else:
         tunable_params = []
-        
     valid_plot_params = [p for p in tunable_params if p in df.columns]
 
-    # Explicit list of ALL metrics including sel_epoch
     target_imp_metrics = ["val_sample_pr_auc", "val_fp_per_min", "val_latency_score", 
                           "val_recall_at_0p7", "val_sample_max_mcc", "val_sample_max_f1",
                           "sel_epoch"]
@@ -5977,8 +5965,6 @@ elif mode == 'tune_viz_multi_v9':
     for metric in target_imp_metrics:
         if metric not in df.columns or df[metric].nunique() <= 1: continue
         try:
-            # Note: optuna importance uses the Study object. It might analyze global importance
-            # unless we trick it, but usually global importance is what you want anyway.
             target_func = _make_target(df, metric)
             fig_imp = optuna.visualization.plot_param_importances(
                 study, 
@@ -5997,6 +5983,29 @@ elif mode == 'tune_viz_multi_v9':
     if HAVE_PLOTLY:
         print("Generating Interactive Plots...")
         
+        # --- [NEW] CUSTOM FILTERED PARETO PLOT ---
+        try:
+            fig_pareto_filt = px.scatter(
+                df, x="val_fp_per_min", y="val_sample_pr_auc",
+                color="val_sample_max_mcc" if "val_sample_max_mcc" in df.columns else None,
+                hover_name="trial_number", hover_data=param_cols[:6],
+                title=f"Pareto Front (Trials >= {START_FROM_TRIAL}) | Color: MCC"
+            )
+            
+            # Add the Line for the Frontier
+            if not pareto_df.empty:
+                p_sorted = pareto_df.sort_values("val_fp_per_min")
+                fig_pareto_filt.add_trace(go.Scatter(
+                    x=p_sorted["val_fp_per_min"], y=p_sorted["val_sample_pr_auc"],
+                    mode='lines+markers', name='Pareto Frontier',
+                    marker=dict(symbol='star', size=10, color='red'),
+                    line=dict(color='red', dash='dash')
+                ))
+                
+            fig_pareto_filt.write_html(os.path.join(viz_dir, "pareto_front_filtered.html"))
+        except Exception as e:
+            print(f"Error plotting filtered Pareto: {e}")
+
         # 3D Plot
         z_axis = "val_latency_score" if "val_latency_score" in df.columns else "val_sample_max_mcc"
         c_col = "val_recall_at_0p7" if "val_recall_at_0p7" in df.columns else "val_sample_pr_auc"
@@ -6024,7 +6033,7 @@ elif mode == 'tune_viz_multi_v9':
         if not pareto_df.empty:
             fig_main.add_trace(go.Scatter(x=pareto_df["val_fp_per_min"], y=pareto_df["val_sample_pr_auc"],
                 mode='markers', marker=dict(symbol='star', size=12, color='black', line=dict(width=1, color='white')),
-                name='Pareto (Global)'))
+                name='Pareto (Filtered)'))
         fig_main.write_html(os.path.join(viz_dir, "main_interactive_scatter.html"))
 
         # ---------------------------------------------------------
@@ -6033,9 +6042,7 @@ elif mode == 'tune_viz_multi_v9':
         xray_dir = os.path.join(viz_dir, "xray_plots")
         os.makedirs(xray_dir, exist_ok=True)
         
-        # Filter metrics for X-Ray (metrics that are continuous/interesting)
         xray_metrics = [m for m in known_metrics if m in df.columns]
-        
         all_combinations = list(itertools.combinations(xray_metrics, 2))
         
         for x_ax, y_ax in all_combinations:
@@ -6047,14 +6054,20 @@ elif mode == 'tune_viz_multi_v9':
             for p in param_cols:
                 if df[p].nunique() <= 1: continue
                 try:
-                    # Clean filename
                     fname = f"xray_{_clean_filename(p)}.html"
                     fpath = os.path.join(pair_dir, fname)
                     
-                    # Generate only if not exists or overwrite
+                    # Force Discrete colors for discrete params
+                    is_discrete = (p in ["PROXY_ALPHA", "NUM_SUBCENTERS"] or df[p].dtype == 'object')
+                    
                     fig_x = px.scatter(df, x=x_ax, y=y_ax, color=p,
-                        color_continuous_scale="Spectral_r" if pd.api.types.is_numeric_dtype(df[p]) else None,
+                        color_continuous_scale="Spectral_r" if (pd.api.types.is_numeric_dtype(df[p]) and not is_discrete) else None,
                         title=f"{y_ax} vs {x_ax} | Color: {p}", hover_name="trial_number")
+                    
+                    # If discrete, treat as category
+                    if is_discrete:
+                        fig_x.update_layout(legend=dict(title=p))
+                        
                     fig_x.write_html(fpath)
                     has_plots = True
                 except: pass
@@ -6076,11 +6089,10 @@ elif mode == 'tune_viz_multi_v9':
     if cat_params:
         top_params.extend(cat_params[:2])
 
-    # A. Box Plots (All Params vs All Metrics)
+    # A. Box Plots (Modified to show unique values for specific params)
     box_dir = os.path.join(viz_dir, "box_plots")
     os.makedirs(box_dir, exist_ok=True)
     
-    # Metrics to plot on Y-axis (including sel_epoch)
     metrics_to_plot = [m for m in known_metrics if m in df.columns]
     
     for p in param_cols:
@@ -6089,8 +6101,11 @@ elif mode == 'tune_viz_multi_v9':
         is_numeric = pd.api.types.is_numeric_dtype(df[p])
         plot_df = df.copy()
         
-        # Bin numeric params for boxplots
-        if is_numeric and df[p].nunique() > 6:
+        # [CHANGE] Special handling: Do NOT bin specific discrete params
+        # This forces them to be plotted as unique discrete values on the X-axis
+        should_not_bin = p in ["PROXY_ALPHA", "NUM_SUBCENTERS", "DROP_RATE", "USE_Attention", "USE_StopGrad"]
+        
+        if is_numeric and df[p].nunique() > 6 and not should_not_bin:
             try: plot_df[p] = pd.qcut(plot_df[p], q=4, duplicates='drop')
             except: pass
             
@@ -6115,7 +6130,6 @@ elif mode == 'tune_viz_multi_v9':
 
     # B. Pairplot
     try:
-        # Include sel_epoch in the pairplot
         pair_cols = top_params[:6] + ["val_sample_pr_auc", "val_fp_per_min"]
         if "sel_epoch" in df.columns: pair_cols.append("sel_epoch")
         pair_cols = [c for c in pair_cols if c in df.columns]
@@ -6130,7 +6144,6 @@ elif mode == 'tune_viz_multi_v9':
     # C. Heatmap
     if num_params and known_metrics:
         try:
-            # Include sel_epoch in correlation
             valid_m = [m for m in known_metrics if m in df.columns]
             full_corr = df[num_params + valid_m].corr(method='spearman')
             sliced_corr = full_corr.loc[num_params, valid_m]
@@ -6172,7 +6185,7 @@ elif mode == 'tune_viz_multi_v9':
     # =========================================================
     table_htmls = {}
     
-    # Define Metrics for Top Tables (Add sel_epoch for "Fastest")
+    # Define Metrics for Top Tables
     sort_config = [
         ("val_sample_pr_auc", False), 
         ("val_fp_per_min", True),
@@ -6180,7 +6193,7 @@ elif mode == 'tune_viz_multi_v9':
         ("val_sample_max_mcc", False),
         ("val_recall_at_0p7", False),
         ("val_sample_max_f1", False),
-        ("sel_epoch", True) # Lowest epoch = fastest
+        ("sel_epoch", True)
     ]
 
     for m, ascending in sort_config:
@@ -6240,8 +6253,8 @@ elif mode == 'tune_viz_multi_v9':
             <div class="row">
                 <div class="col-lg-6">
                     <div class="card">
-                        <div class="card-header">Main Trade-off (2D)</div>
-                        <div class="card-body p-0"><iframe src="main_interactive_scatter.html"></iframe></div>
+                        <div class="card-header">Main Trade-off (2D) &mdash; <span class="text-danger">Red Line = Filtered Pareto</span></div>
+                        <div class="card-body p-0"><iframe src="pareto_front_filtered.html"></iframe></div>
                     </div>
                 </div>
                 <div class="col-lg-6">
