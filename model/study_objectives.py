@@ -1814,7 +1814,7 @@ def objective_proxy(trial, model_name, tag, logger):
     par_norm = 'LN'
     par_act = 'GELU'
     par_opt = 'AdamWA'
-    par_reg = 'None' 
+    par_reg = 'LOne'  # L1 Regularization
 
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
     
@@ -2077,12 +2077,12 @@ def objective_proxy_finetune(trial, model_name, tag, logger):
     
     # --- A. Metric Learning (The Core) ---
     params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.0001, 0.5, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 10, 16, step=2)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 2, 14, step=2)
     params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 64.0, step=16.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.4, 1.2, step=0.1)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.5, 1.0, step=0.1)
     
     # --- B. Classification Head & Regularization ---
-    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 21.0, 60.0, step=3.0)
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 21.0, 54.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
     params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 0.0001, 0.05, log=True)
     
@@ -2093,7 +2093,7 @@ def objective_proxy_finetune(trial, model_name, tag, logger):
 
     # --- C. Constants / Fixed ---
     params['BCE_POS_ALPHA'] = 1.0
-    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 5e-5, 5e-3, log=True)
+    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-4, 5e-3, log=True)
     
     params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 1, 1)) == 1
     if params['USE_StopGrad']:
