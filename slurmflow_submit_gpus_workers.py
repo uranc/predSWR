@@ -23,7 +23,7 @@ tag = 'tripletOnlyProxy2500'
 ijob = -1
 # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
 # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
-for model_name in range(6):
+for model_name in range(18):
     # exp_dir = 'experiments/' + model_name
     # pr = exp_dir + '/model/'
     # if not path.exists(pr):

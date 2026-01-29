@@ -1711,7 +1711,7 @@ def objective_proxy(trial, model_name, tag, logger):
     batch_size = 128
     params['BATCH_SIZE'] = batch_size
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 500
+    params['NO_EPOCHS'] = 400
     params['TYPE_MODEL'] = 'Base'
 
     # Architecture Selection
@@ -1814,7 +1814,7 @@ def objective_proxy(trial, model_name, tag, logger):
     par_norm = 'LN'
     par_act = 'GELU'
     par_opt = 'AdamWA'
-    par_reg = 'LOne'  # L1 Regularization
+    par_reg = 'None'  # L1 Regularization
 
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
     
@@ -1899,8 +1899,8 @@ def objective_proxy(trial, model_name, tag, logger):
     params['TOTAL_STEPS'] = ts
     params["RAMP_DELAY"]     = 0.02 * ts
     params["RAMP_STEPS"]     = 0.30 * ts
-    params["NEG_RAMP_DELAY"] = 0.10 * ts 
-    params["NEG_RAMP_STEPS"] = 0.60 * ts
+    params["NEG_RAMP_DELAY"] = 0.20 * ts 
+    params["NEG_RAMP_STEPS"] = 0.45 * ts
     params["TV_DELAY"]       = 0.08 * ts
     params["TV_DUR"]         = 0.35 * ts
     params['CLF_RAMP_DELAY']  = params['RAMP_DELAY']
