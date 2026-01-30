@@ -37,10 +37,10 @@ tag = 'tripletOnlyProxy2500' # FiltL, FiltH, FiltM, SingleCh
 # model_lib = [ 668, 677, 678, 679, 680, 683, 684, 687, 690, 693, 695, 697, 701, 702, 707, 709]
 # model_lib = [720, 724, 730, 732, 738, 739, 749, 753, 755, 760, 762, 778, 783, 784, 788, 791, 792, 799, 803, 808, 815, 820, 822]
 # model_lib = [ 823, 824, 830, 835]
-model_lib = [853, 854, 868, 870, 871, 872, 873, 876, 878, 880, 883, 885, 886, 921, 923, 924, 925, 926, 927, 928, 929, 932, 934, 935, 937, 938, 940, 942, 943, 945, 946, 947, 949, 951, 955, 956, 957, 958, 964, 965, 966, 967, 968, 969, 970, 971, 974, 977, 978, 980, 991, 992, 995, 997, 998, 1001, 1003, 1005, 1007, 1010, 1014, 1029]
+# model_lib = [853, 854, 868, 870, 871, 872, 873, 876, 878, 880, 883, 885, 886, 921, 923, 924, 925, 926, 927, 928, 929, 932, 934, 935, 937, 938, 940, 942, 943, 945, 946, 947, 949, 951, 955, 956, 957, 958, 964, 965, 966, 967, 968, 969, 970, 971, 974, 977, 978, 980, 991, 992, 995, 997, 998, 1001, 1003, 1005, 1007, 1010, 1014, 1029]
 
-model_lib = [1006, 1007, 1010, 1014, 1015, 1022, 1023, 1027, 1029, 1030, 1032, 1033, 1034, 1035, 1037, 1038, 1041, 1042, 1047, 1049, 1050, 1051, 1054, 1062]
-model_lib = []
+# model_lib = [1006, 1007, 1010, 1014, 1015, 1022, 1023, 1027, 1029, 1030, 1032, 1033, 1034, 1035, 1037, 1038, 1041, 1042, 1047, 1049, 1050, 1051, 1054, 1062]
+model_lib = [853, 854, 868, 869, 870, 871, 872, 873, 875, 876, 877, 878, 879, 880, 881, 882, 883, 884, 885, 886, 887, 921, 922, 923, 924, 925, 926, 927, 928, 929, 930, 931, 932, 933, 934, 935, 936, 937, 938, 939, 940, 941, 942, 943, 944, 945, 946, 947, 948, 949, 950, 951, 953, 954, 955, 956, 957, 958, 959, 964, 965, 966, 967, 968, 969, 970, 971, 974, 975, 976, 977, 978, 979, 980, 981, 982, 983, 988, 989, 991, 992, 995, 996, 997, 998, 1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007, 1008, 1009, 1010, 1013, 1014, 1015, 1020, 1022, 1023, 1025, 1026, 1027, 1028, 1029, 1030, 1031, 1032, 1033, 1034, 1035, 1036, 1037, 1038, 1040, 1041, 1042, 1043, 1045, 1046, 1047, 1048, 1049, 1050, 1051, 1054, 1055, 1057, 1062, 1076, 1077, 1078, 1079, 1080, 1081, 1082, 1083, 1084, 1085, 1086, 1087, 1088, 1089, 1090, 1091, 1092, 1093, 1094, 1095, 1096, 1097, 1098, 1099, 1100, 1101, 1102, 1103, 1104, 1105, 1106, 1107, 1108, 1109, 1110, 1111, 1112, 1114, 1115, 1116, 1118, 1120, 1121, 1123, 1128, 1131]
 
 
 
@@ -56,15 +56,23 @@ for im, model in enumerate(model_lib):
         # subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model])
         # subprocess.call(['sbatch', 'cpu_batch_16GBXS.sh', model, str(iv)])
         model_name = 'Tune_'+'{0}_'.format(model)
-        print('submitting job for model: ', model_name, im, iv)
+        # print('submitting job for model: ', model_name, im, iv)
         # subprocess.call(['python', 'pred.py', '--mode', 'embedding', '--model', model_name, '--val', str(iv), '--tag', tag])
-        subprocess.call(['python', 'pred.py', '--mode', 'predict', '--model', model_name, '--val', str(iv), '--tag', tag])
+        pr_path = '/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/'
+        pr = 'preds_val{0}_{1}'.format(iv, model_name)
+        
+
+        files = [(pr in i) for i in os.listdir(pr_path)]
+        if sum(files) == 0:
+            print('submitting job for model: ', model_name, im, iv)
+            subprocess.call(['python', 'pred.py', '--mode', 'predict', '--model', model_name, '--val', str(iv), '--tag', tag])
+        else:
+            print('model already predicted: ', model_name, im, iv)
         # subprocess.call(['python', 'pred.py', '--mode', 'export', '--model', model_name, '--val', str(iv), '--tag', tag])
 
         # subprocess.call(['sbatch', 'cpu_batch_16GBXS.sh', model_name, str(iv)])
     
-        # # pr = '/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/horis_val{0}_{1}_sf1250.npy'.format(iv, model)
-        # # # pdb.set_trace()
+        
         # # if not path.exists(pr):
         # #     print('submitting job for model: ', model, im, iv)
         #     subprocess.call(['sbatch', 'cpu_batch_16GBXS.sh', model, str(iv)])

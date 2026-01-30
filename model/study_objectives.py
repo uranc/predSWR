@@ -2093,7 +2093,7 @@ def objective_proxy_finetune(trial, model_name, tag, logger):
 
     # --- C. Constants / Fixed ---
     params['BCE_POS_ALPHA'] = 1.0
-    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-4, 5e-3, log=True)
+    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 2e-4, 2e-3, log=True)
     
     params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 1, 1)) == 1
     if params['USE_StopGrad']:

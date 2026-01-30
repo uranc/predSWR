@@ -6367,26 +6367,50 @@ elif mode == 'tune_viz_multi_v9':
         f.write("\n".join(html))
     
     # =========================================================
-    # 5. EXPORT CANDIDATE TRIALS
+    # 5. EXPORT CANDIDATE TRIALS (EXPANDED + SAFETY NETS)
     # =========================================================
-    print("Exporting Candidate Trials...")
+    print("Exporting Candidate Trials (Expanded List + Safety Nets)...")
     candidates = set()
     
+    # 1. Pareto Front (Always include efficiency winners)
     if not pareto_df.empty:
         candidates.update(pareto_df["trial_number"].tolist())
     
+    # 2. Expanded Top-K Ranking (Loose List)
+    # Grab the top 100/50 of every metric to catch "good but not best" models.
     cand_config = [
-        ("val_sample_pr_auc", False, 20),
-        ("val_sample_max_mcc", False, 20),
-        ("val_sample_max_f1", False, 20),
-        ("val_recall_at_0p7", False, 15),
-        ("val_latency_score", False, 15),
-        ("val_fp_per_min", True, 15)
+        ("val_sample_pr_auc", False, 100),
+        ("val_sample_max_mcc", False, 100),
+        ("val_sample_max_f1", False, 100),
+        ("val_recall_at_0p7", False, 100),
+        ("val_latency_score", False, 100),
+        ("val_fp_per_min", True, 100)
     ]
+    
     for col, asc, k in cand_config:
         if col in df.columns:
             candidates.update(df.sort_values(col, ascending=asc).head(k)["trial_number"].tolist())
-            
+    
+    # 3. Explicit "Safety Nets" (Threshold Combine)
+    # Guarantees ANY model meeting these "functional specs" is kept.
+    safety_nets = [
+        # Metric, Threshold, Mode ('gt' = greater than, 'lt' = less than)
+        ("val_sample_pr_auc",  0.30, "gt"),  # Keep robust ~0.4 models
+        ("val_sample_max_mcc", 0.30, "gt"),  
+        ("val_sample_max_f1",  0.30, "gt"),  
+        ("val_recall_at_0p7",  0.10, "gt"),  # Ensure model isn't "dead"
+        ("val_latency_score",  0.30, "gt"),   # [ADDED] Keep models with decent speed score
+        ("val_fp_per_min",   1000.0, "lt")   # Filter out garbage noise
+    ]
+
+    for col, thresh, mode in safety_nets:
+        if col in df.columns:
+            if mode == "gt":
+                matches = df[df[col] >= thresh]["trial_number"].tolist()
+            elif mode == "lt":
+                matches = df[df[col] <= thresh]["trial_number"].tolist()
+            candidates.update(matches)
+
     candidate_list = sorted(list(candidates))
     print(f"\n[CANDIDATES] {len(candidate_list)} unique trials found (Filtered >= {START_FROM_TRIAL}).")
     
