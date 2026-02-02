@@ -1764,7 +1764,7 @@ def objective_proxy(trial, model_name, tag, logger):
     params['BCE_POS_ALPHA'] = 1.0
     params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 5e-5, 2e-3, log=True)
     
-    params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 1, 1)) == 1
+    params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 0, 1)) == 1
     if params['USE_StopGrad']:
         print('Using Stop Gradient for Class. Branch')
         params['TYPE_ARCH'] += 'StopGrad'
