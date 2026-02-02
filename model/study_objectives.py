@@ -1711,7 +1711,7 @@ def objective_proxy(trial, model_name, tag, logger):
     batch_size = 128
     params['BATCH_SIZE'] = batch_size
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 400
+    params['NO_EPOCHS'] = 500
     params['TYPE_MODEL'] = 'Base'
 
     # Architecture Selection
@@ -1745,24 +1745,24 @@ def objective_proxy(trial, model_name, tag, logger):
     # ============================================================
     
     # --- A. Metric Learning (The Core) ---
-    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.01, 4.0, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 2, 16, step=2)
-    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 64.0, step=8.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.001, 1.2, step=0.1)
+    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.01, 0.10, log=True)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 2, 10, step=2)
+    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 64.0, step=16.0)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.2, 1.2, step=0.1)
     
     # --- B. Classification Head & Regularization ---
-    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 15.0, 42.0, step=3.0)
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 33.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
-    params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 0.001, 0.1, log=True)
+    params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 0.001, 0.03, log=True)
     
     # Dropout (Categorical)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
-    params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, len(drop_lib)-2)]
+    params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, 1)]
     # params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, len(drop_lib)-1)]
 
     # --- C. Constants / Fixed ---
     params['BCE_POS_ALPHA'] = 1.0
-    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 5e-5, 5e-3, log=True)
+    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 5e-5, 2e-3, log=True)
     
     params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 1, 1)) == 1
     if params['USE_StopGrad']:
@@ -2076,15 +2076,15 @@ def objective_proxy_finetune(trial, model_name, tag, logger):
     # ============================================================
     
     # --- A. Metric Learning (The Core) ---
-    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.0001, 0.5, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 2, 14, step=2)
+    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.01, 0.1, step=0.05)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 6, 14, step=2)
     params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 64.0, step=16.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.5, 1.0, step=0.1)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.7, 1.2, step=0.1)
     
     # --- B. Classification Head & Regularization ---
-    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 21.0, 54.0, step=3.0)
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES',12.0, 42.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
-    params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 0.0001, 0.05, log=True)
+    params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 0.001, 0.08, log=True)
     
     # Dropout (Categorical)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
@@ -2093,7 +2093,7 @@ def objective_proxy_finetune(trial, model_name, tag, logger):
 
     # --- C. Constants / Fixed ---
     params['BCE_POS_ALPHA'] = 1.0
-    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 2e-4, 2e-3, log=True)
+    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-4, 2e-3, log=True)
     
     params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 1, 1)) == 1
     if params['USE_StopGrad']:
