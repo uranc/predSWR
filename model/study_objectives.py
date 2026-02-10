@@ -1745,15 +1745,15 @@ def objective_proxy(trial, model_name, tag, logger):
     # ============================================================
     
     # --- A. Metric Learning (The Core) ---
-    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.01, 0.10, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 2, 10, step=2)
+    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.20, log=True)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 4, 10, step=2)
     params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 64.0, step=16.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.2, 1.2, step=0.1)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.5, 1.2, step=0.1)
     
     # --- B. Classification Head & Regularization ---
     params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 33.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
-    params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 0.001, 0.03, log=True)
+    params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 1e-5, 0.005, log=True)
     
     # Dropout (Categorical)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
@@ -1762,14 +1762,14 @@ def objective_proxy(trial, model_name, tag, logger):
 
     # --- C. Constants / Fixed ---
     params['BCE_POS_ALPHA'] = 1.0
-    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 5e-5, 2e-3, log=True)
+    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-4, 4e-4, log=True)
     
-    params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 0, 1)) == 1
+    params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 0, 0)) == 1
     if params['USE_StopGrad']:
         print('Using Stop Gradient for Class. Branch')
         params['TYPE_ARCH'] += 'StopGrad'
 
-    params['USE_Attention'] = int(trial.suggest_int('USE_Attention', 0, 1)) == 1
+    params['USE_Attention'] = int(trial.suggest_int('USE_Attention', 0, 0)) == 1
     if params['USE_Attention']:
         print('Using Attention')
         params['TYPE_ARCH'] += 'Att'

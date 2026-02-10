@@ -5754,7 +5754,9 @@ elif mode == 'tune_viz_multi_v8':
         json.dump(stats, f, indent=2)
 
     print(f"Visualization complete → {viz_dir}")
-
+    
+    
+    
 elif mode == 'tune_viz_multi_v9':
     import os, sys, json, math, warnings, glob, re, itertools
     import numpy as np
@@ -5762,6 +5764,7 @@ elif mode == 'tune_viz_multi_v9':
     import matplotlib.pyplot as plt
     import seaborn as sns
     import optuna
+    from optuna.importance import get_param_importances
 
     # Suppress warnings
     warnings.filterwarnings("ignore", category=UserWarning, module="optuna")
@@ -5786,15 +5789,14 @@ elif mode == 'tune_viz_multi_v9':
     
     # ==========================================
     # [CONFIG] START TRIAL PARAMETER
-    # Set this to 850 (or any number) to analyze only recent trials
     # ==========================================
-    START_FROM_TRIAL = 850  
+    START_FROM_TRIAL = 880
     # ==========================================
 
     param_dir = f'params_{tag}'
     storage_url = f"sqlite:///studies/{param_dir}/{param_dir}.db"
     
-    # Dynamic Directory Naming based on filter
+    # Dynamic Directory Naming
     if START_FROM_TRIAL > 0:
         viz_dir = f"studies/{param_dir}/visualizations_v9_from_{START_FROM_TRIAL}"
     else:
@@ -5835,13 +5837,18 @@ elif mode == 'tune_viz_multi_v9':
         return re.sub(r'[\\/*?:"<>|]', "_", str(s))
 
     def _make_target(df_source, metric_name):
+        # Create a lookup dictionary for fast access
         lookup = df_source.set_index("trial_number")[metric_name].to_dict()
-        return lambda t: lookup.get(t.number, float('nan'))
+        # Return a callable that Optuna can use
+        def target(t):
+            return lookup.get(t.number, float('nan'))
+        return target
 
     # ---------- COLLECT DATA ----------
+    print("Collecting trial data...")
     trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
     
-    # [FILTER] Apply the trial number filter immediately
+    # [FILTER] Apply filter
     if START_FROM_TRIAL > 0:
         print(f"Filtering: Keeping only trials >= {START_FROM_TRIAL}")
         trials = [t for t in trials if t.number >= START_FROM_TRIAL]
@@ -5880,6 +5887,8 @@ elif mode == 'tune_viz_multi_v9':
         except Exception: continue
 
     df = pd.DataFrame(rows)
+    # [RESTORED] Save all_trials_data.csv
+    print(f"Saving {len(df)} rows to all_trials_data.csv...")
     df.to_csv(os.path.join(viz_dir, "all_trials_data.csv"), index=False)
 
     # --- CLASSIFY COLUMNS ---
@@ -5893,204 +5902,134 @@ elif mode == 'tune_viz_multi_v9':
     exclude_cols = metric_cols + ["trial_number"]
     param_cols = sorted([c for c in df.columns if c not in exclude_cols])
     
+    # Separate numeric and categorical for plotting
     num_params = [p for p in param_cols if pd.api.types.is_numeric_dtype(df[p]) and df[p].nunique() > 1]
-    cat_params = [p for p in param_cols if p not in num_params]
-
-    # --- CALCULATE FILTERED PARETO ---
-    # Since study.best_trials is global, we calculate the Pareto front for this specific filtered dataframe
-    # Assumption: Minimize FP (x), Maximize PR-AUC (y)
+    
+    # ---------- PARETO CALCULATION ----------
     pareto_df = pd.DataFrame()
     if not df.empty:
-        # Sort by FP ascending
         sorted_for_pareto = df.sort_values("val_fp_per_min", ascending=True)
         pareto_indices = []
         max_pr_so_far = -1.0
-        
         for idx, row in sorted_for_pareto.iterrows():
             if row["val_sample_pr_auc"] > max_pr_so_far:
                 pareto_indices.append(idx)
                 max_pr_so_far = row["val_sample_pr_auc"]
-        
         pareto_df = df.loc[pareto_indices].copy()
-        
+    
+    # [RESTORED] Save pareto_trials.csv
+    print(f"Saving {len(pareto_df)} rows to pareto_trials.csv...")
     pareto_df.to_csv(os.path.join(viz_dir, "pareto_trials.csv"), index=False)
 
-    # --- HELPER FOR TABLES ---
-    def get_display_cols(target_df):
-        cols = ["trial_number", "study_dir"]
-        if "sel_epoch" in target_df.columns: cols.append("sel_epoch")
-        cols += [x for x in known_metrics if x in target_df.columns and x not in cols]
-        cols += param_cols
-        return [c for c in cols if c in target_df.columns]
-
-    # Generate All Trials HTML
-    all_trials_view = df.copy()
-    all_trials_view["study_dir"] = all_trials_view["trial_number"].apply(_trial_link)
-    all_cols = get_display_cols(all_trials_view)
-    with open(os.path.join(viz_dir, "all_trials.html"), "w") as f:
-        f.write(f"<html><head><link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css'></head><body class='p-4'><h3>Trials (From #{START_FROM_TRIAL})</h3>")
-        f.write(all_trials_view[all_cols].to_html(escape=False, index=False, classes='table table-sm table-hover table-striped'))
-        f.write("</body></html>")
-
     # =========================================================
-    # 1. OPTUNA STANDARD VISUALIZATIONS
+    # 1. PARAMETER IMPORTANCE (FIXED - STATIC PNGs)
     # =========================================================
-    print("Generating Standard Optuna Plots...")
-    try:
-        fig_hist_pr = optuna.visualization.plot_optimization_history(
-            study, target=lambda t: t.values[OBJECTIVE_INDEX['pr_auc']] if t.values else float('nan'), target_name="PR-AUC")
-        fig_hist_pr.write_html(os.path.join(viz_dir, "history_pr_auc.html"))
-    except: pass
-    try:
-        fig_hist_fp = optuna.visualization.plot_optimization_history(
-            study, target=lambda t: _ua(t, ["sel_low_conf_fp", "sel_fp_per_min"]), target_name="FP/min")
-        fig_hist_fp.write_html(os.path.join(viz_dir, "history_fp_per_min.html"))
-    except: pass
-
-    # ---------------------------------------------------------
-    # IMPORTANCE FOR ALL METRICS
-    # ---------------------------------------------------------
+    print("Generating Parameter Importance (Static PNGs)...")
     imp_dir = os.path.join(viz_dir, "importance_analysis")
     os.makedirs(imp_dir, exist_ok=True)
-    
-    if trials:
-        tunable_params = list(trials[0].params.keys())
-    else:
-        tunable_params = []
-    valid_plot_params = [p for p in tunable_params if p in df.columns]
 
+    # Identify parameters that actually vary in this subset
+    tunable_params = [p for p in param_cols if df[p].nunique() > 1]
+    
     target_imp_metrics = ["val_sample_pr_auc", "val_fp_per_min", "val_latency_score", 
-                          "val_recall_at_0p7", "val_sample_max_mcc", "val_sample_max_f1",
-                          "sel_epoch"]
+                          "val_recall_at_0p7", "val_sample_max_mcc", "val_sample_max_f1"]
     
-    for metric in target_imp_metrics:
-        if metric not in df.columns or df[metric].nunique() <= 1: continue
-        try:
-            target_func = _make_target(df, metric)
-            fig_imp = optuna.visualization.plot_param_importances(
-                study, 
-                target=target_func, 
-                target_name=metric,
-                params=valid_plot_params
-            )
-            fig_imp.write_html(os.path.join(imp_dir, f"importance_{metric}.html"))
-        except: pass
-
-    # =========================================================
-    # 2. INTERACTIVE PLOTS
-    # =========================================================
-    xray_html_blocks = []
-    
-    if HAVE_PLOTLY:
-        print("Generating Interactive Plots...")
-        
-        # --- [NEW] CUSTOM FILTERED PARETO PLOT ---
-        try:
-            fig_pareto_filt = px.scatter(
-                df, x="val_fp_per_min", y="val_sample_pr_auc",
-                color="val_sample_max_mcc" if "val_sample_max_mcc" in df.columns else None,
-                hover_name="trial_number", hover_data=param_cols[:6],
-                title=f"Pareto Front (Trials >= {START_FROM_TRIAL}) | Color: MCC"
-            )
+    if len(df) < 3:
+        print("WARNING: Not enough trials for importance analysis.")
+    else:
+        for metric in target_imp_metrics:
+            if metric not in df.columns or df[metric].nunique() <= 1: continue
             
-            # Add the Line for the Frontier
-            if not pareto_df.empty:
-                p_sorted = pareto_df.sort_values("val_fp_per_min")
-                fig_pareto_filt.add_trace(go.Scatter(
-                    x=p_sorted["val_fp_per_min"], y=p_sorted["val_sample_pr_auc"],
-                    mode='lines+markers', name='Pareto Frontier',
-                    marker=dict(symbol='star', size=10, color='red'),
-                    line=dict(color='red', dash='dash')
-                ))
-                
-            fig_pareto_filt.write_html(os.path.join(viz_dir, "pareto_front_filtered.html"))
-        except Exception as e:
-            print(f"Error plotting filtered Pareto: {e}")
-
-        # 3D Plot
-        z_axis = "val_latency_score" if "val_latency_score" in df.columns else "val_sample_max_mcc"
-        c_col = "val_recall_at_0p7" if "val_recall_at_0p7" in df.columns else "val_sample_pr_auc"
-        if z_axis in df.columns:
             try:
-                fig_3d = px.scatter_3d(
-                    df, x="val_fp_per_min", y="val_sample_pr_auc", z=z_axis,
-                    color=c_col, color_continuous_scale="Plasma",
-                    hover_name="trial_number", hover_data=param_cols[:6],
-                    title=f"3D: FP vs PR vs {z_axis} (Color={c_col})"
-                )
-                fig_3d.update_layout(scene=dict(xaxis_title='FP/min', yaxis_title='PR-AUC', zaxis_title=z_axis))
-                fig_3d.write_html(os.path.join(viz_dir, "3d_tradeoff.html"))
-            except: pass
+                target_func = _make_target(df, metric)
+                
+                # --- FIX: Removed params=tunable_params to let Optuna decide valid params ---
+                importance_dict = get_param_importances(study, target=target_func)
+                
+                if not importance_dict:
+                    continue
 
-        # Main 2D Scatter
-        fig_main = px.scatter(
-            df, x="val_fp_per_min", y="val_sample_pr_auc",
-            color="val_sample_max_mcc" if "val_sample_max_mcc" in df.columns else None,
-            size="val_latency_score" if "val_latency_score" in df.columns else None,
-            color_continuous_scale="Turbo",
-            hover_name="trial_number", hover_data=param_cols[:6] + known_metrics,
-            title="<b>Main Trade-off</b>: FP vs PR (Color=MCC, Size=Latency)"
-        )
-        if not pareto_df.empty:
-            fig_main.add_trace(go.Scatter(x=pareto_df["val_fp_per_min"], y=pareto_df["val_sample_pr_auc"],
-                mode='markers', marker=dict(symbol='star', size=12, color='black', line=dict(width=1, color='white')),
-                name='Pareto (Filtered)'))
-        fig_main.write_html(os.path.join(viz_dir, "main_interactive_scatter.html"))
+                sorted_items = sorted(importance_dict.items(), key=lambda x: x[1], reverse=True)
+                labels = [k for k, v in sorted_items]
+                values = [v for k, v in sorted_items]
 
-        # ---------------------------------------------------------
-        # ALL PAIRWISE X-RAYS (Interactive)
-        # ---------------------------------------------------------
-        xray_dir = os.path.join(viz_dir, "xray_plots")
-        os.makedirs(xray_dir, exist_ok=True)
-        
-        xray_metrics = [m for m in known_metrics if m in df.columns]
-        all_combinations = list(itertools.combinations(xray_metrics, 2))
+                plt.figure(figsize=(10, 6))
+                y_pos = np.arange(len(labels))
+                plt.barh(y_pos, values, align='center', color='steelblue')
+                plt.yticks(y_pos, labels)
+                plt.gca().invert_yaxis()
+                plt.xlabel('Importance')
+                plt.title(f'Parameter Importance for {metric}')
+                plt.grid(axis='x', linestyle='--', alpha=0.7)
+                plt.tight_layout()
+                
+                plt.savefig(os.path.join(imp_dir, f"importance_{metric}.png"))
+                plt.close()
+                print(f" - Saved importance_{metric}.png")
+                
+            except Exception as e:
+                print(f" ! Failed importance for {metric}: {e}")
+                with open(os.path.join(imp_dir, "errors.txt"), "a") as errf:
+                    errf.write(f"Failed {metric}: {str(e)}\n")
+
+    # =========================================================
+    # 2. X-RAY PLOTS
+    # =========================================================
+    print("Generating X-Ray Plots...")
+    xray_dir = os.path.join(viz_dir, "xray_plots")
+    os.makedirs(xray_dir, exist_ok=True)
+    
+    xray_metrics = [m for m in known_metrics if m in df.columns]
+    all_combinations = list(itertools.combinations(xray_metrics, 2))
+    
+    n_params = len(tunable_params)
+    
+    if n_params > 0:
+        n_cols = 4
+        n_rows = math.ceil(n_params / n_cols)
         
         for x_ax, y_ax in all_combinations:
-            label = f"{y_ax}_vs_{x_ax}"
-            pair_dir = os.path.join(xray_dir, label)
-            os.makedirs(pair_dir, exist_ok=True)
+            fig, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 3.5*n_rows), constrained_layout=True)
+            if n_params == 1: axes = np.array([axes])
             
-            has_plots = False
-            for p in param_cols:
-                if df[p].nunique() <= 1: continue
+            flat_axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
+            
+            plotted_count = 0
+            for i, p in enumerate(tunable_params):
+                ax = flat_axes[i]
+                is_discrete = (p in ["PROXY_ALPHA", "NUM_SUBCENTERS", "DROP_RATE", "USE_Attention", "USE_StopGrad"] or df[p].dtype == 'object')
+                
                 try:
-                    fname = f"xray_{_clean_filename(p)}.html"
-                    fpath = os.path.join(pair_dir, fname)
+                    sns.scatterplot(
+                        data=df, x=x_ax, y=y_ax, hue=p, 
+                        palette="tab10" if is_discrete else "viridis",
+                        alpha=0.8, s=30, ax=ax
+                    )
                     
-                    # Force Discrete colors for discrete params
-                    is_discrete = (p in ["PROXY_ALPHA", "NUM_SUBCENTERS"] or df[p].dtype == 'object')
+                    if not pareto_df.empty and x_ax == "val_fp_per_min" and y_ax == "val_sample_pr_auc":
+                        sns.scatterplot(data=pareto_df, x=x_ax, y=y_ax, color='red', marker='*', s=100, ax=ax, label='Pareto')
                     
-                    fig_x = px.scatter(df, x=x_ax, y=y_ax, color=p,
-                        color_continuous_scale="Spectral_r" if (pd.api.types.is_numeric_dtype(df[p]) and not is_discrete) else None,
-                        title=f"{y_ax} vs {x_ax} | Color: {p}", hover_name="trial_number")
+                    ax.set_title(f"Color: {p}", fontsize=10, fontweight='bold')
+                    ax.grid(True, alpha=0.3)
                     
-                    # If discrete, treat as category
-                    if is_discrete:
-                        fig_x.update_layout(legend=dict(title=p))
+                    if ax.get_legend():
+                        ax.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0., fontsize='x-small')
                         
-                    fig_x.write_html(fpath)
-                    has_plots = True
-                except: pass
-            
-            if has_plots:
-                xray_html_blocks.append((label, pair_dir))
+                    plotted_count += 1
+                except:
+                    ax.text(0.5, 0.5, "N/A", ha='center', va='center')
+
+            for j in range(plotted_count, len(flat_axes)):
+                flat_axes[j].axis('off')
+
+            fig.suptitle(f"X-Ray: {y_ax} vs {x_ax}", fontsize=16, y=1.02)
+            plt.savefig(os.path.join(xray_dir, f"xray_{_clean_filename(y_ax)}_vs_{_clean_filename(x_ax)}.png"), bbox_inches='tight')
+            plt.close()
 
     # =========================================================
-    # 3. STATIC DIAGNOSTICS
+    # 3. BOX PLOTS
     # =========================================================
-    print("Generating Static Diagnostics...")
-    diag_dir = os.path.join(viz_dir, "diagnostic_plots")
-    os.makedirs(diag_dir, exist_ok=True)
-
-    top_params = []
-    if num_params:
-        corr_pr = df[num_params].corrwith(df["val_sample_pr_auc"], method="spearman").abs()
-        top_params = corr_pr.sort_values(ascending=False).head(5).index.tolist()
-    if cat_params:
-        top_params.extend(cat_params[:2])
-
-    # A. Box Plots (Modified to show unique values for specific params)
+    print("Generating Box Plots...")
     box_dir = os.path.join(viz_dir, "box_plots")
     os.makedirs(box_dir, exist_ok=True)
     
@@ -6101,9 +6040,6 @@ elif mode == 'tune_viz_multi_v9':
         
         is_numeric = pd.api.types.is_numeric_dtype(df[p])
         plot_df = df.copy()
-        
-        # [CHANGE] Special handling: Do NOT bin specific discrete params
-        # This forces them to be plotted as unique discrete values on the X-axis
         should_not_bin = p in ["PROXY_ALPHA", "NUM_SUBCENTERS", "DROP_RATE", "USE_Attention", "USE_StopGrad"]
         
         if is_numeric and df[p].nunique() > 6 and not should_not_bin:
@@ -6124,25 +6060,17 @@ elif mode == 'tune_viz_multi_v9':
         if hasattr(axes[-1], "get_xticklabels"):
             plt.setp(axes[-1].get_xticklabels(), rotation=45)
             
-        fig.suptitle(f"Impact of {p} (Trials >= {START_FROM_TRIAL})", y=1.005, fontweight='bold')
+        fig.suptitle(f"Impact of {p}", y=1.005, fontweight='bold')
         plt.tight_layout()
         plt.savefig(os.path.join(box_dir, f"impact_{_clean_filename(p)}.png"))
         plt.close()
 
-    # B. Pairplot
-    try:
-        pair_cols = top_params[:6] + ["val_sample_pr_auc", "val_fp_per_min"]
-        if "sel_epoch" in df.columns: pair_cols.append("sel_epoch")
-        pair_cols = [c for c in pair_cols if c in df.columns]
-        
-        pp = sns.pairplot(df[pair_cols], diag_kind="kde", corner=True, 
-                          plot_kws={'alpha': 0.6, 's': 20, 'edgecolor': 'none'})
-        pp.fig.suptitle(f"Pairwise Interactions (>{START_FROM_TRIAL})", y=1.02)
-        pp.savefig(os.path.join(diag_dir, "smart_pairplot.png"), dpi=100)
-        plt.close()
-    except: pass
-
-    # C. Heatmap
+    # =========================================================
+    # 4. DIAGNOSTICS & HTML
+    # =========================================================
+    diag_dir = os.path.join(viz_dir, "diagnostic_plots")
+    os.makedirs(diag_dir, exist_ok=True)
+    
     if num_params and known_metrics:
         try:
             valid_m = [m for m in known_metrics if m in df.columns]
@@ -6150,43 +6078,38 @@ elif mode == 'tune_viz_multi_v9':
             sliced_corr = full_corr.loc[num_params, valid_m]
             plt.figure(figsize=(max(8, len(valid_m)*1.2), max(8, len(num_params)*0.4)))
             sns.heatmap(sliced_corr, annot=True, fmt=".2f", cmap="RdBu_r", center=0, cbar_kws={"shrink": 0.5})
-            plt.title(f"Correlation: Params vs Metrics (Trials >= {START_FROM_TRIAL})")
+            plt.title("Correlation Heatmap")
             plt.tight_layout()
             plt.savefig(os.path.join(diag_dir, "global_correlation_heatmap.png"))
             plt.close()
         except: pass
 
-    # D. Grid
-    if top_params and known_metrics:
-        grid_m = [m for m in known_metrics if m in df.columns][:6]
-        n_rows, n_cols = len(grid_m), len(top_params)
-        fig, axes = plt.subplots(n_rows, n_cols, figsize=(3.5*n_cols, 2.5*n_rows), constrained_layout=True)
-        if n_rows == 1 and n_cols == 1: axes = np.array([[axes]])
-        elif n_rows == 1: axes = np.array([axes])
-        elif n_cols == 1: axes = np.array([[ax] for ax in axes])
-        for r, metric in enumerate(grid_m):
-            for c, param in enumerate(top_params):
-                ax = axes[r][c]
-                if pd.api.types.is_numeric_dtype(df[param]):
-                    sns.scatterplot(data=df, x=param, y=metric, ax=ax, alpha=0.5, s=15, color='#2b7bba')
-                    try: sns.regplot(data=df, x=param, y=metric, ax=ax, scatter=False, color='red', line_kws={'alpha':0.5})
-                    except: pass
-                else:
-                    sns.boxplot(data=df, x=param, y=metric, ax=ax, palette="light:b")
-                if r == 0: ax.set_title(param, fontsize=9)
-                if c == 0: ax.set_ylabel(metric, fontsize=8)
-                else: ax.set_ylabel("")
-                ax.set_xlabel("")
-                ax.tick_params(labelsize=8)
-        plt.savefig(os.path.join(diag_dir, "top_params_impact_grid.png"))
-        plt.close()
+    if HAVE_PLOTLY:
+        try:
+            fig_pareto_filt = px.scatter(
+                df, x="val_fp_per_min", y="val_sample_pr_auc",
+                color="val_sample_max_mcc" if "val_sample_max_mcc" in df.columns else None,
+                hover_name="trial_number", hover_data=param_cols[:6],
+                title=f"Pareto Front (Trials >= {START_FROM_TRIAL})"
+            )
+            if not pareto_df.empty:
+                p_sorted = pareto_df.sort_values("val_fp_per_min")
+                fig_pareto_filt.add_trace(go.Scatter(
+                    x=p_sorted["val_fp_per_min"], y=p_sorted["val_sample_pr_auc"],
+                    mode='lines+markers', name='Pareto',
+                    marker=dict(symbol='star', size=10, color='red')
+                ))
+            fig_pareto_filt.write_html(os.path.join(viz_dir, "pareto_front_filtered.html"))
+        except: pass
 
-    # =========================================================
-    # 4. TABLES & REPORT
-    # =========================================================
+    def get_display_cols(target_df):
+        cols = ["trial_number", "study_dir"]
+        if "sel_epoch" in target_df.columns: cols.append("sel_epoch")
+        cols += [x for x in known_metrics if x in target_df.columns and x not in cols]
+        cols += param_cols
+        return [c for c in cols if c in target_df.columns]
+
     table_htmls = {}
-    
-    # Define Metrics for Top Tables
     sort_config = [
         ("val_sample_pr_auc", False), 
         ("val_fp_per_min", True),
@@ -6196,7 +6119,6 @@ elif mode == 'tune_viz_multi_v9':
         ("val_sample_max_f1", False),
         ("sel_epoch", True)
     ]
-
     for m, ascending in sort_config:
         if m not in df.columns: continue
         top_df = df.sort_values(m, ascending=ascending).head(20).copy()
@@ -6204,156 +6126,82 @@ elif mode == 'tune_viz_multi_v9':
         d_cols = get_display_cols(top_df)
         table_htmls[m] = top_df[d_cols].to_html(escape=False, index=False, classes='table table-sm table-hover')
 
-    # Standalone Pareto HTML
     pareto_html_content = ""
     if not pareto_df.empty:
         p_view = pareto_df.copy()
         p_view["study_dir"] = p_view["trial_number"].apply(_trial_link)
         p_cols = get_display_cols(p_view)
         pareto_html_content = p_view[p_cols].to_html(escape=False, index=False, classes='table table-sm table-striped table-bordered')
-        with open(os.path.join(viz_dir, "pareto_trials.html"), "w") as f:
-            f.write(f"<html><head><link rel='stylesheet' href='https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css'></head><body class='p-4'><h3>Pareto Trials (in range {START_FROM_TRIAL}+)</h3>{pareto_html_content}</body></html>")
 
-    # HTML Assembly
     html = []
     html.append(f"""<!doctype html><html><head><meta charset="utf-8">
-    <title>Viz v9: {tag} (from #{START_FROM_TRIAL})</title>
+    <title>Viz v10: {tag}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body{{background:#f8f9fa; font-family:'Segoe UI', Roboto, sans-serif;}}
         .card{{margin-bottom:20px; border:none; box-shadow:0 2px 5px rgba(0,0,0,0.05);}}
         .card-header{{background-color:#fff; border-bottom:1px solid #eee; font-weight:600; color:#495057;}}
-        .nav-tabs .nav-link.active {{font-weight:bold; border-bottom:3px solid #0d6efd; color:#0d6efd;}}
-        iframe{{width:100%; height:500px; border:none;}}
         img{{max-width:100%; height:auto;}}
     </style></head><body class="container-fluid py-4" style="max-width:1600px;">
     
     <div class="d-flex justify-content-between align-items-center mb-4 border-bottom pb-3">
         <div>
             <h1 class="h3 text-dark mb-0">Analysis: {tag} <span class="badge bg-secondary">Trials &ge; {START_FROM_TRIAL}</span></h1>
-            <small class="text-muted">Trials in Filter: {len(df)} | Pareto in Filter: {len(pareto_df)}</small>
+            <small class="text-muted">Trials: {len(df)} | Pareto: {len(pareto_df)}</small>
         </div>
         <div>
             <a href="all_trials_data.csv" class="btn btn-sm btn-outline-secondary">Download CSV</a>
-            <a href="all_trials.html" class="btn btn-sm btn-outline-primary">View All Trials HTML</a>
             <a href="pareto_trials.csv" class="btn btn-sm btn-success">Pareto CSV</a>
         </div>
     </div>
 
     <ul class="nav nav-tabs mb-4" id="myTab" role="tablist">
-        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-interactive">Interactive</button></li>
-        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-diagnostics">Diagnostics</button></li>
-        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-xray">X-Rays (All Pairs)</button></li>
-        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-boxplots">Box Plots (Full)</button></li>
-        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tables">Top Models</button></li>
+        <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-pareto">Pareto</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-xray">X-Rays</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-imp">Importance</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-boxplots">Box Plots</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-tables">Tables</button></li>
     </ul>
 
     <div class="tab-content" id="myTabContent">
+        <div class="tab-pane fade show active" id="tab-pareto">
+            <div class="row">
+                <div class="col-lg-6"><div class="card"><div class="card-header">Main Trade-off (2D)</div><div class="card-body p-0"><iframe src="pareto_front_filtered.html" height="500"></iframe></div></div></div>
+                 <div class="col-lg-6"><div class="card"><div class="card-header">Global Correlation</div><div class="card-body text-center"><img src="diagnostic_plots/global_correlation_heatmap.png" style="max-height:500px"></div></div></div>
+            </div>
+        </div>
         
-        <div class="tab-pane fade show active" id="tab-interactive">
-            <div class="row">
-                <div class="col-lg-6">
-                    <div class="card">
-                        <div class="card-header">Main Trade-off (2D) &mdash; <span class="text-danger">Red Line = Filtered Pareto</span></div>
-                        <div class="card-body p-0"><iframe src="pareto_front_filtered.html"></iframe></div>
-                    </div>
-                </div>
-                <div class="col-lg-6">
-                    <div class="card">
-                        <div class="card-header">3D Exploration</div>
-                        <div class="card-body p-0"><iframe src="3d_tradeoff.html"></iframe></div>
-                    </div>
-                </div>
-            </div>
-             <div class="row">
-                <div class="col-lg-12">
-                     <h5 class="mb-3">Feature Importance (All Metrics)</h5>
-                     <div class="row">
-    """)
-    
-    # Embed All Importance Plots
-    imp_files = sorted(glob.glob(os.path.join(imp_dir, "importance_*.html")))
-    for ifile in imp_files:
-         rel = os.path.relpath(ifile, viz_dir)
-         m_name = os.path.basename(ifile).replace("importance_", "").replace(".html", "")
-         html.append(f'<div class="col-md-3"><div class="card"><div class="card-header small">{m_name}</div><div class="card-body p-0"><iframe src="{rel}" height="400"></iframe></div></div></div>')
-    
-    html.append("""
-                     </div>
-                </div>
-            </div>
-        </div>
-
-        <div class="tab-pane fade" id="tab-diagnostics">
-            <div class="row">
-                <div class="col-lg-8">
-                    <div class="card">
-                        <div class="card-header">Global Correlation Heatmap</div>
-                        <div class="card-body text-center"><img src="diagnostic_plots/global_correlation_heatmap.png"></div>
-                    </div>
-                </div>
-                <div class="col-lg-4">
-                    <div class="card">
-                        <div class="card-header">Smart Scatter Matrix</div>
-                        <div class="card-body text-center"><img src="diagnostic_plots/smart_pairplot.png"></div>
-                    </div>
-                </div>
-            </div>
-            <div class="card">
-                <div class="card-header">Top Parameters vs Metrics Grid</div>
-                <div class="card-body text-center"><img src="diagnostic_plots/top_params_impact_grid.png"></div>
-            </div>
-        </div>
-
         <div class="tab-pane fade" id="tab-xray">
-            <h5 class="mt-2">Optimization History (Note: May include pre-filter trials)</h5>
             <div class="row">
-                <div class="col-md-6"><div class="card"><div class="card-header">PR-AUC History</div><div class="card-body p-0"><iframe src="history_pr_auc.html" height="400"></iframe></div></div></div>
-                <div class="col-md-6"><div class="card"><div class="card-header">FP/min History</div><div class="card-body p-0"><iframe src="history_fp_per_min.html" height="400"></iframe></div></div></div>
-            </div>
-            
-            <hr class="my-4">
-            
-            <h5 class="mt-4">X-Ray Analysis (All Pairs)</h5>
-            <ul class="nav nav-pills mb-3" id="pills-tab" role="tablist">
     """)
     
-    # Generate X-Ray Pills
-    for i, (label, _) in enumerate(xray_html_blocks):
-        active = "active" if i == 0 else ""
-        html.append(f'<li class="nav-item"><button class="nav-link {active}" data-bs-toggle="pill" data-bs-target="#pill-{i}">{label}</button></li>')
-    
-    html.append('</ul><div class="tab-content" id="pills-tabContent">')
-    
-    # Generate X-Ray Panes
-    for i, (label, folder) in enumerate(xray_html_blocks):
-        cls = "show active" if i == 0 else ""
-        html.append(f'<div class="tab-pane fade {cls}" id="pill-{i}"><div class="row">')
-        files = sorted(glob.glob(os.path.join(folder, "xray_*.html")))
-        for xf in files:
-            rel = os.path.relpath(xf, viz_dir)
-            pname = os.path.basename(xf).replace("xray_", "").replace(".html", "")
-            html.append(f'<div class="col-md-3"><div class="card"><div class="card-header small">{pname}</div><div class="card-body p-0"><iframe src="{rel}" height="350"></iframe></div></div></div>')
-        html.append('</div></div>')
-        
-    html.append("""</div></div>""")
+    xray_imgs = sorted(glob.glob(os.path.join(xray_dir, "*.png")))
+    for img in xray_imgs:
+        rel = os.path.relpath(img, viz_dir)
+        fname = os.path.basename(img)
+        html.append(f'<div class="col-12 mb-4"><div class="card"><div class="card-header">{fname}</div><div class="card-body text-center"><img src="{rel}" loading="lazy"></div></div></div>')
 
-    # 4. BOX PLOTS TAB
-    html.append("""<div class="tab-pane fade" id="tab-boxplots">
-            <p class="text-muted ms-2 mt-2">Distribution of metrics (rows) across parameter ranges (X-axis).</p>
-            <div class="row">""")
+    html.append("""</div></div>
+        <div class="tab-pane fade" id="tab-imp">
+             <div class="row">""")
+    
+    imp_imgs = sorted(glob.glob(os.path.join(imp_dir, "importance_*.png")))
+    for img in imp_imgs:
+         rel = os.path.relpath(img, viz_dir)
+         m_name = os.path.basename(img).replace("importance_", "").replace(".png", "")
+         html.append(f'<div class="col-md-6"><div class="card"><div class="card-header">{m_name}</div><div class="card-body text-center"><img src="{rel}" class="img-fluid"></div></div></div>')
+
+    html.append("""</div></div>
+        <div class="tab-pane fade" id="tab-boxplots"><div class="row">""")
     
     box_imgs = sorted(glob.glob(os.path.join(box_dir, "*.png")))
     for img_p in box_imgs:
         rel = os.path.relpath(img_p, viz_dir)
         p_name = os.path.basename(img_p).replace("impact_", "").replace(".png", "")
-        html.append(f'<div class="col-md-4 mb-3"><div class="card h-100"><div class="card-header text-center fw-bold">{p_name}</div><div class="card-body p-1"><a href="{rel}" target="_blank"><img src="{rel}" class="img-fluid" title="Click to zoom"></a></div></div></div>')
+        html.append(f'<div class="col-md-4 mb-3"><div class="card h-100"><div class="card-header text-center fw-bold">{p_name}</div><div class="card-body p-1"><a href="{rel}" target="_blank"><img src="{rel}" class="img-fluid"></a></div></div></div>')
     
-    html.append("""</div></div>""")
-
-    # 5. TABLES TAB
-    html.append("""<div class="tab-pane fade" id="tab-tables">
-            <div class="accordion mt-3" id="accTables">""")
+    html.append("""</div></div>
+        <div class="tab-pane fade" id="tab-tables"><div class="accordion mt-3" id="accTables">""")
     
     if pareto_html_content:
         html.append(f"""<div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button" data-bs-toggle="collapse" data-bs-target="#cPareto">Pareto Set ({len(pareto_df)})</button></h2><div id="cPareto" class="accordion-collapse collapse show" data-bs-parent="#accTables"><div class="accordion-body" style="overflow-x:auto;">{pareto_html_content}</div></div></div>""")
@@ -6367,17 +6215,14 @@ elif mode == 'tune_viz_multi_v9':
         f.write("\n".join(html))
     
     # =========================================================
-    # 5. EXPORT CANDIDATE TRIALS (EXPANDED + SAFETY NETS)
+    # 5. EXPORT CANDIDATE TRIALS (STABILIZED)
     # =========================================================
-    print("Exporting Candidate Trials (Expanded List + Safety Nets)...")
+    print("Exporting Candidate Trials...")
     candidates = set()
     
-    # 1. Pareto Front (Always include efficiency winners)
     if not pareto_df.empty:
         candidates.update(pareto_df["trial_number"].tolist())
     
-    # 2. Expanded Top-K Ranking (Loose List)
-    # Grab the top 100/50 of every metric to catch "good but not best" models.
     cand_config = [
         ("val_sample_pr_auc", False, 100),
         ("val_sample_max_mcc", False, 100),
@@ -6391,16 +6236,13 @@ elif mode == 'tune_viz_multi_v9':
         if col in df.columns:
             candidates.update(df.sort_values(col, ascending=asc).head(k)["trial_number"].tolist())
     
-    # 3. Explicit "Safety Nets" (Threshold Combine)
-    # Guarantees ANY model meeting these "functional specs" is kept.
     safety_nets = [
-        # Metric, Threshold, Mode ('gt' = greater than, 'lt' = less than)
-        ("val_sample_pr_auc",  0.30, "gt"),  # Keep robust ~0.4 models
+        ("val_sample_pr_auc",  0.30, "gt"),  
         ("val_sample_max_mcc", 0.30, "gt"),  
         ("val_sample_max_f1",  0.30, "gt"),  
-        ("val_recall_at_0p7",  0.10, "gt"),  # Ensure model isn't "dead"
-        ("val_latency_score",  0.30, "gt"),   # [ADDED] Keep models with decent speed score
-        ("val_fp_per_min",   1000.0, "lt")   # Filter out garbage noise
+        ("val_recall_at_0p7",  0.10, "gt"),  
+        ("val_latency_score",  0.30, "gt"),   
+        ("val_fp_per_min",   1000.0, "lt")   
     ]
 
     for col, thresh, mode in safety_nets:
@@ -6412,7 +6254,7 @@ elif mode == 'tune_viz_multi_v9':
             candidates.update(matches)
 
     candidate_list = sorted(list(candidates))
-    print(f"\n[CANDIDATES] {len(candidate_list)} unique trials found (Filtered >= {START_FROM_TRIAL}).")
+    print(f"\n[CANDIDATES] {len(candidate_list)} unique trials found.")
     
     with open(os.path.join(viz_dir, "candidate_trials.json"), "w") as f:
         json.dump(candidate_list, f)
