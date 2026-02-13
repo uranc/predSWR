@@ -1746,18 +1746,18 @@ def objective_proxy(trial, model_name, tag, logger):
     
     # --- A. Metric Learning (The Core) ---
     params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.25, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 4, 24, step=2)
-    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 32.0, 64.0, step=16.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.5, 1.6, step=0.1)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 16, 32, step=4)
+    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 48.0, 72.0, step=16.0)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 1.0, 2.0, step=0.2)
     
     # --- B. Classification Head & Regularization ---
-    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 33.0, step=3.0)
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 24.0, 42.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
     params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 1e-5, 0.005, log=True)
     
     # Dropout (Categorical)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
-    params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, 1)]
+    params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 1, 1)]
     # params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, len(drop_lib)-1)]
 
     # --- C. Constants / Fixed ---
@@ -1769,10 +1769,14 @@ def objective_proxy(trial, model_name, tag, logger):
         print('Using Stop Gradient for Class. Branch')
         params['TYPE_ARCH'] += 'StopGrad'
 
-    params['USE_Attention'] = int(trial.suggest_int('USE_Attention', 0, 0)) == 1
+    params['USE_Attention'] = int(trial.suggest_int('USE_Attention', 0, 1)) == 1
     if params['USE_Attention']:
         print('Using Attention')
         params['TYPE_ARCH'] += 'Att'
+        
+        
+    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.05, 0.5, log=True)
+    
     # --- D. Derived / Fixed Params ---
     params.update({
         "SHIFT_MS": 0, "HORIZON_MS": 1,
@@ -1790,7 +1794,7 @@ def objective_proxy(trial, model_name, tag, logger):
     })
 
     # =====================  FIXED RIDGE / CONSTANTS  =====================
-    params['TYPE_LOSS'] = 'ProxyPhase1'
+    params['TYPE_LOSS'] = 'ProxyPhase1Gap'
     params['HYPER_MONO'] = 0 
 
     # TCN Configuration

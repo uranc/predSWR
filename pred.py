@@ -5790,7 +5790,7 @@ elif mode == 'tune_viz_multi_v9':
     # ==========================================
     # [CONFIG] START TRIAL PARAMETER
     # ==========================================
-    START_FROM_TRIAL = 880
+    START_FROM_TRIAL = 1480
     # ==========================================
 
     param_dir = f'params_{tag}'

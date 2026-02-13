@@ -3589,6 +3589,179 @@ def mixed_hybrid_loss_proxy_v1(horizon=0, loss_weight=1, params=None, model=None
 
     return loss_fn
 
+def mixed_hybrid_loss_proxy_v2(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+    # =========================================================================
+    # 0. SETUP
+    # =========================================================================
+    num_classes = int(params.get('NUM_CLASSES', 2)) 
+    n_subcenters = int(params.get('NUM_SUBCENTERS', 3)) 
+    embedding_dim = int(params.get('EMBEDDING_DIM', 128))
+    
+    if model is not None and not hasattr(model, 'proxy_vectors'):
+        model.proxy_vectors = model.add_weight(
+            name='proxy_vectors',
+            shape=(num_classes, n_subcenters, embedding_dim),
+            initializer='he_normal',
+            trainable=True
+        )
+
+    # =========================================================================
+    # 1. HELPERS
+    # =========================================================================
+    def _mean_pool_bt(x):               
+        return tf.reduce_mean(tf.cast(x, tf.float32), axis=1)
+
+    def _ramp(step, delay, dur):
+        step, delay = tf.cast(step, tf.float32), tf.cast(delay, tf.float32)
+        dur = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+        x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
+        return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
+
+    def tv_on_logits(z):
+        return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
+
+    def entropy_loss(probs):
+        epsilon = 1e-7
+        probs = tf.clip_by_value(probs, epsilon, 1.0 - epsilon)
+        ent = -probs * tf.math.log(probs) - (1.0 - probs) * tf.math.log(1.0 - probs)
+        return tf.reduce_mean(ent)
+
+    # =========================================================================
+    # 2. PROXY LOSS
+    # =========================================================================
+    def simple_proxy_anchor_loss(embeddings, labels, proxies, alpha, margin):
+        C, K, D = tf.shape(proxies)[0], tf.shape(proxies)[1], tf.shape(proxies)[2]
+        P_flat = tf.reshape(proxies, [C * K, D])
+        P_norm = tf.math.l2_normalize(P_flat, axis=1, epsilon=1e-12)
+        X_norm = tf.math.l2_normalize(embeddings, axis=1, epsilon=1e-12)
+
+        cos_sim_all = tf.matmul(X_norm, P_norm, transpose_b=True)
+        cos_sim_shaped = tf.reshape(cos_sim_all, [-1, C, K]) 
+        cos_sim_shaped = tf.clip_by_value(cos_sim_shaped, -1.0 + 1e-7, 1.0 - 1e-7)
+
+        labels = tf.cast(tf.reshape(labels, [-1]), tf.int32)
+        target_sims = tf.gather(cos_sim_shaped, labels, batch_dims=1)
+        
+        gamma = 10.0
+        soft_sims = (1.0 / gamma) * tf.reduce_logsumexp(gamma * target_sims, axis=1)
+        pos_logit = -alpha * (soft_sims - margin)
+        loss_pos = tf.reduce_mean(tf.math.softplus(pos_logit))
+
+        one_hot_class = tf.one_hot(labels, depth=C)
+        mask_neg_class = tf.expand_dims(1.0 - one_hot_class, axis=2)
+        mask_neg_flat = tf.reshape(tf.broadcast_to(mask_neg_class, tf.shape(cos_sim_shaped)), [-1, C*K])
+        sim_flat      = tf.reshape(cos_sim_shaped, [-1, C*K])
+        
+        neg_logits = alpha * (sim_flat + margin)
+        neg_logits_masked = neg_logits + (1.0 - mask_neg_flat) * -1e9
+        
+        zeros = tf.zeros([tf.shape(neg_logits_masked)[0], 1], dtype=tf.float32)
+        logits_with_bias = tf.concat([zeros, neg_logits_masked], axis=1)
+        loss_neg = tf.reduce_mean(tf.reduce_logsumexp(logits_with_bias, axis=1))
+
+        return loss_pos + loss_neg
+
+    def bce_weighted(y, z, mask=None, smoothing_val=0.0):
+        y = tf.cast(y, tf.float32)
+        if tf.rank(z) > tf.rank(y): y = tf.expand_dims(y, -1)
+        
+        y = y * (1.0 - smoothing_val) + 0.5 * smoothing_val
+        loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z)
+        
+        # DYNAMIC MASKING:
+        # If mask is provided, multiply loss by it.
+        # This allows us to ignore "0" labels in the Positive branch.
+        if mask is not None:
+            if tf.rank(loss) > tf.rank(mask): mask = tf.expand_dims(mask, -1)
+            loss = loss * mask
+            
+            # Normalize by the number of valid (non-zero mask) elements to keep loss magnitude stable
+            # Add epsilon to prevent div by zero
+            # n_valid = tf.reduce_sum(mask) + 1e-6
+            # return tf.reduce_sum(loss) / n_valid
+            return tf.reduce_mean(loss) # Keep simple mean for stability with batch size
+            
+        return tf.reduce_mean(loss)
+    
+    def _weighted_pool(emb, probs):
+        weighted = emb * probs 
+        sum_emb = tf.reduce_sum(weighted, axis=1)
+        mass = tf.reduce_sum(probs, axis=1) + 1e-6
+        return sum_emb / mass    
+
+    @tf.function
+    def loss_fn(y_true, y_pred):
+        y_pred = tf.cast(y_pred, tf.float32)
+        a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
+        a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+
+        logit_idx = getattr(model, '_cls_logit_index', 0)
+        prob_idx = getattr(model, '_cls_prob_index', 1) 
+        emb_start = getattr(model, '_emb_start_index', 2)
+
+        # 1. PARSE
+        a_emb = a_out[..., emb_start:]; p_emb = p_out[..., emb_start:]; n_emb = n_out[..., emb_start:]
+        a_prob = a_out[..., prob_idx:prob_idx+1]; p_prob = p_out[..., prob_idx:prob_idx+1]; n_prob = n_out[..., prob_idx:prob_idx+1]
+        a_logit = a_out[..., logit_idx]; p_logit = p_out[..., logit_idx]; n_logit = n_out[..., logit_idx]
+        
+        # 2. METRIC LOSS (Pooled)
+        a_lab_pool = tf.reduce_max(a_true[..., 0], axis=1)
+        p_lab_pool = tf.reduce_max(p_true[..., 0], axis=1)
+        n_lab_pool = tf.reduce_max(n_true[..., 0], axis=1)
+
+        a_pool = _weighted_pool(a_emb, a_prob)
+        p_pool = _weighted_pool(p_emb, p_prob)
+        n_pool = _weighted_pool(n_emb, n_prob)
+        all_emb = tf.concat([a_pool, p_pool, n_pool], axis=0)
+        all_lab = tf.concat([a_lab_pool, p_lab_pool, n_lab_pool], axis=0)
+
+        L_proxy = simple_proxy_anchor_loss(
+            all_emb, all_lab, model.proxy_vectors,
+            alpha=float(params.get('PROXY_ALPHA', 32.0)),
+            margin=float(params.get('PROXY_MARGIN', 0.1))
+        )
+        metric_loss = float(params.get('LOSS_PROXY', 0.05)) * L_proxy
+
+        # 3. CLASSIFICATION LOSS
+        # Ramp for Negatives
+        it = tf.cast(model.optimizer.iterations, tf.float32)
+        total_steps = float(params.get('TOTAL_STEPS', 100000))
+        r_neg = _ramp(it, 
+                      params.setdefault('NEG_RAMP_DELAY', 0.1*total_steps), 
+                      params.setdefault('NEG_RAMP_STEPS', 0.4*total_steps))
+        neg_weight = 1.0 + r_neg * tf.maximum(0.0, params.get('LOSS_NEGATIVES', 1.0) - 1.0)
+
+        # INTELLIGENT MASKING:
+        # For Anchor and Positive: Use the LABEL ITSELF as the mask.
+        # If label is 0 (padding/gap), mask=0, loss is ignored.
+        # If label is 1 (event), mask=1, loss is counted.
+        a_mask = a_true[..., 0]
+        p_mask = p_true[..., 0]
+        
+        # For Negative: Mask is None (count everything, label is 0)
+        n_mask = None
+
+        smoothing_val = float(params.get('LABEL_SMOOTHING', 0.0))
+        
+        L_cls = bce_weighted(a_true[..., 0], a_logit, a_mask, smoothing_val) + \
+                bce_weighted(p_true[..., 0], p_logit, p_mask, smoothing_val) + \
+                neg_weight * bce_weighted(n_true[..., 0], n_logit, n_mask, smoothing_val)
+
+        # 4. AUX LOSSES
+        tv_weight = float(params.get('LOSS_TV', 0.0))
+        if tv_weight > 1e-6:
+            L_cls += tv_weight * (tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit))
+            
+        ent_weight = float(params.get('HYPER_ENTROPY', 0.0))
+        if ent_weight > 1e-6:
+            # Add Entropy to force "sharp" predictions
+            L_ent = entropy_loss(a_prob) + entropy_loss(p_prob) + entropy_loss(n_prob)
+            L_cls += ent_weight * L_ent
+
+        return metric_loss + L_cls
+
+    return loss_fn
+
 def mixed_hybrid_loss_proxy_v1_finetune(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
     # =================================================================
     # 0. SETUP: FREEZE PROXIES
