@@ -5755,8 +5755,6 @@ elif mode == 'tune_viz_multi_v8':
 
     print(f"Visualization complete → {viz_dir}")
     
-    
-    
 elif mode == 'tune_viz_multi_v9':
     import os, sys, json, math, warnings, glob, re, itertools
     import numpy as np
@@ -5837,9 +5835,7 @@ elif mode == 'tune_viz_multi_v9':
         return re.sub(r'[\\/*?:"<>|]', "_", str(s))
 
     def _make_target(df_source, metric_name):
-        # Create a lookup dictionary for fast access
         lookup = df_source.set_index("trial_number")[metric_name].to_dict()
-        # Return a callable that Optuna can use
         def target(t):
             return lookup.get(t.number, float('nan'))
         return target
@@ -5887,7 +5883,6 @@ elif mode == 'tune_viz_multi_v9':
         except Exception: continue
 
     df = pd.DataFrame(rows)
-    # [RESTORED] Save all_trials_data.csv
     print(f"Saving {len(df)} rows to all_trials_data.csv...")
     df.to_csv(os.path.join(viz_dir, "all_trials_data.csv"), index=False)
 
@@ -5902,7 +5897,6 @@ elif mode == 'tune_viz_multi_v9':
     exclude_cols = metric_cols + ["trial_number"]
     param_cols = sorted([c for c in df.columns if c not in exclude_cols])
     
-    # Separate numeric and categorical for plotting
     num_params = [p for p in param_cols if pd.api.types.is_numeric_dtype(df[p]) and df[p].nunique() > 1]
     
     # ---------- PARETO CALCULATION ----------
@@ -5917,37 +5911,53 @@ elif mode == 'tune_viz_multi_v9':
                 max_pr_so_far = row["val_sample_pr_auc"]
         pareto_df = df.loc[pareto_indices].copy()
     
-    # [RESTORED] Save pareto_trials.csv
     print(f"Saving {len(pareto_df)} rows to pareto_trials.csv...")
     pareto_df.to_csv(os.path.join(viz_dir, "pareto_trials.csv"), index=False)
 
     # =========================================================
-    # 1. PARAMETER IMPORTANCE (FIXED - STATIC PNGs)
+    # 1. HISTORY PLOTS (NEW REQUEST)
     # =========================================================
-    print("Generating Parameter Importance (Static PNGs)...")
+    print("Generating History Plots (Metric vs Trial)...")
+    hist_dir = os.path.join(viz_dir, "history_plots")
+    os.makedirs(hist_dir, exist_ok=True)
+    
+    for m in known_metrics:
+        if m not in df.columns: continue
+        plt.figure(figsize=(10, 5))
+        # Plot raw points
+        sns.scatterplot(data=df, x="trial_number", y=m, alpha=0.6, label='Trial')
+        
+        # Add moving average line if we have enough data
+        if len(df) > 10:
+            df_sorted = df.sort_values("trial_number")
+            rolling = df_sorted[m].rolling(window=int(len(df)*0.1) if len(df)<100 else 10).mean()
+            plt.plot(df_sorted["trial_number"], rolling, color='red', linewidth=2, alpha=0.8, label='Trend')
+            
+        plt.title(f"History: {m}")
+        plt.grid(True, alpha=0.3)
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(os.path.join(hist_dir, f"history_{_clean_filename(m)}.png"))
+        plt.close()
+
+    # =========================================================
+    # 2. PARAMETER IMPORTANCE
+    # =========================================================
+    print("Generating Parameter Importance...")
     imp_dir = os.path.join(viz_dir, "importance_analysis")
     os.makedirs(imp_dir, exist_ok=True)
 
-    # Identify parameters that actually vary in this subset
     tunable_params = [p for p in param_cols if df[p].nunique() > 1]
-    
-    target_imp_metrics = ["val_sample_pr_auc", "val_fp_per_min", "val_latency_score", 
-                          "val_recall_at_0p7", "val_sample_max_mcc", "val_sample_max_f1"]
     
     if len(df) < 3:
         print("WARNING: Not enough trials for importance analysis.")
     else:
-        for metric in target_imp_metrics:
+        for metric in ["val_sample_pr_auc", "val_fp_per_min", "val_sample_max_f1"]:
             if metric not in df.columns or df[metric].nunique() <= 1: continue
-            
             try:
                 target_func = _make_target(df, metric)
-                
-                # --- FIX: Removed params=tunable_params to let Optuna decide valid params ---
                 importance_dict = get_param_importances(study, target=target_func)
-                
-                if not importance_dict:
-                    continue
+                if not importance_dict: continue
 
                 sorted_items = sorted(importance_dict.items(), key=lambda x: x[1], reverse=True)
                 labels = [k for k, v in sorted_items]
@@ -5962,18 +5972,13 @@ elif mode == 'tune_viz_multi_v9':
                 plt.title(f'Parameter Importance for {metric}')
                 plt.grid(axis='x', linestyle='--', alpha=0.7)
                 plt.tight_layout()
-                
                 plt.savefig(os.path.join(imp_dir, f"importance_{metric}.png"))
                 plt.close()
-                print(f" - Saved importance_{metric}.png")
-                
             except Exception as e:
-                print(f" ! Failed importance for {metric}: {e}")
-                with open(os.path.join(imp_dir, "errors.txt"), "a") as errf:
-                    errf.write(f"Failed {metric}: {str(e)}\n")
+                print(f"Skipping importance for {metric}: {e}")
 
     # =========================================================
-    # 2. X-RAY PLOTS
+    # 3. X-RAY PLOTS
     # =========================================================
     print("Generating X-Ray Plots...")
     xray_dir = os.path.join(viz_dir, "xray_plots")
@@ -5981,67 +5986,53 @@ elif mode == 'tune_viz_multi_v9':
     
     xray_metrics = [m for m in known_metrics if m in df.columns]
     all_combinations = list(itertools.combinations(xray_metrics, 2))
-    
     n_params = len(tunable_params)
     
     if n_params > 0:
         n_cols = 4
         n_rows = math.ceil(n_params / n_cols)
-        
         for x_ax, y_ax in all_combinations:
             fig, axes = plt.subplots(n_rows, n_cols, figsize=(4*n_cols, 3.5*n_rows), constrained_layout=True)
             if n_params == 1: axes = np.array([axes])
-            
             flat_axes = axes.flatten() if isinstance(axes, np.ndarray) else [axes]
             
             plotted_count = 0
             for i, p in enumerate(tunable_params):
                 ax = flat_axes[i]
                 is_discrete = (p in ["PROXY_ALPHA", "NUM_SUBCENTERS", "DROP_RATE", "USE_Attention", "USE_StopGrad"] or df[p].dtype == 'object')
-                
                 try:
                     sns.scatterplot(
                         data=df, x=x_ax, y=y_ax, hue=p, 
                         palette="tab10" if is_discrete else "viridis",
                         alpha=0.8, s=30, ax=ax
                     )
-                    
                     if not pareto_df.empty and x_ax == "val_fp_per_min" and y_ax == "val_sample_pr_auc":
                         sns.scatterplot(data=pareto_df, x=x_ax, y=y_ax, color='red', marker='*', s=100, ax=ax, label='Pareto')
-                    
                     ax.set_title(f"Color: {p}", fontsize=10, fontweight='bold')
                     ax.grid(True, alpha=0.3)
-                    
                     if ax.get_legend():
                         ax.legend(bbox_to_anchor=(1.05, 1), loc=2, borderaxespad=0., fontsize='x-small')
-                        
                     plotted_count += 1
-                except:
-                    ax.text(0.5, 0.5, "N/A", ha='center', va='center')
+                except: ax.text(0.5, 0.5, "N/A", ha='center', va='center')
 
-            for j in range(plotted_count, len(flat_axes)):
-                flat_axes[j].axis('off')
-
+            for j in range(plotted_count, len(flat_axes)): flat_axes[j].axis('off')
             fig.suptitle(f"X-Ray: {y_ax} vs {x_ax}", fontsize=16, y=1.02)
             plt.savefig(os.path.join(xray_dir, f"xray_{_clean_filename(y_ax)}_vs_{_clean_filename(x_ax)}.png"), bbox_inches='tight')
             plt.close()
 
     # =========================================================
-    # 3. BOX PLOTS
+    # 4. BOX PLOTS
     # =========================================================
     print("Generating Box Plots...")
     box_dir = os.path.join(viz_dir, "box_plots")
     os.makedirs(box_dir, exist_ok=True)
-    
     metrics_to_plot = [m for m in known_metrics if m in df.columns]
     
     for p in param_cols:
         if df[p].nunique() <= 1: continue
-        
-        is_numeric = pd.api.types.is_numeric_dtype(df[p])
         plot_df = df.copy()
+        is_numeric = pd.api.types.is_numeric_dtype(df[p])
         should_not_bin = p in ["PROXY_ALPHA", "NUM_SUBCENTERS", "DROP_RATE", "USE_Attention", "USE_StopGrad"]
-        
         if is_numeric and df[p].nunique() > 6 and not should_not_bin:
             try: plot_df[p] = pd.qcut(plot_df[p], q=4, duplicates='drop')
             except: pass
@@ -6053,20 +6044,18 @@ elif mode == 'tune_viz_multi_v9':
         for ax, metric in zip(axes, metrics_to_plot):
             sns.boxplot(data=plot_df, x=p, y=metric, ax=ax, palette="Blues")
             ax.set_ylabel(metric, fontsize=9)
-            ax.set_xlabel("")
             ax.grid(True, alpha=0.3)
         
         axes[-1].set_xlabel(p, fontweight='bold')
         if hasattr(axes[-1], "get_xticklabels"):
             plt.setp(axes[-1].get_xticklabels(), rotation=45)
-            
         fig.suptitle(f"Impact of {p}", y=1.005, fontweight='bold')
         plt.tight_layout()
         plt.savefig(os.path.join(box_dir, f"impact_{_clean_filename(p)}.png"))
         plt.close()
 
     # =========================================================
-    # 4. DIAGNOSTICS & HTML
+    # 5. DIAGNOSTICS & HTML
     # =========================================================
     diag_dir = os.path.join(viz_dir, "diagnostic_plots")
     os.makedirs(diag_dir, exist_ok=True)
@@ -6110,12 +6099,24 @@ elif mode == 'tune_viz_multi_v9':
         return [c for c in cols if c in target_df.columns]
 
     table_htmls = {}
+    
+    # [NEW] SPECIAL FILTER: Reasonable Latency
+    # Condition: FP < 1000 AND (MCC > 0.35 OR F1 > 0.35 OR PR-AUC > 0.35)
+    print("Filtering Reasonable Latency models...")
+    lat_mask = (df.get("val_fp_per_min", 9999) < 1000)
+    quality_mask = pd.Series([False]*len(df), index=df.index)
+    for qm in ["val_sample_max_mcc", "val_sample_max_f1", "val_sample_pr_auc"]:
+        if qm in df.columns:
+            quality_mask |= (df[qm] > 0.35)
+    
+    reasonable_lat_df = df[lat_mask & quality_mask].copy()
+    
+    # Standard Sorts
     sort_config = [
         ("val_sample_pr_auc", False), 
         ("val_fp_per_min", True),
-        ("val_latency_score", False),
-        ("val_sample_max_mcc", False),
         ("val_recall_at_0p7", False),
+        ("val_sample_max_mcc", False),
         ("val_sample_max_f1", False),
         ("sel_epoch", True)
     ]
@@ -6126,6 +6127,21 @@ elif mode == 'tune_viz_multi_v9':
         d_cols = get_display_cols(top_df)
         table_htmls[m] = top_df[d_cols].to_html(escape=False, index=False, classes='table table-sm table-hover')
 
+    # Add the Special Latency Table
+    if not reasonable_lat_df.empty and "val_latency_score" in df.columns:
+        # Sort by latency score descending (assuming higher score = better/lower latency in metric logic)
+        top_lat = reasonable_lat_df.sort_values("val_latency_score", ascending=False).head(20).copy()
+        top_lat["study_dir"] = top_lat["trial_number"].apply(_trial_link)
+        d_cols = get_display_cols(top_lat)
+        table_htmls["val_latency_score (Reasonable Only)"] = top_lat[d_cols].to_html(escape=False, index=False, classes='table table-sm table-hover border-primary')
+    else:
+        # Fallback to standard if no reasonable ones found
+        if "val_latency_score" in df.columns:
+            top_lat = df.sort_values("val_latency_score", ascending=False).head(20).copy()
+            top_lat["study_dir"] = top_lat["trial_number"].apply(_trial_link)
+            d_cols = get_display_cols(top_lat)
+            table_htmls["val_latency_score (Unfiltered)"] = top_lat[d_cols].to_html(escape=False, index=False, classes='table table-sm table-hover')
+
     pareto_html_content = ""
     if not pareto_df.empty:
         p_view = pareto_df.copy()
@@ -6133,9 +6149,10 @@ elif mode == 'tune_viz_multi_v9':
         p_cols = get_display_cols(p_view)
         pareto_html_content = p_view[p_cols].to_html(escape=False, index=False, classes='table table-sm table-striped table-bordered')
 
+    # Build HTML
     html = []
     html.append(f"""<!doctype html><html><head><meta charset="utf-8">
-    <title>Viz v10: {tag}</title>
+    <title>Viz v9: {tag}</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
     <style>
         body{{background:#f8f9fa; font-family:'Segoe UI', Roboto, sans-serif;}}
@@ -6157,6 +6174,7 @@ elif mode == 'tune_viz_multi_v9':
 
     <ul class="nav nav-tabs mb-4" id="myTab" role="tablist">
         <li class="nav-item"><button class="nav-link active" data-bs-toggle="tab" data-bs-target="#tab-pareto">Pareto</button></li>
+        <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-history">History</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-xray">X-Rays</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-imp">Importance</button></li>
         <li class="nav-item"><button class="nav-link" data-bs-toggle="tab" data-bs-target="#tab-boxplots">Box Plots</button></li>
@@ -6170,11 +6188,21 @@ elif mode == 'tune_viz_multi_v9':
                  <div class="col-lg-6"><div class="card"><div class="card-header">Global Correlation</div><div class="card-body text-center"><img src="diagnostic_plots/global_correlation_heatmap.png" style="max-height:500px"></div></div></div>
             </div>
         </div>
-        
-        <div class="tab-pane fade" id="tab-xray">
+
+        <div class="tab-pane fade" id="tab-history">
             <div class="row">
     """)
     
+    hist_imgs = sorted(glob.glob(os.path.join(hist_dir, "*.png")))
+    for img in hist_imgs:
+        rel = os.path.relpath(img, viz_dir)
+        fname = os.path.basename(img)
+        html.append(f'<div class="col-md-6 mb-4"><div class="card"><div class="card-header">{fname}</div><div class="card-body text-center"><img src="{rel}" loading="lazy"></div></div></div>')
+
+    html.append("""</div></div>
+        <div class="tab-pane fade" id="tab-xray">
+            <div class="row">
+    """)
     xray_imgs = sorted(glob.glob(os.path.join(xray_dir, "*.png")))
     for img in xray_imgs:
         rel = os.path.relpath(img, viz_dir)
@@ -6182,9 +6210,7 @@ elif mode == 'tune_viz_multi_v9':
         html.append(f'<div class="col-12 mb-4"><div class="card"><div class="card-header">{fname}</div><div class="card-body text-center"><img src="{rel}" loading="lazy"></div></div></div>')
 
     html.append("""</div></div>
-        <div class="tab-pane fade" id="tab-imp">
-             <div class="row">""")
-    
+        <div class="tab-pane fade" id="tab-imp"><div class="row">""")
     imp_imgs = sorted(glob.glob(os.path.join(imp_dir, "importance_*.png")))
     for img in imp_imgs:
          rel = os.path.relpath(img, viz_dir)
@@ -6193,7 +6219,6 @@ elif mode == 'tune_viz_multi_v9':
 
     html.append("""</div></div>
         <div class="tab-pane fade" id="tab-boxplots"><div class="row">""")
-    
     box_imgs = sorted(glob.glob(os.path.join(box_dir, "*.png")))
     for img_p in box_imgs:
         rel = os.path.relpath(img_p, viz_dir)
@@ -6207,7 +6232,8 @@ elif mode == 'tune_viz_multi_v9':
         html.append(f"""<div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button" data-bs-toggle="collapse" data-bs-target="#cPareto">Pareto Set ({len(pareto_df)})</button></h2><div id="cPareto" class="accordion-collapse collapse show" data-bs-parent="#accTables"><div class="accordion-body" style="overflow-x:auto;">{pareto_html_content}</div></div></div>""")
 
     for i, (m, tbl) in enumerate(table_htmls.items()):
-        html.append(f"""<div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button collapsed" data-bs-toggle="collapse" data-bs-target="#c{i}">Top 20 by {m}</button></h2><div id="c{i}" class="accordion-collapse collapse" data-bs-parent="#accTables"><div class="accordion-body" style="overflow-x:auto;">{tbl}</div></div></div>""")
+        show_cls = "show" if "Reasonable" in m else ""
+        html.append(f"""<div class="accordion-item"><h2 class="accordion-header"><button class="accordion-button {'' if show_cls else 'collapsed'}" data-bs-toggle="collapse" data-bs-target="#c{i}">Top 20 by {m}</button></h2><div id="c{i}" class="accordion-collapse collapse {show_cls}" data-bs-parent="#accTables"><div class="accordion-body" style="overflow-x:auto;">{tbl}</div></div></div>""")
         
     html.append("""</div></div></div><script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script></body></html>""")
 
@@ -6215,43 +6241,26 @@ elif mode == 'tune_viz_multi_v9':
         f.write("\n".join(html))
     
     # =========================================================
-    # 5. EXPORT CANDIDATE TRIALS (STABILIZED)
+    # 6. EXPORT CANDIDATE TRIALS
     # =========================================================
     print("Exporting Candidate Trials...")
     candidates = set()
-    
     if not pareto_df.empty:
         candidates.update(pareto_df["trial_number"].tolist())
     
+    # Add candidates from Reasonable Latency list
+    if not reasonable_lat_df.empty and "val_latency_score" in df.columns:
+        candidates.update(reasonable_lat_df.sort_values("val_latency_score", ascending=False).head(20)["trial_number"].tolist())
+
     cand_config = [
         ("val_sample_pr_auc", False, 100),
         ("val_sample_max_mcc", False, 100),
         ("val_sample_max_f1", False, 100),
-        ("val_recall_at_0p7", False, 100),
-        ("val_latency_score", False, 100),
         ("val_fp_per_min", True, 100)
     ]
-    
     for col, asc, k in cand_config:
         if col in df.columns:
             candidates.update(df.sort_values(col, ascending=asc).head(k)["trial_number"].tolist())
-    
-    safety_nets = [
-        ("val_sample_pr_auc",  0.30, "gt"),  
-        ("val_sample_max_mcc", 0.30, "gt"),  
-        ("val_sample_max_f1",  0.30, "gt"),  
-        ("val_recall_at_0p7",  0.10, "gt"),  
-        ("val_latency_score",  0.30, "gt"),   
-        ("val_fp_per_min",   1000.0, "lt")   
-    ]
-
-    for col, thresh, mode in safety_nets:
-        if col in df.columns:
-            if mode == "gt":
-                matches = df[df[col] >= thresh]["trial_number"].tolist()
-            elif mode == "lt":
-                matches = df[df[col] <= thresh]["trial_number"].tolist()
-            candidates.update(matches)
 
     candidate_list = sorted(list(candidates))
     print(f"\n[CANDIDATES] {len(candidate_list)} unique trials found.")

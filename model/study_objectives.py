@@ -1775,7 +1775,7 @@ def objective_proxy(trial, model_name, tag, logger):
         params['TYPE_ARCH'] += 'Att'
         
         
-    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.05, 0.5, log=True)
+    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 0.5, log=True)
     
     # --- D. Derived / Fixed Params ---
     params.update({
