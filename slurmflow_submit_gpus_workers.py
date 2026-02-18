@@ -23,7 +23,7 @@ tag = 'tripletOnlyProxy2500'
 ijob = -1
 # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
 # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
-for model_name in range(9):
+for model_name in range(6):
     # exp_dir = 'experiments/' + model_name
     # pr = exp_dir + '/model/'
     # if not path.exists(pr):
@@ -44,20 +44,20 @@ for model_name in range(9):
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
     # pdb.set_trace()
-    # if ijob < 2:
-    #     print('skip')
     if ijob < 6:
+    #     print('skip')
+    #     subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
+    # elif ijob < 6:
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
         subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
-        
         # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    elif ijob < 15:
+    elif ijob < 10:
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
         subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
-    elif ijob < 19:
+    elif ijob < 18:
         subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
     # if ijob == 0:
     #     pdb.set_trace()

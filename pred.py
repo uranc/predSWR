@@ -2048,7 +2048,7 @@ elif mode == 'tune_worker':
 
     study.optimize(
         lambda trial: objective(trial, model_name, tag, logger),
-        n_trials=80,
+        n_trials=1,
         gc_after_trial=True,
         show_progress_bar=True,
         catch=(tf.errors.ResourceExhaustedError,),
@@ -5788,7 +5788,7 @@ elif mode == 'tune_viz_multi_v9':
     # ==========================================
     # [CONFIG] START TRIAL PARAMETER
     # ==========================================
-    START_FROM_TRIAL = 1780
+    START_FROM_TRIAL = 1980
     # ==========================================
 
     param_dir = f'params_{tag}'
