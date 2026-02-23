@@ -1068,7 +1068,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             base_lr=params['LEARNING_RATE'],
             total_steps=total_steps,
             warmup_ratio=params.get('LR_WARMUP_RATIO', 0.04),
-            cool_ratio=params.get('LR_COOL_RATIO', 0.60),
+            cool_ratio=params.get('LR_COOL_RATIO', 0.80),
             final_scale=params.get('LR_FINAL_SCALE', 0.06),
         )
         this_optimizer = tf.keras.optimizers.AdamW(
