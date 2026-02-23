@@ -1751,7 +1751,7 @@ def objective_proxy(trial, model_name, tag, logger):
     params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.8, 1.8, step=0.2)
 
     # --- B. Classification Head & Regularization ---
-    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 36.0, step=3.0)
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 27.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
     params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 5e-4, 5e-4 , log=True)
     
@@ -1769,14 +1769,15 @@ def objective_proxy(trial, model_name, tag, logger):
         print('Using Stop Gradient for Class. Branch')
         params['TYPE_ARCH'] += 'StopGrad'
 
-    params['USE_Attention'] = int(trial.suggest_int('USE_Attention', 0, 0)) == 1
+    params['USE_Attention'] = int(trial.suggest_int('USE_Attention', 0, 1)) == 1
     if params['USE_Attention']:
         print('Using Attention')
         params['TYPE_ARCH'] += 'Att'
         
         
     params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 0.08, log=True)
-    
+    params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 0.5, 2.5, step=1.0)
+    params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 32, 128, step=32)
     # --- D. Derived / Fixed Params ---
     params.update({
         "SHIFT_MS": 0, "HORIZON_MS": 1,

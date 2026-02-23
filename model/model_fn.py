@@ -3616,6 +3616,31 @@ def mixed_hybrid_loss_proxy_v2(horizon=0, loss_weight=1, params=None, model=None
         dur = tf.maximum(tf.cast(dur, tf.float32), 1.0)
         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
+    
+    def _ramp_unified(step, delay, dur, num_cycles=0.5):
+        """
+        num_cycles=0.5 acts as a standard S-curve ramp (0.0 -> 1.0 -> stays 1.0).
+        num_cycles=1.5 goes (0.0 -> 1.0 -> 0.0 -> 1.0 -> stays 1.0).
+        """
+        step = tf.cast(step, tf.float32)
+        delay = tf.cast(delay, tf.float32)
+        dur = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+        
+        is_active = tf.cast(step > delay, tf.float32)
+        active_step = tf.maximum(0.0, step - delay)
+        
+        # Progress goes from 0.0 to 1.0 during the dur window, then clips/locks at 1.0
+        progress = tf.clip_by_value(active_step / dur, 0.0, 1.0)
+        
+        # Multiply by cycles. 
+        # If cycles=1.5, phase goes 0.0 -> 1.5. 
+        # cos(2 * pi * 1.5) = cos(3pi) = -1.0. 
+        # 0.5 - 0.5 * (-1.0) = 1.0. It naturally locks at the top!
+        phase = progress * num_cycles
+        
+        wave = 0.5 - 0.5 * tf.cos(2.0 * math.pi * phase)
+        
+        return wave * is_active
 
     def tv_on_logits(z):
         return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
@@ -3726,19 +3751,20 @@ def mixed_hybrid_loss_proxy_v2(horizon=0, loss_weight=1, params=None, model=None
         # Ramp for Negatives
         it = tf.cast(model.optimizer.iterations, tf.float32)
         total_steps = float(params.get('TOTAL_STEPS', 100000))
-        r_neg = _ramp(it, 
-                      params.setdefault('NEG_RAMP_DELAY', 0.1*total_steps), 
-                      params.setdefault('NEG_RAMP_STEPS', 0.4*total_steps))
-        neg_weight = 1.0 + r_neg * tf.maximum(0.0, params.get('LOSS_NEGATIVES', 1.0) - 1.0)
+        
+        delay_steps = float(params.setdefault('NEG_RAMP_DELAY', 0.15 * total_steps))
+        dur_steps   = float(params.setdefault('NEG_RAMP_STEPS', 0.40 * total_steps))
+        
+        # Fetch the hyperparameter (defaults to 0.5 standard ramp if not found)
+        num_cycles  = float(params.get('NEG_CYCLES', 0.5))
+        
+        # Elegant, unified call
+        r_neg = _ramp_unified(it, delay_steps, dur_steps, num_cycles=num_cycles)
+        neg_weight = 1.0 + r_neg * tf.maximum(0.0, float(params.get('LOSS_NEGATIVES', 1.0)) - 1.0)
 
-        # INTELLIGENT MASKING:
-        # For Anchor and Positive: Use the LABEL ITSELF as the mask.
-        # If label is 0 (padding/gap), mask=0, loss is ignored.
-        # If label is 1 (event), mask=1, loss is counted.
+        # masking
         a_mask = a_true[..., 0]
         p_mask = p_true[..., 0]
-        
-        # For Negative: Mask is None (count everything, label is 0)
         n_mask = None
 
         smoothing_val = float(params.get('LABEL_SMOOTHING', 0.0))
