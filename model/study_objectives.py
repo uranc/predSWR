@@ -1745,13 +1745,13 @@ def objective_proxy(trial, model_name, tag, logger):
     # ============================================================
     
     # --- A. Metric Learning (The Core) ---
-    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.25, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 12, 36, step=4)
-    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 64.0, step=16.0)
+    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.20, log=True)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 16, 36, step=4)
+    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 32.0, 64.0, step=16.0)
     params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.8, 1.8, step=0.2)
 
     # --- B. Classification Head & Regularization ---
-    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 27.0, step=3.0)
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 15.0, 30.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
     params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 5e-4, 5e-4 , log=True)
     
@@ -1762,22 +1762,22 @@ def objective_proxy(trial, model_name, tag, logger):
 
     # --- C. Constants / Fixed ---
     params['BCE_POS_ALPHA'] = 1.0
-    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 2e-4, 2e-4, log=True)
+    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 2e-4, 4e-4, log=True)
     
     params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 0, 0)) == 1
     if params['USE_StopGrad']:
         print('Using Stop Gradient for Class. Branch')
         params['TYPE_ARCH'] += 'StopGrad'
 
-    params['USE_Attention'] = int(trial.suggest_int('USE_Attention', 0, 1)) == 1
+    params['USE_Attention'] = int(trial.suggest_int('USE_Attention', 0, 0)) == 1
     if params['USE_Attention']:
         print('Using Attention')
         params['TYPE_ARCH'] += 'Att'
         
         
-    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 0.08, log=True)
+    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 0.1, log=True)
     params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 0.5, 2.5, step=1.0)
-    params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 32, 128, step=32)
+    params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 32, 96, step=32)
     # --- D. Derived / Fixed Params ---
     params.update({
         "SHIFT_MS": 0, "HORIZON_MS": 1,
@@ -1819,7 +1819,8 @@ def objective_proxy(trial, model_name, tag, logger):
     par_norm = 'LN'
     par_act = 'GELU'
     par_opt = 'AdamWA'
-    par_reg = 'None'  # L1 Regularization
+    par_reg = trial.suggest_categorical('WeightReg', ['None', 'LOne'])
+
 
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
     
@@ -1938,7 +1939,7 @@ def objective_proxy(trial, model_name, tag, logger):
 
     # Callbacks (Early Stopping + Checkpoints)
     callbacks = [
-        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=50, mode='max', verbose=1, restore_best_weights=True),        
+        cb.EarlyStopping(monitor='val_sample_pr_auc', patience=80, mode='max', verbose=1, restore_best_weights=True),        
         cb.TensorBoard(log_dir=f"{study_dir}/", write_graph=True, write_images=True, update_freq='epoch'),
         cb.ModelCheckpoint(f"{study_dir}/mcc.weights.h5", monitor="val_sample_max_mcc", mode="max", save_best_only=True, save_weights_only=True, verbose=1),
         cb.ModelCheckpoint(f"{study_dir}/max.weights.h5", monitor='val_sample_max_f1', save_best_only=True, save_weights_only=True, mode='max', verbose=1),
