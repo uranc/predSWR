@@ -1745,13 +1745,13 @@ def objective_proxy(trial, model_name, tag, logger):
     # ============================================================
     
     # --- A. Metric Learning (The Core) ---
-    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.20, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 16, 36, step=4)
-    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 32.0, 64.0, step=16.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.8, 1.8, step=0.2)
+    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.15, log=True)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 12, 20, step=4)
+    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 32.0, step=16.0)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.8, 1.4, step=0.2)
 
     # --- B. Classification Head & Regularization ---
-    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 15.0, 30.0, step=3.0)
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 24.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
     params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 5e-4, 5e-4 , log=True)
     
@@ -1775,7 +1775,7 @@ def objective_proxy(trial, model_name, tag, logger):
         params['TYPE_ARCH'] += 'Att'
         
         
-    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 0.1, log=True)
+    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 0.03, log=True)
     params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 0.5, 2.5, step=1.0)
     params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 32, 96, step=32)
     # --- D. Derived / Fixed Params ---
