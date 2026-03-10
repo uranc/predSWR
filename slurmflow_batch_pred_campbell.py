@@ -7,10 +7,10 @@ import xarray as xr
 EVENT_BASE = Path("/cs/projects/OWVinckSWR/Cem/CampbellMurphy2025_SWRs_data/allen_visbehave_swr_murphylab2024")
 LFP_ROOT = Path("/mnt/hpc/projects/OWVinckSWR/Cem/VisualBehavior/upsampled_ca1_cortical_2500Hz/")
 tag = 'tripletOnlyProxy2500' 
-tag = 'tripletOnlyClean2500' 
+# tag = 'tripletOnlyClean2500' 
 dry_run = False 
 
-model_lib = [1450]#2250, 2346]#14500, 
+model_lib = [2671,2672]#[2250]#2250]#1450 2250, 2346]#14500, 
 ses_list = sorted(list(LFP_ROOT.glob("ses_*.nc")))
 
 print(f"Scanning {len(ses_list)} upsampled LFP files...")
@@ -76,10 +76,10 @@ for iv, lfp_path in enumerate(ses_list):
                 else:
                     print(f"Submitting Move | Ses {session_id} | Win {move_start}")
                     if not dry_run:
-                        # subprocess.call(['sbatch', 'cpu_batch_16GB_campbell.sh', model_name, str(iv), str(move_start), tag])
-                        subprocess.call(['sbatch', 'cpu_batch_8GB_campbell.sh', model_name, str(iv), str(move_start), tag])
-                    time.sleep(0.001)          
-                    
+                        subprocess.call(['sbatch', 'cpu_batch_16GB_campbell.sh', model_name, str(iv), str(move_start), tag])
+                        # subprocess.call(['sbatch', 'cpu_batch_8GB_campbell.sh', model_name, str(iv), str(move_start), tag])
+                    time.sleep(0.001)
+
     except Exception as e:
         print(f"Error processing session {session_id}: {e}")
     # pdb.set_trace()
