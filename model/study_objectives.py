@@ -1747,9 +1747,10 @@ def objective_proxy(trial, model_name, tag, logger):
     # --- A. Metric Learning (The Core) ---
     params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.02, 0.08, log=True)
     params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 12, 20, step=4)
-    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 32.0, step=16.0)
+    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 8.0, 16.0, step=8.0)
     params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.8, 1.0, step=0.2)
-
+    params['LOSS_DECORR']    = trial.suggest_float('LOSS_DECORR', 0.01, 0.05, log=True)
+    
     # --- B. Classification Head & Regularization ---
     params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 21.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)

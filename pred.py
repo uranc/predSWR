@@ -779,7 +779,10 @@ elif mode == 'predict':
         # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/Mouse3_LFP_ZSig_2500.npy')
         # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/MouseTest_LFP_ZSig_2500.npy')
         # LFP = np.load('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake03/LFP_zSig_141125_suffix11_sf2500.npy')
-        LFP = np.load('/cs/projects/OWVinckSWR/Cem/StateMachine_Session1_LFP_ZScore.npy')
+        #### LFP = np.load('/cs/projects/OWVinckSWR/Cem/StateMachine_Session1_LFP_ZScore.npy')
+        LFP = np.load('/cs/projects/OWVinckSWR/Dataset/BruceData/rawData/Continuous_Recording/LFP_8ChMid_Downsampled.npy')
+        print('Loaded LFP shape: ', LFP.shape)
+        print('LFP 8 ch mid ')
         # LFP = np.load('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake03/download/lfp_sub12_slidingZ_CropTEST.npy')
         # pdb.set_trace()
         LFP = np.transpose(LFP, (1, 0)).astype(np.float32)
@@ -863,7 +866,8 @@ elif mode == 'predict':
                 # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_1_FlatBrain/probs_{0}_{1}.npy'.format(study_num, tag), probs)
                 pdb.set_trace()
                 # np.save('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_decimate_{1}.npy'.format(study_num, tag), probs)
-                np.save('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake03/probs_{0}_decimate_{1}.npy'.format(study_num, tag), probs)
+                #### np.save('/mnt/hpc/projects/OWVinckSWR/Dataset/ONIXData/Awake03/probs_{0}_decimate_{1}.npy'.format(study_num, tag), probs)
+                # np.save('/cs/projects/OWVinckSWR/Dataset/BruceData/rawData/Continuous_Recording/probs_{0}_LFP_8ChMid_Downsampled_{1}.npy'.format(study_num, tag), probs)
                 # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_{1}.npy'.format(study_num, tag), probs)
                 sys.exit(0)
     else:
@@ -875,9 +879,10 @@ elif mode == 'predict':
         elif flag_numpy:
             print('Using numpy')
             sample_length = 44#params['NO_TIMEPOINTS']
-            squence_stride = 2
+            squence_stride = 1
 
         train_x = timeseries_dataset_from_array(LFP, None, sequence_length=sample_length, sequence_stride=squence_stride, batch_size=params["BATCH_SIZE"])
+        # pdb.set_trace()
         windowed_signal = np.squeeze(model.predict(train_x, verbose=1))
         if flag_numpy:
             # pdb.set_trace()
@@ -888,7 +893,8 @@ elif mode == 'predict':
             # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_{1}.npy'.format(study_num, tag), probs)
             # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_subZ_{1}.npy'.format(study_num, tag), probs)
             # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_LFPzSig_{1}.npy'.format(study_num, tag), probs)
-            np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake03/probs_{0}_sub_LFPzSig_{1}.npy'.format(study_num, tag), probs)
+            # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake03/probs_{0}_sub_LFPzSig_{1}.npy'.format(study_num, tag), probs)
+            np.save('/mnt/hpc/projects/OWVinckSWR/Dataset/BruceData/rawData/Continuous_Recording/probs_{0}_sub_LFP_8ChMid_{1}.npy'.format(study_num, tag), probs)
             # np.save('/cs/projects/OWVinckSWR/Dataset/ONIXData/Awake02_Test/probs_{0}_sub_{1}.npy'.format(study_num, tag), probs)
             sys.exit(0)
 
@@ -1797,17 +1803,26 @@ elif mode == 'embedding':
         # Extract study number from model name (e.g., 'Tune_45_' -> '45')
         study_num = model_name.split('_')[1]
         print(f"Loading tuned model from study {study_num}")
-
+        pdb.set_trace()
         # params['SRATE'] = 2500
         # Find the study directory
         import glob
         # study_dirs = glob.glob(f'studies_1/study_{study_num}_*')
         tag = args.tag[0]
         param_dir = f"params_{tag}"
-        study_dirs = glob.glob(f'studies/{param_dir}/study_{study_num}_*')
+        study_dirs = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/study_{study_num}_*')
+        base_dir = f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/'
+        # study_dirs = glob.glob(f'studies_CHECK_SIGNALS/{param_dir}/study_{study_num}_*')
         if not study_dirs:
             raise ValueError(f"No study directory found for study number {study_num}")
         study_dir = study_dirs[0]  # Take the first matching directory
+        # pdb.set_trace()
+        # Load trial info to get parameters
+        with open(f"{study_dir}/trial_info.json", 'r') as f:
+            trial_info = json.load(f)
+            params.update(trial_info['parameters'])
+        # pdb.set_trace()
+        params['mode'] = 'predict'
 
         # Load trial info to get parameters
         with open(f"{study_dir}/trial_info.json", 'r') as f:
@@ -1822,6 +1837,22 @@ elif mode == 'embedding':
             from model.model_fn import build_DBI_TCN_DorizonMixer as build_DBI_TCN
         elif 'MixerCori' in params['TYPE_ARCH']:
             from model.model_fn import build_DBI_TCN_CorizonMixer as build_DBI_TCN
+        elif 'TripletOnly' in params['TYPE_ARCH']:
+            # pdb.set_trace()
+            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
+            # pdb.set_trace()
+            import importlib.util
+            # spec = glob.glob(f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/study_{2211}_*')[0]
+            # spec = importlib.util.spec_from_file_location("model_fn", f"{tmp_dir}/model/model_fn.py")
+            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn_BACKUP.py")
+            # pdb.set_trace()
+            if int(study_num)<850:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr859/model_fn.py")
+            else:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
+            model_module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(model_module)
+            build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly            
         from model.model_fn import CSDLayer
         from tcn import TCN
         from tensorflow.keras.models import load_model
@@ -1939,9 +1970,9 @@ elif mode == 'embedding':
     test_ripples = tf.data.Dataset.from_tensor_slices(ripples[:,-sample_length:,:]).batch(params["BATCH_SIZE"])
     # test_ripples = timeseries_dataset_from_array(ripples, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
 
+    pdb.set_trace()
     tmp_act = model.predict(test_ripples)
-
-    # pdb.set_trace()
+    pdb.set_trace()
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/activations/{0}_act{1}.npy'.format(model_name, 'TCN'), tmp_act)
     # save activations
     # for il in range(len(tmp_act)):
