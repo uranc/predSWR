@@ -1809,7 +1809,7 @@ def objective_proxy(trial, model_name, tag, logger):
     elif params['NO_TIMEPOINTS'] == 384:dil_lib = [8,7,6,6,6]
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_FILTERS'] = 32
-    params['EMBEDDING_DIM'] = 32#params['NO_FILTERS']
+    params['EMBEDDING_DIM'] = 32 #params['NO_FILTERS']
 
     # Set Loss Name (Strict)
     params['TYPE_LOSS'] += tag

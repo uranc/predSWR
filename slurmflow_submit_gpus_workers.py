@@ -44,7 +44,7 @@ for model_name in range(48):
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
     # pdb.set_trace()
-    if ijob < 14:
+    if ijob < 6:
         print('skip')
     #     subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
     # elif ijob < 6:

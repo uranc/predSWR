@@ -1852,8 +1852,11 @@ elif mode == 'embedding':
             # spec = importlib.util.spec_from_file_location("model_fn", f"{tmp_dir}/model/model_fn.py")
             # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn_BACKUP.py")
             # pdb.set_trace()
+
             if int(study_num)<850:
                 spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr859/model_fn.py")
+            elif int(study_num)<3100:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr3030/model_fn.py")
             else:
                 spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
             model_module = importlib.util.module_from_spec(spec)
@@ -1867,6 +1870,7 @@ elif mode == 'embedding':
         weight_file = f"{study_dir}/max.weights.h5"
         # weight_file = f"{study_dir}/robust.weights.h5"
         print(f"Loading weights from: {weight_file}")
+        # params['EMBEDDING_DIM'] = 96
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         model.load_weights(weight_file)
     elif model_name == 'RippleNet':

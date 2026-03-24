@@ -1277,13 +1277,17 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
         
         # ---- projection head for contrastive (L2N ONLY here) ----
+        # emb = LayerNormalization(name='emb_ln')(feats)
+        # emb = Dense(n_filters * 2, activation='gelu',
+        #             kernel_initializer=this_kernel_initializer, name='emb_p1')(emb)
+        # emb = Dense(n_filters, activation=None,
+        #             kernel_initializer=this_kernel_initializer, name='emb_p2')(emb)
+        # emb = Lambda(lambda z: tf.math.l2_normalize(z, axis=-1), name='emb_l2n')(emb)
+        emb_dim = int(params.get('EMBEDDING_DIM', 32))
         emb = LayerNormalization(name='emb_ln')(feats)
-        emb = Dense(n_filters * 2, activation='gelu',
-                    kernel_initializer=this_kernel_initializer, name='emb_p1')(emb)
-        emb = Dense(n_filters, activation=None,
-                    kernel_initializer=this_kernel_initializer, name='emb_p2')(emb)
-        emb = Lambda(lambda z: tf.math.l2_normalize(z, axis=-1), name='emb_l2n')(emb)
-
+        # We replace the two 'p1/p2' layers with a single bottleneck funnel
+        emb = Dense(emb_dim, activation=None, use_bias=False, name='emb_linear')(emb)
+        emb = Lambda(lambda z: tf.math.l2_normalize(z, axis=-1, epsilon=1e-6), name='emb_l2n')(emb)
         # ---- outputs (prob first, then emb) ----
         out = Concatenate(axis=-1, name='concat_cls_emb')([cls_logits, cls_prob, emb])
 
