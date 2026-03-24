@@ -1440,6 +1440,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         print(f"Using Proxy Anchor Loss Fine Tuning with {n_classes} classes, {n_subcenters} sub-centers, embedding dim {emb_dim}")
         # loss_fn = mixed_hybrid_loss_proxy_v1(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         loss_fn = mixed_hybrid_loss_proxy_v1_finetune(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        
         model.load_weights(params['WEIGHT_FILE'], by_name=True)
         print('Loaded weights for fine-tuning from', params['WEIGHT_FILE'])
         model.compile(

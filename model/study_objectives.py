@@ -1746,15 +1746,15 @@ def objective_proxy(trial, model_name, tag, logger):
     
     # --- A. Metric Learning (The Core) ---
     params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.02, 0.08, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 12, 20, step=4)
-    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 8.0, 16.0, step=8.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.8, 1.0, step=0.2)
-    params['LOSS_DECORR']    = trial.suggest_float('LOSS_DECORR', 0.01, 0.05, log=True)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 12, 16, step=4)
+    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 16.0)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.4, 0.8, step=0.2)
+    params['LOSS_DECORR']    = trial.suggest_float('LOSS_DECORR', 0.0005, 0.003, log=True)
     
     # --- B. Classification Head & Regularization ---
-    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 21.0, step=3.0)
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 18.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
-    params['LOSS_TV']         = trial.suggest_float('LOSS_TV', 5e-4, 5e-4 , log=True)
+    params['LOSS_TV']         = 0.0#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
     
     # Dropout (Categorical)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
@@ -1765,7 +1765,7 @@ def objective_proxy(trial, model_name, tag, logger):
     params['BCE_POS_ALPHA'] = 1.0
     params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 2e-4, 4e-4, log=True)
     
-    params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 0, 0)) == 1
+    params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 1, 1)) == 1
     if params['USE_StopGrad']:
         print('Using Stop Gradient for Class. Branch')
         params['TYPE_ARCH'] += 'StopGrad'
@@ -1776,9 +1776,9 @@ def objective_proxy(trial, model_name, tag, logger):
         params['TYPE_ARCH'] += 'Att'
         
         
-    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 0.01, log=True)
-    params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 1.5, 1.5, step=1.0)
-    params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 96, 96, step=32)
+    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.005, 0.02, log=True)
+    params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 0.5, 0.5, step=1.0)
+    params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 64, 64)
     # --- D. Derived / Fixed Params ---
     params.update({
         "SHIFT_MS": 0, "HORIZON_MS": 1,
@@ -1809,7 +1809,7 @@ def objective_proxy(trial, model_name, tag, logger):
     elif params['NO_TIMEPOINTS'] == 384:dil_lib = [8,7,6,6,6]
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_FILTERS'] = 32
-    params['EMBEDDING_DIM'] = params['NO_FILTERS']
+    params['EMBEDDING_DIM'] = 32#params['NO_FILTERS']
 
     # Set Loss Name (Strict)
     params['TYPE_LOSS'] += tag

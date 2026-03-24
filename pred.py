@@ -501,6 +501,8 @@ elif mode == 'predict':
             # pdb.set_trace()
             if int(study_num)<850:
                 spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr859/model_fn.py")
+            elif int(study_num)<3100:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr3030/model_fn.py")
             else:
                 spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
             model_module = importlib.util.module_from_spec(spec)
@@ -756,7 +758,8 @@ elif mode == 'predict':
     squence_stride = 1
     # params['BATCH_SIZE'] = 512*4*3
     params['NO_TIMEPOINTS'] = 44
-    params["BATCH_SIZE"] = 1024*4
+    params["BATCH_SIZE"] = 1024*3
+    params['EMBEDDING_DIM'] = 32#params['NO_FEATURES']
     # pdb.set_trace()
     # from model.input_augment_weighted import rippleAI_load_dataset
     from model.input_proto_new import rippleAI_load_dataset
@@ -1016,8 +1019,11 @@ elif mode == 'fine_tune':
             
             if int(study_num)<850:
                 spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr859/model_fn.py")
+            elif int(study_num)<3030:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr3030/model_fn.py")
             else:
                 spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
+      
             model_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
@@ -1125,27 +1131,25 @@ elif mode == 'fine_tune':
             model = build_DBI_TCN(params=params) # Pass only the params dictionary
         else:
             # pdb.set_trace()
-            params.update({
-                # 1. ARCHITECTURE & SPEED
-                'TYPE_ARCH': params['TYPE_ARCH'].replace("StopGrad", ""),
-                'NAME': params['NAME'].replace("StopGrad", ""),
+            # params.update({
+            #     # 1. ARCHITECTURE & SPEED
+            #     'TYPE_ARCH': params['TYPE_ARCH'].replace("StopGrad", ""),
+            #     'NAME': params['NAME'].replace("StopGrad", ""),
                 
-                # change optimizer
-                # 'TYPE_REG': params['TYPE_REG'].replace("AdamWA", "AdamMixer"),
-                # 'NAME': params['NAME'].replace("AdamWA", "AdamMixer"),
-                
-                'USE_StopGrad': False,
-                'USE_LR_SCHEDULE': False,
-                'LEARNING_RATE': 1e-5,        # Very low (Protect the backbone)
-                'BATCH_SIZE': 128,            # Maximize stability
-
-                'LOSS_NEGATIVES': 2.0,      # Emphasize negatives
-                # 'LOSS_PROXY_FT': 0.01,
-                # 'LOSS_TV': 0.01,
-                # 'LOSS_PROXY': 0.01,
-                'FREEZE_PROXIES': True,
-                'NO_EPOCHS': 500,
-            })
+            #     # change optimizer
+            #     # 'TYPE_REG': params['TYPE_REG'].replace("AdamWA", "AdamMixer"),
+            #     # 'NAME': params['NAME'].replace("AdamWA", "AdamMixer"),
+            #     'USE_StopGrad': False,
+            #     'USE_LR_SCHEDULE': False,
+            #     'LEARNING_RATE': 1e-5,        # Very low (Protect the backbone)
+            #     'BATCH_SIZE': 128,            # Maximize stability
+            #     'LOSS_NEGATIVES': 2.0,      # Emphasize negatives
+            #     # 'LOSS_PROXY_FT': 0.01,
+            #     # 'LOSS_TV': 0.01,
+            #     # 'LOSS_PROXY': 0.01,
+            #     'FREEZE_PROXIES': True,
+            #     'NO_EPOCHS': 500,
+            # })
             params.update({'mode': 'fine_tune'})
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         # model.load_weights(weight_file, skip_mismatch=True)
@@ -1176,6 +1180,8 @@ elif mode == 'fine_tune':
         if 'TripletOnly' in params['TYPE_ARCH']:
             params['steps_per_epoch'] = 1000
             flag_online = 'Online' in params['TYPE_ARCH']
+            flag_online = False#'Online' in params['TYPE_ARCH']
+            # pdb.set_trace()
             train_dataset, test_dataset, label_ratio, dataset_params = rippleAI_load_dataset(params, mode='train', preprocess=True, process_online=flag_online)
         elif 'MixerOnly' in params['TYPE_ARCH']:
             flag_online = 'Online' in params['TYPE_ARCH']
@@ -1803,7 +1809,7 @@ elif mode == 'embedding':
         # Extract study number from model name (e.g., 'Tune_45_' -> '45')
         study_num = model_name.split('_')[1]
         print(f"Loading tuned model from study {study_num}")
-        pdb.set_trace()
+        # pdb.set_trace()
         # params['SRATE'] = 2500
         # Find the study directory
         import glob
@@ -1970,9 +1976,9 @@ elif mode == 'embedding':
     test_ripples = tf.data.Dataset.from_tensor_slices(ripples[:,-sample_length:,:]).batch(params["BATCH_SIZE"])
     # test_ripples = timeseries_dataset_from_array(ripples, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
 
-    pdb.set_trace()
+    # pdb.set_trace()
     tmp_act = model.predict(test_ripples)
-    pdb.set_trace()
+    # pdb.set_trace()
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/activations/{0}_act{1}.npy'.format(model_name, 'TCN'), tmp_act)
     # save activations
     # for il in range(len(tmp_act)):

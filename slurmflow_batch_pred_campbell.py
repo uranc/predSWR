@@ -10,7 +10,7 @@ tag = 'tripletOnlyProxy2500'
 # tag = 'tripletOnlyClean2500' 
 dry_run = False 
 
-model_lib = [2671,2672]#[2250]#2250]#1450 2250, 2346]#14500, 
+model_lib = [2250]#[2671,2672]#[2250]#2250]#1450 2250, 2346]#14500, 
 ses_list = sorted(list(LFP_ROOT.glob("ses_*.nc")))
 
 print(f"Scanning {len(ses_list)} upsampled LFP files...")

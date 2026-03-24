@@ -71,7 +71,12 @@ if 'MixerOnly' in params.get('TYPE_ARCH', ''):
     spec.loader.exec_module(model_module)
     build_DBI_TCN = model_module.build_DBI_TCN_MixerOnly
 elif 'TripletOnly' in params.get('TYPE_ARCH', ''):
-    m_path = f"{base_dir}/base_model_tr859/model_fn.py" if int(study_num) < 850 else f"{base_dir}/base_model/model_fn.py"
+    if int(study_num) < 850:
+        m_path = f"{base_dir}/base_model_tr859/model_fn.py" 
+    elif int(study_num) < 3030:
+        m_path = f"{base_dir}/base_model_tr3030/model_fn.py"
+    else:
+        m_path = f"{base_dir}/base_model/model_fn.py"
     spec = importlib.util.spec_from_file_location("model_fn", m_path)
     model_module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(model_module)
@@ -84,7 +89,27 @@ else:
 
 # --- 3. Weight Selection ---
 mcc_w, evt_w, max_w = f"{study_dir}/mcc.weights.h5", f"{study_dir}/event.weights.h5", f"{study_dir}/max.weights.h5"
-weight_file = mcc_w if os.path.exists(mcc_w) else (evt_w if os.path.exists(evt_w) else max_w)
+
+
+def get_newest_weight_file(study_dir, use_fine_tuned=False):
+    if use_fine_tuned:
+        fine_tuned_files = glob.glob(os.path.join(study_dir, '*finetune.weights.h5'))
+        if fine_tuned_files:
+            return max(fine_tuned_files, key=os.path.getmtime)
+        else:
+            print("No fine-tuned weights found, falling back to standard weights.")
+    weight_candidates = [
+        os.path.join(study_dir, fname) for fname in ['mcc.weights.h5', 'event.weights.h5', 'max.weights.h5']
+    ]
+    existing_weights = [f for f in weight_candidates if os.path.exists(f)]
+    if existing_weights:
+        return max(existing_weights, key=os.path.getmtime)
+    else:
+        raise FileNotFoundError("No weights file found in study directory.")
+
+# Example usage: set use_fine_tuned=True to load fine-tuned weights
+weight_file = get_newest_weight_file(study_dir, use_fine_tuned=True)
+print(f"Using weights file: {weight_file}")
 params['WEIGHT_FILE'] = weight_file
 
 # --- 4. Initialize Model ---
@@ -113,7 +138,7 @@ chan_slice = sliding_window_zscore(lfp_8ch_raw, win=1250)
 # Batch size 9000 for efficiency; shuffle must be False for time-series prediction
 train_x = timeseries_dataset_from_array(
     chan_slice, None, sequence_length=sample_length, 
-    sequence_stride=1, batch_size=9000, shuffle=False
+    sequence_stride=1, batch_size=300, shuffle=False
 )
 
 # --- 6. Prediction & Timing ---
