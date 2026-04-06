@@ -1745,16 +1745,16 @@ def objective_proxy(trial, model_name, tag, logger):
     # ============================================================
     
     # --- A. Metric Learning (The Core) ---
-    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.02, 0.08, log=True)
+    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.20, log=True)
     params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 12, 16, step=4)
     params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 16.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.4, 0.8, step=0.2)
-    params['LOSS_DECORR']    = trial.suggest_float('LOSS_DECORR', 0.0005, 0.003, log=True)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 1.0, 1.8, step=0.2)
+    params['LOSS_DECORR']    = 0.0#trial.suggest_float('LOSS_DECORR', 0.0, 0.0, log=False)
     
     # --- B. Classification Head & Regularization ---
     params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 18.0, step=3.0)
     params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
-    params['LOSS_TV']         = 0.0#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
+    params['LOSS_TV']         = 0.0005#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
     
     # Dropout (Categorical)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
@@ -1765,7 +1765,7 @@ def objective_proxy(trial, model_name, tag, logger):
     params['BCE_POS_ALPHA'] = 1.0
     params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 2e-4, 4e-4, log=True)
     
-    params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 1, 1)) == 1
+    params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 0, 0)) == 1
     if params['USE_StopGrad']:
         print('Using Stop Gradient for Class. Branch')
         params['TYPE_ARCH'] += 'StopGrad'
@@ -1776,8 +1776,8 @@ def objective_proxy(trial, model_name, tag, logger):
         params['TYPE_ARCH'] += 'Att'
         
         
-    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.005, 0.02, log=True)
-    params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 0.5, 0.5, step=1.0)
+    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 0.01, log=True)
+    params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 1.5, 2.5, step=1.0)
     params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 64, 64)
     # --- D. Derived / Fixed Params ---
     params.update({
