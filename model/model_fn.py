@@ -1472,6 +1472,9 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         elif params['mode']=='predict':
             # all_outputs = Lambda(lambda tt: tt[:, -1:, 0], name='Last_Output')(anchor_output)
             all_outputs = Lambda(lambda tt: tt[:, -1:, tcn_backbone._cls_prob_index], name='Last_Output')(anchor_output)
+        elif params['mode']=='export':
+            # all_outputs = Lambda(lambda tt: tt[:, -1:, tcn_backbone._cls_prob_index], name='Last_Output')(anchor_output)
+            all_outputs = anchor_output[:, -1:, :]
         else:
             all_outputs = Lambda(lambda tt: tt[:, -1:, tcn_backbone._cls_prob_index], name='Last_Output')(anchor_output)
 
@@ -3707,8 +3710,8 @@ def mixed_hybrid_loss_proxy_v2(horizon=0, loss_weight=1, params=None, model=None
             
             # Normalize by the number of valid (non-zero mask) elements to keep loss magnitude stable
             # Add epsilon to prevent div by zero
-            # n_valid = tf.reduce_sum(mask) + 1e-6
-            # return tf.reduce_sum(loss) / n_valid
+            n_valid = tf.reduce_sum(mask) + 1e-6
+            return tf.reduce_sum(loss) / n_valid
             return tf.reduce_mean(loss) # Keep simple mean for stability with batch size
             
         return tf.reduce_mean(loss)

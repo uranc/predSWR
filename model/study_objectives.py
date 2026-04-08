@@ -1746,39 +1746,39 @@ def objective_proxy(trial, model_name, tag, logger):
     
     # --- A. Metric Learning (The Core) ---
     params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.20, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 12, 16, step=4)
-    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 16.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 1.0, 1.8, step=0.2)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 12, 32, step=4)
+    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 32.0)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 1.2, 1.8, step=0.2)
     params['LOSS_DECORR']    = 0.0#trial.suggest_float('LOSS_DECORR', 0.0, 0.0, log=False)
     
     # --- B. Classification Head & Regularization ---
-    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 18.0, step=3.0)
-    params['LABEL_SMOOTHING'] = trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 24.0, step=3.0)
+    params['LABEL_SMOOTHING'] = 0.0#trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
     params['LOSS_TV']         = 0.0005#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
     
     # Dropout (Categorical)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
-    params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 1, 1)]
+    params['DROP_RATE']       = 0.2#drop_lib[trial.suggest_int('DROP_RATE', 1, 1)]
     # params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, len(drop_lib)-1)]
 
     # --- C. Constants / Fixed ---
     params['BCE_POS_ALPHA'] = 1.0
-    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 2e-4, 4e-4, log=True)
+    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-4, 4e-4, log=True)
     
-    params['USE_StopGrad'] = int(trial.suggest_int('USE_StopGrad', 0, 0)) == 1
+    params['USE_StopGrad'] = 0.0#int(trial.suggest_int('USE_StopGrad', 0, 0)) == 1
     if params['USE_StopGrad']:
         print('Using Stop Gradient for Class. Branch')
         params['TYPE_ARCH'] += 'StopGrad'
 
-    params['USE_Attention'] = int(trial.suggest_int('USE_Attention', 0, 0)) == 1
+    params['USE_Attention'] = 0.0#int(trial.suggest_int('USE_Attention', 0, 0)) == 1
     if params['USE_Attention']:
         print('Using Attention')
         params['TYPE_ARCH'] += 'Att'
         
         
     params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 0.01, log=True)
-    params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 1.5, 2.5, step=1.0)
-    params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 64, 64)
+    params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 0.5, 3.0, step=1.0)
+    params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 32, 96, step=16)
     # --- D. Derived / Fixed Params ---
     params.update({
         "SHIFT_MS": 0, "HORIZON_MS": 1,
@@ -2016,13 +2016,15 @@ def objective_proxy(trial, model_name, tag, logger):
     bad = (
         (not np.isfinite(prauc_sel)) or (prauc_sel <= 0.001) or
         (not np.isfinite(rec_sel))   or (rec_sel <= 0.001) or (rec_sel > 0.999) or
-        (not np.isfinite(fpmin_sel)) or (fpmin_sel <= 0.001) or   
-        (not np.isfinite(lat_sel))   or (lat_sel >= 0.999)      
+        (not np.isfinite(fpmin_sel)) or (fpmin_sel <= 0.001) or (fpmin_sel > 1000) or
+        (not np.isfinite(lat_sel))   or (lat_sel >= 0.999)
     )
     if bad:
-        raise optuna.TrialPruned("Bug signature at selected epoch.")
+        # raise optuna.TrialPruned("Bug signature at selected epoch.")
+        return 0.0, 0.0, 6000.0
 
-    return float(prauc_sel), float(fpmin_sel)
+    return float(rec_sel), float(mcc_sel), float(fpmin_sel)
+    # return float(prauc_sel), float(fpmin_sel)
 
 def objective_proxy_finetune(trial, model_name, tag, logger):
     ctypes.CDLL("libcuda.so.1")

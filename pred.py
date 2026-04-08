@@ -1310,12 +1310,21 @@ elif mode=='export':
             import importlib.util
             base_dir = f'/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/studies/{param_dir}/'
             # study_dirs = glob.glob(f'studies_CHECK_SIGNALS/{param_dir}/study_{study_num}_*')
-            spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")            
-            # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn.py")
+            
+            
+            ##############
+            if int(study_num)<850:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr859/model_fn.py")
+            elif int(study_num)<3100:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr3030/model_fn.py")
+            else:
+                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
             model_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
-            # build_DBI_TCN = model_module.build_DBI_TCN_TripletOnlyTranspose
+            ##############
+            
+            # from model.model_fn import build_DBI_TCN_TripletOnly as build_DBI_TCN
         elif 'CADOnly' in params['TYPE_ARCH']:
             pretrain_tag = 'params_mixerOnlyEvents2500'
             pretrain_num = 1414#958
@@ -1382,7 +1391,7 @@ elif mode=='export':
             from tcn import TCN
             from tensorflow.keras.models import load_model
             # Load weights
-            params['mode'] = 'predict'
+            params['mode'] = 'export'
 
             # weight_file = f"{study_dir}/last.weights.h5"
             if 'Events' in tag:
@@ -1406,7 +1415,7 @@ elif mode=='export':
             from tcn import TCN
             from tensorflow.keras.models import load_model
             # Load weights
-            params['mode'] = 'predict'
+            params['mode'] = 'export'
             # weight_file = f"{study_dir}/last.weights.h5"
             if 'Events' in tag:
                 weight_file = f"{study_dir}/event.weights.h5"
@@ -1414,7 +1423,7 @@ elif mode=='export':
             else:
                 weight_file = f"{study_dir}/max.weights.h5"
                 tag += 'MaxF1'
-            params['mode'] = 'predict'
+            params['mode'] = 'export'
             weight_file = f"{study_dir}/event.weights.h5"
             # weight_file = f"{study_dir}/max.weights.h5"
 
@@ -1557,10 +1566,27 @@ elif mode=='export':
         output_simple = f"./frozen_models/{model_name}/model_simple.onnx"
         model_proto, _ = tf2onnx.convert.from_keras(model, input_signature=spec, output_path=output_path, opset=15)
         print(f"Model saved to {output_path}")
-                
+        onnx.save(model_proto, output_path)            
         # # NEW: Simplify the graph immediately
-        # print("Simplifying...")
+        print("Simplifying...")
+        # Simplify the graph: it fuses redundant layers and prunes unused nodes
+        onnx_model = onnx.load(output_path)
+        model_simp, check = simplify(
+            onnx_model,
+            # This specifically targets the ops that trigger the ML extension
+            skip_fuse_bn=False 
+        )
+
+        if check:
+            print("Simplification Validated.")
+            # Overwrite with the simplified version
+            onnx.save(model_simp, output_simple)
             
+            # Check the simplified model's imports
+            new_model = onnx.load(output_simple)
+            print("New Imports:")
+            for imp in new_model.metadata_props:
+                print(imp)     
         # try:
         #     # Load the base model object
         #     model_onnx = onnx.load(output_path)
@@ -2029,16 +2055,31 @@ elif mode == 'tune_server':
     #     multivariate=True,      # joint modeling across params
     #     group=True,             # handles conditional/subspace grouping
     #     constant_liar=True,     # parallel-friendly; avoids collisions
-    #     n_startup_trials=40,    # pure random warmup (bump if your space is large)
+    #     n_startup_trials=24,    # pure random warmup (bump if your space is large)
     #     n_ei_candidates=24,     # more candidate draws for better proposals
     #     seed=1337,
     # )
-    sampler = NSGAIISampler(
-        population_size=36,   # High diversity to utilize 18 parallel streams
-        mutation_prob=0.2,   # Slightly increased (default 0.1) to keep discovering new logic over weeks
-        crossover_prob=0.9,   # Keep high to combine features of "Fast" and "Accurate" models
+    # def constraints_eval(trial):
+    #     return trial.user_attrs["constraint"]    
+    # sampler = GPSampler(
+    # seed=1337,
+    # n_startup_trials=25,
+    # deterministic_objective=False,
+    # # constraints_func=constraints_eval, # The magic constraint function
+    # constant_liar=True # Safe parallelization on Slurm!
+    # )
+    sampler = TPESampler(
+        multivariate=True,         # Maps interactions between hyperparameters
+        constant_liar=True,        # Safe for HPC / Slurm Parallel workers
+        n_startup_trials=40,       
         seed=1337
-    )
+    )    
+    # sampler = NSGAIISampler(
+    #     population_size=36,   # High diversity to utilize 18 parallel streams
+    #     mutation_prob=0.2,   # Slightly increased (default 0.1) to keep discovering new logic over weeks
+    #     crossover_prob=0.9,   # Keep high to combine features of "Fast" and "Accurate" models
+    #     seed=1337
+    # )
     # pruner = optuna.pruners.HyperbandPruner(
     #         min_resource=30,    # Give model 30 epochs before judging
     #         max_resource=500,   # Max epochs
@@ -5829,7 +5870,7 @@ elif mode == 'tune_viz_multi_v9':
     # ==========================================
     # [CONFIG] START TRIAL PARAMETER
     # ==========================================
-    START_FROM_TRIAL = 2580
+    START_FROM_TRIAL = 880
     # ==========================================
 
     param_dir = f'params_{tag}'
