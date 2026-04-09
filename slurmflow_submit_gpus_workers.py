@@ -50,18 +50,18 @@ for model_name in range(40):
     # elif ijob < 6:
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_long.sh', tag])
-        subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
+        # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
         # if ijob == 0:
         #     pdb.set_trace()
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    elif ijob < 26:
+    elif ijob < 12:
         print('skip')
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
         subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    elif ijob < 40:
+    elif ijob < 48:
         subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
     # if ijob == 0:
     #     pdb.set_trace()

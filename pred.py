@@ -2088,7 +2088,7 @@ elif mode == 'tune_server':
     study = optuna.create_study(
         study_name=param_dir,
         storage=storage,
-        directions=["maximize", "minimize"],  # PR-AUC up, FP/min down
+        directions=["maximize", "maximize", "minimize"],  # PR-AUC up, FP/min down
         load_if_exists=True,
         sampler=sampler,
         # pruner=pruner,
@@ -5870,7 +5870,7 @@ elif mode == 'tune_viz_multi_v9':
     # ==========================================
     # [CONFIG] START TRIAL PARAMETER
     # ==========================================
-    START_FROM_TRIAL = 880
+    START_FROM_TRIAL = 0
     # ==========================================
 
     param_dir = f'params_{tag}'
