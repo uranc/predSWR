@@ -499,12 +499,15 @@ elif mode == 'predict':
             # spec = importlib.util.spec_from_file_location("model_fn", f"{tmp_dir}/model/model_fn.py")
             # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn_BACKUP.py")
             # pdb.set_trace()
-            if int(study_num)<850:
-                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr859/model_fn.py")
-            elif int(study_num)<3100:
-                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr3030/model_fn.py")
-            else:
-                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
+            
+            spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
+            # proxy study
+            # if int(study_num)<850:
+            #     spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr859/model_fn.py")
+            # elif int(study_num)<3100:
+            #     spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr3030/model_fn.py")
+            # else:
+            #     spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
             model_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly
@@ -1878,13 +1881,13 @@ elif mode == 'embedding':
             # spec = importlib.util.spec_from_file_location("model_fn", f"{tmp_dir}/model/model_fn.py")
             # spec = importlib.util.spec_from_file_location("model_fn", f"{study_dir}/model/model_fn_BACKUP.py")
             # pdb.set_trace()
-
-            if int(study_num)<850:
-                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr859/model_fn.py")
-            elif int(study_num)<3100:
-                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr3030/model_fn.py")
-            else:
-                spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
+            spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
+            # if int(study_num)<850:
+            #     spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr859/model_fn.py")
+            # elif int(study_num)<3100:
+            #     spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model_tr3030/model_fn.py")
+            # else:
+            #     spec = importlib.util.spec_from_file_location("model_fn", f"{base_dir}/base_model/model_fn.py")
             model_module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(model_module)
             build_DBI_TCN = model_module.build_DBI_TCN_TripletOnly            
@@ -2003,11 +2006,28 @@ elif mode == 'embedding':
     sample_length = params['NO_TIMEPOINTS']*2
     from tensorflow.keras.utils import timeseries_dataset_from_array
 
-    test_ripples = tf.data.Dataset.from_tensor_slices(ripples[:,-sample_length:,:]).batch(params["BATCH_SIZE"])
+    # test_ripples = tf.data.Dataset.from_tensor_slices(ripples[:,-sample_length:,:]).batch(params["BATCH_SIZE"])
     # test_ripples = timeseries_dataset_from_array(ripples, None, sequence_length=sample_length, sequence_stride=1, batch_size=params["BATCH_SIZE"])
 
     # pdb.set_trace()
-    tmp_act = model.predict(test_ripples)
+    # tmp_act = model.predict(test_ripples)
+    
+    
+    ####
+    nBatch, nTimepoints, nChans = ripples.shape
+    window_length = 44  # e.g., 44
+    n_windows = nTimepoints - window_length + 1
+    outputs = np.zeros((nBatch, n_windows, 34))  # Fill ... with your model output dim
+
+    for t in range(n_windows):
+        # Shape: [nBatch, window_length, nChans]
+        window = ripples[:, t:t+window_length, :]
+        pred = model.predict(window, batch_size=params["BATCH_SIZE"], verbose=0)
+        if pred.ndim == 3 and pred.shape[1] == 1:
+            pred = np.squeeze(pred, axis=1)  # Remove singleton dimension               
+        outputs[:, t, :] = pred  # Adjust indexing if pred shape differs
+    tmp_act = outputs
+    ####
     # pdb.set_trace()
     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/activations/{0}_act{1}.npy'.format(model_name, 'TCN'), tmp_act)
     # save activations
@@ -5922,52 +5942,66 @@ elif mode == 'tune_viz_multi_v9':
             return lookup.get(t.number, float('nan'))
         return target
 
+
     # ---------- COLLECT DATA ----------
     print("Collecting trial data...")
+    
+    # 1. Initialize rows immediately to prevent NameError
+    rows = [] 
+    
     trials = study.get_trials(deepcopy=False, states=(optuna.trial.TrialState.COMPLETE,))
     
-    # [FILTER] Apply filter
     if START_FROM_TRIAL > 0:
         print(f"Filtering: Keeping only trials >= {START_FROM_TRIAL}")
         trials = [t for t in trials if t.number >= START_FROM_TRIAL]
 
     if not trials:
         print(f"No completed trials found (after filtering >= {START_FROM_TRIAL}).")
-        sys.exit(0)
+        # Exit gracefully or create empty DF
+        df = pd.DataFrame() 
+    else:
+        for t in trials:
+            try:
+                # FIX: Pull PR-AUC from user_attrs (sel_prauc) instead of t.values[0]
+                # This fixes the issue where Recall was being plotted as PR-AUC
+                pr = _ua(t, ["sel_prauc", "val_sample_pr_auc"])
+                
+                # FIX: Pull FP from user_attrs or the 3rd return value (index 2)
+                real_fp = _ua(t, ["sel_low_conf_fp", "val_mean_low_conf_fp"])
+                if (real_fp is None or np.isnan(real_fp)) and t.values and len(t.values) >= 3:
+                    real_fp = float(t.values[2])
+                
+                if pr is None or math.isnan(pr) or math.isinf(pr): 
+                    continue
 
-    nvals = max((len(t.values) if t.values else 0) for t in trials)
-    OBJECTIVE_INDEX = dict(pr_auc=0, fp_min=1) if nvals == 2 else dict(pr_auc=0)
+                rec = {
+                    "trial_number": t.number,
+                    "val_sample_pr_auc": pr,      
+                    "val_fp_per_min":    real_fp,
+                    "val_latency_score":  _ua(t, ["sel_latency_range", "val_latency_score_range"]), 
+                    "val_recall_at_0p7":  _ua(t, ["sel_high_conf_rec", "val_mean_high_conf_recall"]),
+                    "val_sample_max_f1":  _ua(t, ["sel_max_f1", "val_sample_max_f1"]),
+                    "val_sample_max_mcc": _ua(t, ["sel_max_mcc", "val_sample_max_mcc"]),
+                    "sel_epoch":          _ua(t, ["sel_epoch", "best_epoch"]), 
+                }
+                rec.update(t.params)
+                rows.append(rec)
+            except Exception as e: 
+                print(f"Skipping trial {t.number} due to error: {e}")
+                continue
 
-    rows = []
-    for t in trials:
-        if not t.values: continue
-        try:
-            pr = float(t.values[OBJECTIVE_INDEX['pr_auc']])
-            if 'fp_min' in OBJECTIVE_INDEX:
-                real_fp = float(t.values[OBJECTIVE_INDEX['fp_min']])
-            else:
-                real_fp = _ua(t, ["sel_low_conf_fp", "sel_fp_per_min", "val_mean_low_conf_fp"])
-            
-            if math.isnan(pr) or math.isinf(pr): continue
+        df = pd.DataFrame(rows)
 
-            rec = {
-                "trial_number": t.number,
-                "val_sample_pr_auc": pr,      
-                "val_fp_per_min":    real_fp,
-                "val_latency_score":  _ua(t, ["sel_latency_range", "sel_latency_score", "val_latency_score_range"]), 
-                "val_recall_at_0p7":  _ua(t, ["sel_high_conf_rec", "sel_recall_at_0p7", "val_mean_high_conf_recall"]),
-                "val_sample_max_f1":  _ua(t, ["sel_max_f1", "val_sample_max_f1"]),
-                "val_sample_max_mcc": _ua(t, ["sel_max_mcc", "val_sample_max_mcc"]),
-                "sel_epoch":          _ua(t, ["sel_epoch", "selected_epoch", "best_epoch"]), 
-            }
-            rec.update(t.params)
-            rows.append(rec)
-        except Exception: continue
-
-    df = pd.DataFrame(rows)
-    print(f"Saving {len(df)} rows to all_trials_data.csv...")
-    df.to_csv(os.path.join(viz_dir, "all_trials_data.csv"), index=False)
-
+    # ---------- DATA CLEANING FOR VISUALS ----------
+    if not df.empty:
+        # Filter out the '6000.0' error values so they don't squash your plots
+        df = df[df['val_fp_per_min'] < 5000].copy()
+        print(f"Saving {len(df)} valid rows to all_trials_data.csv...")
+        df.to_csv(os.path.join(viz_dir, "all_trials_data.csv"), index=False)
+    else:
+        print("Final DataFrame is empty. Check if user_attrs are being saved correctly.")
+        sys.exit(1)
+        
     # --- CLASSIFY COLUMNS ---
     known_metrics = ["val_sample_pr_auc", "val_fp_per_min", "val_latency_score", 
                      "val_recall_at_0p7", "val_sample_max_mcc", "val_sample_max_f1", 

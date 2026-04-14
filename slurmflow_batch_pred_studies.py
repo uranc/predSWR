@@ -7,7 +7,7 @@ import time
 import copy
 
 
-tag = 'tripletOnlyProxy2500' # FiltL, FiltH, FiltM, SingleCh
+tag = 'tripletOnlyProxyGP2500' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'tripletOnlyLatents2500' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'mixerOnly' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'mixerHori' # FiltL, FiltH, FiltM, SingleCh
@@ -46,7 +46,7 @@ tag = 'tripletOnlyProxy2500' # FiltL, FiltH, FiltM, SingleCh
 # model_lib = [1234, 1235, 1236, 1237, 1238, 1239, 1240, 1241, 1242, 1243, 1244, 1245, 1246]
 # model_lib = [1247, 1248, 1249, 1250, 1251, 1252, 1253, 1254, 1255, 1256, 1257, 1258, 1259, 1260, 1261, 1262, 1263, 1265, 1266, 1268, 1269, 1270, 1271, 1272, 1274, 1275, 1276, 1281]
 # model_lib = [1282, 1284, 1286, 1289, 1290, 1291, 1292, 1294, 1295, 1296, 1297, 1298, 1301, 1302, 1305, 1310, 1312]
-model_lib = [ 3360, 3362, 3365, 3374, 3376, 3379, 3384, 3431, 3516, 3531, 3538, 3547, 3561, 3593, 3642, 3681, 3883, 3889, 3891, 3893, 3896, 3905, 3914, 3915, 3926, 3933, 3936, 3941, 3944]
+model_lib = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73, 74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104, 105, 106, 110, 111, 112, 113, 114, 115, 117, 118, 119]
 n = 0
 
 for im, model in enumerate(model_lib):
@@ -64,8 +64,7 @@ for im, model in enumerate(model_lib):
         # print('submitting job for model: ', model_name, im, iv)
         # subprocess.call(['python', 'pred.py', '--mode', 'embedding', '--model', model_name, '--val', str(iv), '--tag', tag])
         pr_path = '/mnt/hpc/projects/OWVinckSWR/DL/predSWR/probs/'
-        pr = 'preds_val{0}_{1}'.format(iv, model_name)
-        
+        pr = 'preds_val{0}_{1}_{2}'.format(iv, model_name, tag)
 
         files = [(pr in i) for i in os.listdir(pr_path)]
         if sum(files) == 0:
