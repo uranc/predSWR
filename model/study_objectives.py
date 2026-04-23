@@ -1754,7 +1754,7 @@ def objective_proxy(trial, model_name, tag, logger):
     # --- B. Classification Head & Regularization ---
     params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 24.0, step=3.0)
     params['LABEL_SMOOTHING'] = 0.0#trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
-    params['LOSS_TV']         = 0.0005#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
+    params['LOSS_TV']         = 0.000#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
     
     # Dropout (Categorical)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
@@ -1776,7 +1776,7 @@ def objective_proxy(trial, model_name, tag, logger):
         params['TYPE_ARCH'] += 'Att'
         
         
-    params['HYPER_ENTROPY'] = trial.suggest_float('HYPER_ENTROPY', 0.001, 0.01, log=True)
+    params['HYPER_ENTROPY'] = 0.0#trial.suggest_float('HYPER_ENTROPY', 0.00, 0.0, log=True)
     params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 0.5, 3.0, step=1.0)
     params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 32, 96, step=16)
     # --- D. Derived / Fixed Params ---
