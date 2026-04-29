@@ -2108,7 +2108,7 @@ elif mode == 'tune_server':
     study = optuna.create_study(
         study_name=param_dir,
         storage=storage,
-        directions=["maximize", "maximize", "minimize"],  # PR-AUC up, FP/min down
+        directions=["maximize", "maximize"],# lat / mcc
         load_if_exists=True,
         sampler=sampler,
         # pruner=pruner,

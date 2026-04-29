@@ -1012,6 +1012,62 @@ class MultiScaleCausalGate(Layer):
         ))
         return cfg
     
+class CausalPatchFrontend(Layer):
+    """
+    Extracts multi-scale temporal patches and concatenates them with the raw input.
+    Input: [Batch, Time, Channels] (e.g., 8 channels, already z-scored)
+    Output: [Batch, Time, Channels + (len(scales) * filters_per_scale)]
+    """
+    def __init__(self, 
+                 scales=(3, 7, 11, 15), 
+                 filters_per_scale=16, 
+                 activation='gelu',
+                 name="causal_patch_frontend", 
+                 **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.scales = scales
+        self.filters_per_scale = int(filters_per_scale)
+        self.activation = activation
+        self.patch_extractors = []
+
+    def build(self, input_shape):
+        # Create a separate causal convolution for each "patch" size
+        for k in self.scales:
+            k = int(k)
+            conv = Conv1D(
+                filters=self.filters_per_scale, 
+                kernel_size=k, 
+                padding='causal',            # Strict causality!
+                activation=self.activation,  # GELU extracts non-linear phase features
+                kernel_initializer='he_normal',
+                name=f"{self.name}_patch_k{k}"
+            )
+            self.patch_extractors.append(conv)
+            
+        super().build(input_shape)
+
+    def call(self, inputs):
+        # 1. Start the feature list with the RAW z-scored inputs (User constraint)
+        feats = [inputs]
+        
+        # 2. Extract the sliding patches
+        for conv in self.patch_extractors:
+            feats.append(conv(inputs))
+            
+        # 3. Concatenate everything together
+        # If input is 8 channels, and we have 4 scales of 16 filters:
+        # Output = 8 + (4 * 16) = 72 channels
+        return Concatenate(axis=-1, name=f"{self.name}_concat")(feats)
+
+    def get_config(self):
+        cfg = super().get_config()
+        cfg.update(dict(
+            scales=self.scales,
+            filters_per_scale=self.filters_per_scale,
+            activation=self.activation
+        ))
+        return cfg
+    
 def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
 
     # LR schedure 
@@ -1135,6 +1191,12 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
                 use_residual_mix=True,
                 name="ms_causal_gate"
             )(inputs_nets)            
+
+        if params['PATCH_FILTERS'] > 0:
+            inputs_nets = CausalPatchFrontend(
+                scales=(3, 7, 11, 15), 
+                filters_per_scale=params['PATCH_FILTERS']
+            )(inputs_nets)
 
         # Apply TCN
         if model_type=='Base':
@@ -1260,7 +1322,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # C. Projection with Stabilizers (L1 + Dropout)
         h = Conv1D(64, 1, 
                    kernel_initializer='glorot_uniform', 
-                   kernel_regularizer=tf.keras.regularizers.L1(1e-4), # Sparsity
+                #    kernel_regularizer=tf.keras.regularizers.L1(1e-4), # Sparsity
                    name="cls_pw1")(h)
         h = Activation('gelu')(h)
         h = Dropout(0.1)(h) # Robustness
@@ -1269,7 +1331,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             use_bias=True,
             kernel_initializer='glorot_uniform',
             bias_initializer='zeros',
-            kernel_regularizer=tf.keras.regularizers.L1(1e-4), # Sparsity
+            # kernel_regularizer=tf.keras.regularizers.L1(1e-4), # Sparsity
             activation=None,
             name='cls_logits'
         )(h)
@@ -1286,8 +1348,9 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         emb_dim = int(params.get('EMBEDDING_DIM', 32))
         emb = LayerNormalization(name='emb_ln')(feats)
         # We replace the two 'p1/p2' layers with a single bottleneck funnel
-        emb = Dense(emb_dim, activation=None, use_bias=False, name='emb_linear')(emb)
-        emb = Lambda(lambda z: tf.math.l2_normalize(z, axis=-1, epsilon=1e-6), name='emb_l2n')(emb)
+        emb = Dense(emb_dim*2, activation='gelu', use_bias=True, kernel_initializer=this_kernel_initializer, name='emb_nonlinear')(emb)
+        emb = Dense(emb_dim, activation=None, use_bias=True, kernel_initializer=this_kernel_initializer,name='emb_linear')(emb)
+        # emb = Lambda(lambda z: tf.math.l2_normalize(z, axis=-1, epsilon=1e-6), name='emb_l2n')(emb)
         # ---- outputs (prob first, then emb) ----
         out = Concatenate(axis=-1, name='concat_cls_emb')([cls_logits, cls_prob, emb])
 
@@ -1958,25 +2021,16 @@ class LatencyScoreRange(tf.keras.metrics.Metric):
 
     @staticmethod
     def _enforce_min_run(pred_bt, k):
-        """
-        Filters detections to only include runs of length >= k.
-        Args:
-            pred_bt: Boolean tensor [B, T]
-            k: Minimum run length
-        """
-        if k <= 1: 
-            return pred_bt
+        if k <= 1: return pred_bt
+        x = tf.cast(pred_bt, tf.float32)[..., None]
+        filt = tf.ones((k, 1, 1), x.dtype)
         
-        # Convolve with a kernel of ones of size k
-        x = tf.cast(pred_bt, tf.float32)[..., None]      # [B,T,1]
-        filt = tf.ones((k, 1, 1), x.dtype)               # [k,1,1]
+        # Use VALID padding on explicitly left-padded data
+        # This acts identically to causal padding, ensuring we only look BACKWARDS
+        pad_left = k - 1
+        x_padded = tf.pad(x, [[0, 0], [pad_left, 0], [0, 0]])
         
-        # Result is the running sum. If sum >= k, it means we have k ones in a row.
-        runsum = tf.nn.conv1d(x, filt, stride=1, padding="SAME")
-        
-        # NOTE: conv1d 'SAME' padding centers the window.
-        # To be strictly causal or accurate to the 'first' index, simple checking is usually enough
-        # as long as we treat the run existence consistently.
+        runsum = tf.nn.conv1d(x_padded, filt, stride=1, padding="VALID")
         return runsum[..., 0] >= float(k)
 
     def update_state(self, y_true, y_pred, **_):
@@ -3793,6 +3847,232 @@ def mixed_hybrid_loss_proxy_v2(horizon=0, loss_weight=1, params=None, model=None
             L_cls += ent_weight * L_ent
 
         return metric_loss + L_cls
+
+    return loss_fn
+
+def mixed_hybrid_proxy_pairwise_v3(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
+    # =========================================================================
+    # 0. SETUP & PROXY INITIALIZATION
+    # =========================================================================
+    num_classes   = int(params.get('NUM_CLASSES', 2)) 
+    n_subcenters  = int(params.get('NUM_SUBCENTERS', 32)) 
+    embedding_dim = int(params.get('EMBEDDING_DIM', 32))
+    
+    if model is not None and not hasattr(model, 'proxy_vectors'):
+        model.proxy_vectors = model.add_weight(
+            name='proxy_vectors',
+            shape=(num_classes, n_subcenters, embedding_dim),
+            initializer='he_normal',
+            trainable=True
+        )
+
+    # =========================================================================
+    # 1. HELPERS
+    # =========================================================================
+    def _smooth_gate(x, k=8.0, eps=0.02):
+        return tf.nn.softplus(k * x) / k + eps
+
+    def _ramp_unified(step, delay, dur, num_cycles=0.5):
+        step, delay = tf.cast(step, tf.float32), tf.cast(delay, tf.float32)
+        dur = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+        is_active = tf.cast(step > delay, tf.float32)
+        active_step = tf.maximum(0.0, step - delay)
+        progress = tf.clip_by_value(active_step / dur, 0.0, 1.0)
+        phase = progress * num_cycles
+        wave = 0.5 - 0.5 * tf.cos(2.0 * math.pi * phase)
+        return wave * is_active
+
+    def bce_weighted(y, z, mask=None, smoothing_val=0.0):
+        y = tf.cast(y, tf.float32)
+        if tf.rank(z) > tf.rank(y): y = tf.expand_dims(y, -1)
+        y = y * (1.0 - smoothing_val) + 0.5 * smoothing_val
+        loss = tf.nn.sigmoid_cross_entropy_with_logits(labels=y, logits=z)
+        if mask is not None:
+            if tf.rank(loss) > tf.rank(mask): mask = tf.expand_dims(mask, -1)
+            loss = loss * mask
+            n_valid = tf.reduce_sum(mask) + 1e-6
+            return tf.reduce_sum(loss) / n_valid
+        return tf.reduce_mean(loss)
+    
+    def _weighted_pool(emb_raw, probs):
+        # Focuses the proxy pooling entirely on the high-confidence onset frames
+        weighted = emb_raw * probs 
+        sum_emb = tf.reduce_sum(weighted, axis=1)
+        mass = tf.reduce_sum(probs, axis=1) + 1e-6
+        return sum_emb / mass    
+
+    def tv_on_logits(z):
+        return tf.reduce_mean(tf.abs(z[:, 1:] - z[:, :-1]))
+
+    def feature_decorrelation(z):
+            # z shape: [Batch, Dim]
+            # 1. Center the features
+            z_centered = z - tf.reduce_mean(z, axis=0)
+            
+            # 2. Calculate Covariance Matrix
+            batch_size = tf.cast(tf.shape(z)[0], tf.float32)
+            cov = tf.matmul(z_centered, z_centered, transpose_a=True) / (batch_size - 1.0)
+            
+            # 3. Penalize the off-diagonals (Force them to zero)
+            off_diag = cov - tf.linalg.diag(tf.linalg.diag_part(cov))
+            return tf.reduce_sum(tf.square(off_diag))
+
+    # =========================================================================
+    # 2. METRIC 1: TEMPORAL PAIRWISE (The Onset/Latency Fix)
+    # =========================================================================
+    def circle_timeavg_pairwise(a_btd, p_btd, n_btd, m=0.32, gamma=20.0):
+        # Operates on [Batch, Time, Dim] to enforce millisecond-level phase alignment
+        a = tf.math.l2_normalize(a_btd, axis=-1)  
+        p = tf.math.l2_normalize(p_btd, axis=-1)
+        n = tf.math.l2_normalize(n_btd, axis=-1)
+
+        s_ap_bt = tf.reduce_sum(a * p, axis=-1)           
+        s_ap = tf.reduce_mean(s_ap_bt, axis=1)            
+
+        s_an_bbt = tf.einsum('btd,ktd->bkt', a, n)        
+        s_pn_bbt = tf.einsum('btd,ktd->bkt', p, n)        
+        s_an = tf.reduce_mean(s_an_bbt, axis=-1)          
+        s_pn = tf.reduce_mean(s_pn_bbt, axis=-1)          
+
+        alpha_p = _smooth_gate(m + 1.0 - s_ap)            
+        alpha_n = _smooth_gate(s_an + m)                  
+        delta_p = 1.0 - m
+
+        neg_part_a = tf.reduce_logsumexp(gamma * alpha_n * (s_an - m), axis=1)  
+        pos_part_a = gamma * alpha_p * (s_ap - delta_p)                          
+        L_a = tf.nn.softplus(neg_part_a + pos_part_a)
+
+        alpha_n_p = _smooth_gate(s_pn + m)
+        neg_part_p = tf.reduce_logsumexp(gamma * alpha_n_p * (s_pn - m), axis=1)
+        pos_part_p = gamma * alpha_p * (s_ap - delta_p)
+        L_p = tf.nn.softplus(neg_part_p + pos_part_p)
+
+        return tf.reduce_mean(0.5 * (L_a + L_p))
+
+    # =========================================================================
+    # 3. METRIC 2: ADAFACE PROXY (The Robustness/FP Fix)
+    # =========================================================================
+    def dynamic_proxy_anchor_loss(embeddings_raw, labels, proxies, alpha, base_margin):
+        # 1. Extract Magnitude & L2 Normalize
+        norms = tf.norm(embeddings_raw, axis=1, keepdims=True)
+        embeddings_l2n = embeddings_raw / (norms + 1e-12)
+
+        # 2. Dynamic Margin (AdaFace)
+        mu = tf.reduce_mean(norms)
+        std = tf.math.reduce_std(norms) + 1e-6
+        norm_indicator = tf.clip_by_value((norms - mu) / std, -1.0, 1.0)
+        dyn_margin = base_margin * tf.squeeze(norm_indicator)
+
+        # 3. Proxies
+        C, K, D = tf.shape(proxies)[0], tf.shape(proxies)[1], tf.shape(proxies)[2]
+        P_flat = tf.reshape(proxies, [C * K, D])
+        P_norm = tf.math.l2_normalize(P_flat, axis=1, epsilon=1e-12)
+
+        # 4. Similarities
+        cos_sim_all = tf.matmul(embeddings_l2n, P_norm, transpose_b=True)
+        cos_sim_shaped = tf.reshape(cos_sim_all, [-1, C, K]) 
+        cos_sim_shaped = tf.clip_by_value(cos_sim_shaped, -1.0 + 1e-7, 1.0 - 1e-7)
+        labels = tf.cast(tf.reshape(labels, [-1]), tf.int32)
+        
+        # --- POSITIVE (Hard Selection `reduce_max`) ---
+        target_sims = tf.gather(cos_sim_shaped, labels, batch_dims=1)
+        best_sims = tf.reduce_max(target_sims, axis=1) 
+        pos_logit = -alpha * (best_sims - dyn_margin)
+        loss_pos = tf.reduce_mean(tf.math.softplus(pos_logit))
+
+        # --- NEGATIVE (Static Margin Push) ---
+        one_hot_class = tf.one_hot(labels, depth=C)
+        mask_neg_class = tf.expand_dims(1.0 - one_hot_class, axis=2)
+        mask_neg_flat = tf.reshape(tf.broadcast_to(mask_neg_class, tf.shape(cos_sim_shaped)), [-1, C*K])
+        sim_flat = tf.reshape(cos_sim_shaped, [-1, C*K])
+        
+        neg_logits = alpha * (sim_flat + base_margin)
+        neg_logits_masked = neg_logits + (1.0 - mask_neg_flat) * -1e9
+        zeros = tf.zeros([tf.shape(neg_logits_masked)[0], 1], dtype=tf.float32)
+        logits_with_bias = tf.concat([zeros, neg_logits_masked], axis=1)
+        loss_neg = tf.reduce_mean(tf.reduce_logsumexp(logits_with_bias, axis=1))
+
+        return loss_pos + loss_neg
+
+    # =========================================================================
+    # 4. MAIN GRAPH
+    # =========================================================================
+    @tf.function
+    def loss_fn(y_true, y_pred):
+        y_pred = tf.cast(y_pred, tf.float32)
+        a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
+        a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+
+        logit_idx = getattr(model, '_cls_logit_index', 0)
+        prob_idx  = getattr(model, '_cls_prob_index',  1)
+        emb_start = getattr(model, '_emb_start_index', 2)
+
+        # Parse Outputs (Embeddings are RAW, un-normalized)
+        a_logit = a_out[..., logit_idx]; p_logit = p_out[..., logit_idx]; n_logit = n_out[..., logit_idx]
+        a_prob  = a_out[..., prob_idx:prob_idx+1]; p_prob = p_out[..., prob_idx:prob_idx+1]; n_prob = n_out[..., prob_idx:prob_idx+1]
+        a_emb_raw = a_out[..., emb_start:]; p_emb_raw = p_out[..., emb_start:]; n_emb_raw = n_out[..., emb_start:]
+
+        # --- METRIC 1: TEMPORAL PAIRWISE (Operates on Time Series) ---
+        m = float(params.get('CIRCLE_m', 0.32))
+        g = float(params.get('CIRCLE_gamma', 20.0))
+        L_pairwise = circle_timeavg_pairwise(a_emb_raw, p_emb_raw, n_emb_raw, m=m, gamma=g)
+
+        # --- METRIC 2: ADAFACE PROXY (Operates on Weighted Pooled vectors) ---
+        a_lab_pool = tf.reduce_max(a_true[..., 0], axis=1)
+        p_lab_pool = tf.reduce_max(p_true[..., 0], axis=1)
+        n_lab_pool = tf.reduce_max(n_true[..., 0], axis=1)
+
+        a_pool = _weighted_pool(a_emb_raw, a_prob)
+        p_pool = _weighted_pool(p_emb_raw, p_prob)
+        n_pool = _weighted_pool(n_emb_raw, n_prob)
+        
+        all_emb_pool = tf.concat([a_pool, p_pool, n_pool], axis=0)
+        all_lab = tf.concat([a_lab_pool, p_lab_pool, n_lab_pool], axis=0)
+
+        L_proxy = dynamic_proxy_anchor_loss(
+            embeddings_raw=all_emb_pool, 
+            labels=all_lab, 
+            proxies=model.proxy_vectors,
+            alpha=float(params.get('PROXY_ALPHA', 32.0)),
+            base_margin=float(params.get('PROXY_MARGIN', 0.1))
+        )
+
+        # Blend Metrics
+        w_pairwise = float(params.get('LOSS_Pairwise', 1.0))
+        w_proxy    = float(params.get('LOSS_Proxy', 1.0))
+        metric_loss = (w_pairwise * L_pairwise) + (w_proxy * L_proxy)
+
+        # --- CLASSIFICATION LOSS ---
+        it = tf.cast(model.optimizer.iterations, tf.float32)
+        total_steps = float(params.get('TOTAL_STEPS', 100000))
+        
+        r_neg = _ramp_unified(it, float(params.setdefault('NEG_RAMP_DELAY', 0.15 * total_steps)), 
+                              float(params.setdefault('NEG_RAMP_STEPS', 0.40 * total_steps)), 
+                              num_cycles=float(params.get('NEG_CYCLES', 0.5)))
+        
+        neg_weight = 1.0 + r_neg * tf.maximum(0.0, float(params.get('LOSS_NEGATIVES', 1.0)) - 1.0)
+        smoothing_val = float(params.get('LABEL_SMOOTHING', 0.0))
+        
+        L_cls = bce_weighted(a_true[..., 0], a_logit, a_true[..., 0], smoothing_val) + \
+                bce_weighted(p_true[..., 0], p_logit, p_true[..., 0], smoothing_val) + \
+                neg_weight * bce_weighted(n_true[..., 0], n_logit, None, smoothing_val)
+
+        # TV Smoothing
+        tv_weight = float(params.get('LOSS_TV', 0.0))
+        if tv_weight > 1e-6:
+            L_cls += tv_weight * (tv_on_logits(a_logit) + tv_on_logits(p_logit) + tv_on_logits(n_logit))
+
+        # Inside loss_fn, apply it to the pooled, RAW embeddings (before L2 norm)
+        # L_decorr = feature_decorrelation(all_emb_pool)
+        # L_cls += params.get('LOSS_DECORR', 0.01) * L_decorr
+
+        # Re-scaling Ratio (Keeps BCE gradients healthy relative to the combined metric loss)
+        ratio = tf.stop_gradient(metric_loss / (L_cls + 1e-6))
+        ratio = tf.clip_by_value(ratio, 0.1, 10.0)
+
+        total = metric_loss + 0.5 * ratio * L_cls
+
+        return total
 
     return loss_fn
 

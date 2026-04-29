@@ -1745,16 +1745,21 @@ def objective_proxy(trial, model_name, tag, logger):
     # ============================================================
     
     # --- A. Metric Learning (The Core) ---
+    params['LOSS_Pairwise'] = trial.suggest_float('LOSS_Pairwise', 0.5, 3.0)
     params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.20, log=True)
     params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 12, 32, step=4)
-    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 32.0, step=8.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 1.2, 1.8, step=0.2)
+    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 48.0, step=8.0)
+    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.2, 1.8, step=0.2)
     params['LOSS_DECORR']    = 0.0#trial.suggest_float('LOSS_DECORR', 0.0, 0.0, log=False)
+    params['CIRCLE_m']      = trial.suggest_float('CIRCLE_m', 0.25, 0.45)
+    params['CIRCLE_gamma']  = trial.suggest_int('CIRCLE_gamma', 16, 48)
     
     # --- B. Classification Head & Regularization ---
     params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 24.0, step=3.0)
     params['LABEL_SMOOTHING'] = 0.0#trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
     params['LOSS_TV']         = 0.000#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
+    
+    params['PATCH_FILTERS'] = trial.suggest_categorical('PATCH_FILTERS', [0, 8, 16, 24])
     
     # Dropout (Categorical)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
@@ -1763,7 +1768,7 @@ def objective_proxy(trial, model_name, tag, logger):
 
     # --- C. Constants / Fixed ---
     params['BCE_POS_ALPHA'] = 1.0
-    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-4, 4e-4, log=True)
+    params['LEARNING_RATE'] = 2e-4#trial.suggest_float('LEARNING_RATE', 1e-4, 4e-4, log=True)
     
     params['USE_StopGrad'] = 0.0#int(trial.suggest_int('USE_StopGrad', 0, 0)) == 1
     if params['USE_StopGrad']:
@@ -1778,7 +1783,7 @@ def objective_proxy(trial, model_name, tag, logger):
         
     params['HYPER_ENTROPY'] = 0.0#trial.suggest_float('HYPER_ENTROPY', 0.00, 0.0, log=True)
     params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 0.5, 3.0, step=1.0)
-    params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 32, 96, step=16)
+    params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 32, 128, step=32)
     # --- D. Derived / Fixed Params ---
     params.update({
         "SHIFT_MS": 0, "HORIZON_MS": 1,
@@ -1820,7 +1825,7 @@ def objective_proxy(trial, model_name, tag, logger):
     par_norm = 'LN'
     par_act = 'GELU'
     par_opt = 'AdamWA'
-    par_reg = trial.suggest_categorical('WeightReg', ['None', 'LOne'])
+    par_reg = 'LOne'#trial.suggest_categorical('WeightReg', ['None', 'LOne'])
 
 
     params['TYPE_REG'] = (f"{par_init}"f"{par_norm}"f"{par_act}"f"{par_opt}"f"{par_reg}")
@@ -2023,7 +2028,7 @@ def objective_proxy(trial, model_name, tag, logger):
         # raise optuna.TrialPruned("Bug signature at selected epoch.")
         return 0.0, 0.0, 6000.0
 
-    return float(rec_sel), float(mcc_sel), float(fpmin_sel)
+    return float(lat_sel), float(mcc_sel)#,# float(fpmin_sel)
     # return float(prauc_sel), float(fpmin_sel)
 
 def objective_proxy_finetune(trial, model_name, tag, logger):
@@ -2038,7 +2043,7 @@ def objective_proxy_finetune(trial, model_name, tag, logger):
     # ============================================================
     # 1. PARAMETERS & ARCHITECTURE
     # ============================================================
-    params = {'BATCH_SIZE': 128, 'SHUFFLE_BUFFER_SIZE': 4096*2,
+    params = {'BATCH_SIZE': 1024, 'SHUFFLE_BUFFER_SIZE': 4096*2,
             'WEIGHT_FILE': '', 'NO_EPOCHS': 300,
             'NO_TIMEPOINTS': 64, 'NO_CHANNELS': 8, 'SRATE': 2500,
             'EXP_DIR': '/mnt/hpc/projects/MWNaturalPredict/DL/predSWR/experiments/' + model_name,
@@ -2048,7 +2053,7 @@ def objective_proxy_finetune(trial, model_name, tag, logger):
     # Dynamic learning rate range
     learning_rate = 1e-2
     params['LEARNING_RATE'] = learning_rate
-    batch_size = 128
+    batch_size = 1024
     params['BATCH_SIZE'] = batch_size
     params['SRATE'] = 2500
     params['NO_EPOCHS'] = 500
