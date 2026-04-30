@@ -17,7 +17,7 @@ import time, pdb
 # tag = 'tripletOnlyFocal2500'
 # tag = 'tripletOnlyLogit2500'
 # tag = 'tripletOnlyHyp2500'
-tag = 'tripletOnlyProxyCircle2500'
+tag = 'tripletOnlyProxyCircleMask2500'
 
 # Rest of script remains unchanged
 ijob = -1
@@ -44,7 +44,7 @@ for model_name in range(48):
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
     # subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
     # pdb.set_trace()
-    if ijob < 14:
+    if ijob < 5:
         print('skip')
     #     subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
     # elif ijob < 6:
@@ -55,13 +55,13 @@ for model_name in range(48):
         #     pdb.set_trace()
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    elif ijob < 32:
+    elif ijob < 36:
         print('skip')
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_test.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_107_worker_short.sh', tag])
         subprocess.call(['sbatch', 'gpu_batch_107_worker_power.sh', tag])
         # subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
-    elif ijob < 48:
+    elif ijob < 60:
         subprocess.call(['sbatch', 'gpu_batch_103_worker_vinck.sh', tag])
     # if ijob == 0:
     #     pdb.set_trace()

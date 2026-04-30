@@ -1708,7 +1708,7 @@ def objective_proxy(trial, model_name, tag, logger):
     # Dynamic learning rate range
     learning_rate = 1e-2
     params['LEARNING_RATE'] = learning_rate
-    batch_size = 128
+    batch_size = 512
     params['BATCH_SIZE'] = batch_size
     params['SRATE'] = 2500
     params['NO_EPOCHS'] = 500

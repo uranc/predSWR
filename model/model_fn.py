@@ -1424,7 +1424,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # loss_fn = mixed_mpnFocal_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         # loss_fn = mixed_hybrid_loss_final(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         
-        loss_fn = mixed_hybrid_loss_proxy_v1(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+        loss_fn = mixed_hybrid_proxy_pairwise_v3(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
 
         model.compile(
             optimizer=this_optimizer,

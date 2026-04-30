@@ -7,7 +7,7 @@ import time
 import copy
 
 
-tag = 'tripletOnlyProxyGP2500' # FiltL, FiltH, FiltM, SingleCh
+tag = 'tripletOnlyProxyCircle2500' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'tripletOnlyLatents2500' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'mixerOnly' # FiltL, FiltH, FiltM, SingleCh
 # tag = 'mixerHori' # FiltL, FiltH, FiltM, SingleCh
@@ -46,7 +46,7 @@ tag = 'tripletOnlyProxyGP2500' # FiltL, FiltH, FiltM, SingleCh
 # model_lib = [1234, 1235, 1236, 1237, 1238, 1239, 1240, 1241, 1242, 1243, 1244, 1245, 1246]
 # model_lib = [1247, 1248, 1249, 1250, 1251, 1252, 1253, 1254, 1255, 1256, 1257, 1258, 1259, 1260, 1261, 1262, 1263, 1265, 1266, 1268, 1269, 1270, 1271, 1272, 1274, 1275, 1276, 1281]
 # model_lib = [1282, 1284, 1286, 1289, 1290, 1291, 1292, 1294, 1295, 1296, 1297, 1298, 1301, 1302, 1305, 1310, 1312]
-model_lib = [424, 429, 431, 433, 435, 436, 442, 446, 448, 450, 451, 457, 463, 467, 468, 471, 472, 473, 474, 477, 479, 485, 487, 488, 489, 490, 491, 496, 498, 505, 508, 514, 515, 516]
+model_lib = [7]
 n = 0
 
 for im, model in enumerate(model_lib):
