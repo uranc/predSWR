@@ -1321,11 +1321,10 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         h = LayerNormalization(name='cls_ln')(cls_logits_in)
         # C. Projection with Stabilizers (L1 + Dropout)
         h = Conv1D(64, 1, 
-                   kernel_initializer='glorot_uniform', 
-                #    kernel_regularizer=tf.keras.regularizers.L1(1e-4), # Sparsity
-                   name="cls_pw1")(h)
+                    kernel_initializer='he_normal',
+                    kernel_regularizer=tf.keras.regularizers.L1(1e-5),
+                    name="cls_pw1")(h)
         h = Activation('gelu')(h)
-        h = Dropout(0.1)(h) # Robustness
         
         cls_logits = Conv1D(1, 1, 
             use_bias=True,
@@ -1423,8 +1422,8 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # loss_fn = mixed_circle_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         # loss_fn = mixed_mpnFocal_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
         # loss_fn = mixed_hybrid_loss_final(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-        
-        loss_fn = mixed_hybrid_proxy_pairwise_v3(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
+
+        loss_fn = v4_loss_builder(params, model)
 
         model.compile(
             optimizer=this_optimizer,
@@ -4071,6 +4070,127 @@ def mixed_hybrid_proxy_pairwise_v3(horizon=0, loss_weight=1, params=None, model=
         ratio = tf.clip_by_value(ratio, 0.1, 10.0)
 
         total = metric_loss + 0.5 * ratio * L_cls
+
+        return total
+
+    return loss_fn
+
+
+
+def v4_loss_builder(params, model):
+    
+    def _ramp(step, delay, dur):
+        step  = tf.cast(step, tf.float32)
+        delay = tf.cast(delay, tf.float32)
+        dur   = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+        x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
+        return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
+
+    def event_level_circle_loss(z_a_raw, z_p_raw, z_n_raw, m, gamma):
+        z_a = tf.math.l2_normalize(tf.reduce_mean(z_a_raw, axis=1), axis=1)
+        z_p = tf.math.l2_normalize(tf.reduce_mean(z_p_raw, axis=1), axis=1)
+        z_n = tf.math.l2_normalize(tf.reduce_mean(z_n_raw, axis=1), axis=1)
+        
+        sp = tf.reduce_sum(z_a * z_p, axis=1, keepdims=True) 
+        sn = tf.matmul(z_a, z_n, transpose_b=True) 
+        
+        O_p, O_n = 1.0 + m, -m
+        Delta_p, Delta_n = 1.0 - m, m
+        
+        alpha_p = tf.nn.relu(O_p - sp)
+        alpha_n = tf.nn.relu(sn - O_n)
+        
+        logit_p = -gamma * alpha_p * (sp - Delta_p)
+        logit_n =  gamma * alpha_n * (sn - Delta_n)
+        
+        lse_p = tf.reduce_logsumexp(logit_p, axis=1)
+        lse_n = tf.reduce_logsumexp(logit_n, axis=1)
+        
+        return tf.reduce_mean(tf.nn.softplus(lse_p + lse_n))
+
+    def get_preonset_ignore_mask(y_true_bt, pre_onset_ms=15.0, srate=2500):
+        k_samples = int((pre_onset_ms / 1000.0) * srate)
+        if k_samples <= 0: return tf.ones_like(y_true_bt, dtype=tf.float32)
+
+        y_rev = tf.reverse(y_true_bt, axis=[1])
+        y_rev_exp = tf.expand_dims(y_rev, axis=-1) 
+        pool = tf.nn.max_pool1d(y_rev_exp, ksize=k_samples, strides=1, padding='SAME')
+        future_events = tf.reverse(tf.squeeze(pool, axis=-1), axis=[1])
+        
+        pre_onset_mask = tf.logical_and(future_events >= 0.5, y_true_bt < 0.5)
+        return tf.where(pre_onset_mask, 0.0, 1.0)
+
+    @tf.function
+    def loss_fn(y_true, y_pred):
+        a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
+        a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+
+        logit_idx = getattr(model, '_cls_logit_index', 0)
+        emb_start = getattr(model, '_emb_start_index', 2)
+
+        a_logit = a_out[..., logit_idx]; p_logit = p_out[..., logit_idx]; n_logit = n_out[..., logit_idx]
+        a_emb   = a_out[..., emb_start:]; p_emb = p_out[..., emb_start:]; n_emb = n_out[..., emb_start:]
+
+        a_lab = tf.cast(a_true[..., 0], tf.float32)
+        p_lab = tf.cast(p_true[..., 0], tf.float32)
+        n_lab = tf.cast(n_true[..., 0], tf.float32)
+
+        # -------------------------------------------------------------
+        # A: EVENT-LEVEL METRIC LOSS (UN-RAMPED / FULLY ACTIVE)
+        # -------------------------------------------------------------
+        m_val     = tf.cast(params.get('CIRCLE_m', 0.35), tf.float32)
+        gamma_val = tf.cast(params.get('CIRCLE_gamma', 32.0), tf.float32)
+        L_circle  = event_level_circle_loss(a_emb, p_emb, n_emb, m=m_val, gamma=gamma_val)
+
+        # -------------------------------------------------------------
+        # B: MASKED FOCAL LOSS
+        # -------------------------------------------------------------
+        gamma_focal = tf.cast(params.get('FOCAL_GAMMA', 2.0), tf.float32)
+        
+        # We apply standard BinaryFocalCrossentropy. 
+        # (Note: Keras BinaryFocal automatically applies the alpha balancing internally 
+        # but we also explicitly weight the Anchors/Positives vs Negatives below to be safe)
+        focal_obj = tf.keras.losses.BinaryFocalCrossentropy(
+            gamma=gamma_focal, from_logits=True, reduction=tf.keras.losses.Reduction.NONE
+        )
+        
+        raw_cls_a = tf.squeeze(focal_obj(tf.expand_dims(a_lab, -1), tf.expand_dims(a_logit, -1)))
+        raw_cls_p = tf.squeeze(focal_obj(tf.expand_dims(p_lab, -1), tf.expand_dims(p_logit, -1)))
+        raw_cls_n = tf.squeeze(focal_obj(tf.expand_dims(n_lab, -1), tf.expand_dims(n_logit, -1)))
+
+        cls_a = tf.reduce_mean(raw_cls_a * get_preonset_ignore_mask(a_lab))
+        cls_p = tf.reduce_mean(raw_cls_p * get_preonset_ignore_mask(p_lab))
+        cls_n = tf.reduce_mean(raw_cls_n * get_preonset_ignore_mask(n_lab))
+
+        # -------------------------------------------------------------
+        # C: NEGATIVE CLASSIFICATION RAMP
+        # -------------------------------------------------------------
+        it = tf.cast(model.optimizer.iterations, tf.float32)
+        total_steps = tf.cast(params.get('ESTIMATED_STEPS_PER_EPOCH', 1000) * params.get('NO_EPOCHS', 100), tf.float32)
+        
+        neg_cycles = 0.5 # Locked from V3
+        delay = 0.05 * total_steps
+        dur = tf.maximum((0.40 * total_steps) * neg_cycles, 1.0)
+        ramp_val = _ramp(it, delay, dur)
+
+        neg_min = tf.cast(params.get('LOSS_NEGATIVES_MIN', 4.0), tf.float32)
+        w_neg_tgt = tf.cast(params.get('LOSS_NEGATIVES', 16.0), tf.float32)
+        loss_fp_weight = neg_min + ramp_val * tf.maximum(0.0, w_neg_tgt - neg_min)
+
+        # -------------------------------------------------------------
+        # D: THE FOCAL ALPHA (CLASS BALANCE) & FINAL SUM
+        # -------------------------------------------------------------
+        focal_alpha = tf.cast(params.get('FOCAL_ALPHA', 0.5), tf.float32)
+        
+        # Classification Sum: Alpha applies to Positives, Ramp applies to Negatives
+        classification_loss = (focal_alpha * cls_a) + (focal_alpha * cls_p) + (loss_fp_weight * cls_n)
+
+        # Ratio Trick protects classification from exploding metric gradients
+        ratio = tf.stop_gradient(L_circle / (classification_loss + 1e-6))
+        ratio = tf.clip_by_value(ratio, 0.1, 10.0)
+
+        circle_weight = tf.cast(params.get('LOSS_Pairwise', 1.0), tf.float32)
+        total = classification_loss + (circle_weight * ratio * L_circle)
 
         return total
 

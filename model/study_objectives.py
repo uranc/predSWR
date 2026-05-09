@@ -1708,7 +1708,7 @@ def objective_proxy(trial, model_name, tag, logger):
     # Dynamic learning rate range
     learning_rate = 1e-2
     params['LEARNING_RATE'] = learning_rate
-    batch_size = 512
+    batch_size = 256
     params['BATCH_SIZE'] = batch_size
     params['SRATE'] = 2500
     params['NO_EPOCHS'] = 500
@@ -1745,22 +1745,25 @@ def objective_proxy(trial, model_name, tag, logger):
     # ============================================================
     
     # --- A. Metric Learning (The Core) ---
-    params['LOSS_Pairwise'] = trial.suggest_float('LOSS_Pairwise', 0.5, 3.0)
+    params['LOSS_Pairwise'] = trial.suggest_float('LOSS_Pairwise', 1.0, 3.0)
     params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.20, log=True)
     params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 12, 32, step=4)
     params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 48.0, step=8.0)
     params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.2, 1.8, step=0.2)
     params['LOSS_DECORR']    = 0.0#trial.suggest_float('LOSS_DECORR', 0.0, 0.0, log=False)
-    params['CIRCLE_m']      = trial.suggest_float('CIRCLE_m', 0.25, 0.45)
-    params['CIRCLE_gamma']  = trial.suggest_int('CIRCLE_gamma', 16, 48)
+    params['CIRCLE_m']      = trial.suggest_float('CIRCLE_m', 0.35, 0.45)
+    params['CIRCLE_gamma']  = trial.suggest_int('CIRCLE_gamma', 32, 64)
     
     # --- B. Classification Head & Regularization ---
     params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 24.0, step=3.0)
     params['LABEL_SMOOTHING'] = 0.0#trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
-    params['LOSS_TV']         = 0.000#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
+    params['LOSS_TV']         = 0.005#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
+    params['PATCH_FILTERS'] = 24#trial.suggest_categorical('PATCH_FILTERS', [0, 8, 16, 24])
     
-    params['PATCH_FILTERS'] = trial.suggest_categorical('PATCH_FILTERS', [0, 8, 16, 24])
-    
+    # focal
+    params['FOCAL_GAMMA'] = trial.suggest_float('FOCAL_GAMMA', 1.5, 4.0, step=0.5)
+    params['FOCAL_ALPHA'] = trial.suggest_float('FOCAL_ALPHA', 0.1, 0.6, step=0.1)
+
     # Dropout (Categorical)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
     params['DROP_RATE']       = 0.2#drop_lib[trial.suggest_int('DROP_RATE', 1, 1)]
@@ -1782,8 +1785,8 @@ def objective_proxy(trial, model_name, tag, logger):
         
         
     params['HYPER_ENTROPY'] = 0.0#trial.suggest_float('HYPER_ENTROPY', 0.00, 0.0, log=True)
-    params['NEG_CYCLES'] = trial.suggest_float('NEG_CYCLES', 0.5, 3.0, step=1.0)
-    params['NO_FILTERS'] = trial.suggest_int('NO_FILTERS', 32, 128, step=32)
+    params['NEG_CYCLES'] = 0.5#trial.suggest_float('NEG_CYCLES', 0.5, 3.0, step=1.0)
+    params['NO_FILTERS'] = 128#trial.suggest_int('NO_FILTERS', 32, 128, step=32)
     # --- D. Derived / Fixed Params ---
     params.update({
         "SHIFT_MS": 0, "HORIZON_MS": 1,
@@ -2026,9 +2029,9 @@ def objective_proxy(trial, model_name, tag, logger):
     )
     if bad:
         # raise optuna.TrialPruned("Bug signature at selected epoch.")
-        return 0.0, 0.0, 6000.0
+        return 0.0, 6000.0
 
-    return float(lat_sel), float(mcc_sel)#,# float(fpmin_sel)
+    return (float(lat_sel)+(float(mcc_sel)+float(prauc_sel))/2), float(fpmin_sel)
     # return float(prauc_sel), float(fpmin_sel)
 
 def objective_proxy_finetune(trial, model_name, tag, logger):
