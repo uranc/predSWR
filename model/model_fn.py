@@ -1344,7 +1344,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # emb = Dense(n_filters, activation=None,
         #             kernel_initializer=this_kernel_initializer, name='emb_p2')(emb)
         # emb = Lambda(lambda z: tf.math.l2_normalize(z, axis=-1), name='emb_l2n')(emb)
-        emb_dim = int(params.get('EMBEDDING_DIM', 32))
+        emb_dim = int(params.get('EMBEDDING_DIM', 64))
         emb = LayerNormalization(name='emb_ln')(feats)
         # We replace the two 'p1/p2' layers with a single bottleneck funnel
         emb = Dense(emb_dim*2, activation='gelu', use_bias=True, kernel_initializer=this_kernel_initializer, name='emb_nonlinear')(emb)
@@ -1393,14 +1393,32 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             outputs = all_outputs
         )
 
-        # Metrics - only applied to anchor output for metric tracking
+        
+        # =================================================================
+        # CRITICAL FIX: PRE-INITIALIZE PROXY VECTORS FOR TRAINING
+        # =================================================================
+        if 'Proxy' in params.get('TYPE_LOSS', ''):
+            print("Initializing Proxy Vectors for Training...")
+            n_classes = int(params.get('NUM_CLASSES', 2))
+            
+            # This MUST pull dynamically from Optuna params!
+            n_subcenters = int(params.get('NUM_SUBCENTERS', 16)) 
+            emb_dim = int(params.get('EMBEDDING_DIM', 64))
+            
+            if not hasattr(model, 'proxy_vectors'):
+                model.proxy_vectors = model.add_weight(
+                    name='proxy_vectors',
+                    shape=(n_classes, n_subcenters, emb_dim),
+                    initializer='he_normal',
+                    trainable=True
+                )
+        # =================================================================
+
         model._is_classification_only = True
 
         # Metrics - only applied to anchor output for metric tracking
         high_conf_range = [0.70, 0.75, 0.80, 0.85, 0.90, 0.95]
         low_conf_range  = [0.05, 0.10, 0.15, 0.20, 0.25, 0.30]
-        
-        model._is_classification_only = True
         
         metrics = [
             SamplePRAUC(model=model),
@@ -1409,20 +1427,14 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             LatencyScoreRange(thresholds=high_conf_range, min_run=5, tau=16.0, model=model),
             MeanHighConfRecall(thresholds=high_conf_range, model=model),
             MeanLowConfFP(
-                thresholds=low_conf_range, # "High Conf FP" = "FP at Low Thresholds"
+                thresholds=low_conf_range,
                 win_sec=params['NO_STRIDES']/params['SRATE'],
                 consec_k=6,
                 model=model
             )
         ]    
 
-        # Create loss function and compile model
-        # loss_fn = triplet_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-        # loss_fn = mixed_latent_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-        # loss_fn = mixed_circle_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-        # loss_fn = mixed_mpnFocal_loss(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-        # loss_fn = mixed_hybrid_loss_final(horizon=hori_shift, loss_weight=loss_weight, params=params, model=model)
-
+        # Compile with V4 Loss
         loss_fn = v4_loss_builder(params, model)
 
         model.compile(
@@ -1466,7 +1478,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             n_subcenters = int(params.get('NUM_SUBCENTERS', 3)) 
             
             # Critical: Use NO_FILTERS if EMBEDDING_DIM is missing/mismatched
-            emb_dim = int(params.get('EMBEDDING_DIM', params['NO_FILTERS']))
+            emb_dim = int(params.get('EMBEDDING_DIM', 64))
             
             # 2. Inject Variable
             if not hasattr(model, 'proxy_vectors'):
@@ -1561,7 +1573,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
             n_subcenters = int(params.get('NUM_SUBCENTERS', 3)) 
             
             # Critical: Use NO_FILTERS if EMBEDDING_DIM is missing/mismatched
-            emb_dim = int(params.get('EMBEDDING_DIM', params['NO_FILTERS']))
+            emb_dim = int(params.get('EMBEDDING_DIM', 64))
             
             # 2. Inject Variable
             if not hasattr(model, 'proxy_vectors'):
@@ -4075,10 +4087,11 @@ def mixed_hybrid_proxy_pairwise_v3(horizon=0, loss_weight=1, params=None, model=
 
     return loss_fn
 
-
-
 def v4_loss_builder(params, model):
     
+    # =================================================================
+    # 1. CORE HELPERS
+    # =================================================================
     def _ramp(step, delay, dur):
         step  = tf.cast(step, tf.float32)
         delay = tf.cast(delay, tf.float32)
@@ -4086,29 +4099,11 @@ def v4_loss_builder(params, model):
         x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
         return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
 
-    def event_level_circle_loss(z_a_raw, z_p_raw, z_n_raw, m, gamma):
-        z_a = tf.math.l2_normalize(tf.reduce_mean(z_a_raw, axis=1), axis=1)
-        z_p = tf.math.l2_normalize(tf.reduce_mean(z_p_raw, axis=1), axis=1)
-        z_n = tf.math.l2_normalize(tf.reduce_mean(z_n_raw, axis=1), axis=1)
-        
-        sp = tf.reduce_sum(z_a * z_p, axis=1, keepdims=True) 
-        sn = tf.matmul(z_a, z_n, transpose_b=True) 
-        
-        O_p, O_n = 1.0 + m, -m
-        Delta_p, Delta_n = 1.0 - m, m
-        
-        alpha_p = tf.nn.relu(O_p - sp)
-        alpha_n = tf.nn.relu(sn - O_n)
-        
-        logit_p = -gamma * alpha_p * (sp - Delta_p)
-        logit_n =  gamma * alpha_n * (sn - Delta_n)
-        
-        lse_p = tf.reduce_logsumexp(logit_p, axis=1)
-        lse_n = tf.reduce_logsumexp(logit_n, axis=1)
-        
-        return tf.reduce_mean(tf.nn.softplus(lse_p + lse_n))
-
     def get_preonset_ignore_mask(y_true_bt, pre_onset_ms=15.0, srate=2500):
+        """
+        Creates an ignore mask (0.0) 15ms before an event, 1.0 everywhere else.
+        Allows the TCN to ramp up probabilities safely without fighting BCE penalties.
+        """
         k_samples = int((pre_onset_ms / 1000.0) * srate)
         if k_samples <= 0: return tf.ones_like(y_true_bt, dtype=tf.float32)
 
@@ -4120,8 +4115,94 @@ def v4_loss_builder(params, model):
         pre_onset_mask = tf.logical_and(future_events >= 0.5, y_true_bt < 0.5)
         return tf.where(pre_onset_mask, 0.0, 1.0)
 
+    def proxy_circle_loss_constrained(z_a_raw, z_p_raw, z_n_raw, proxies_raw, m, gamma):
+        """
+        Max-Routed Proxy-Circle Hybrid with Asymmetric Gradient Flow and Orthogonality.
+        """
+        # 1. Temporal Pool to [B, C] and Normalize
+        z_a = tf.math.l2_normalize(tf.reduce_mean(z_a_raw, axis=1), axis=1)
+        z_p = tf.math.l2_normalize(tf.reduce_mean(z_p_raw, axis=1), axis=1)
+        z_n = tf.math.l2_normalize(tf.reduce_mean(z_n_raw, axis=1), axis=1)
+
+        # 2. Normalize Proxies [Subcenters, C]
+        P_noise  = tf.math.l2_normalize(proxies_raw[0], axis=1) 
+        P_ripple = tf.math.l2_normalize(proxies_raw[1], axis=1) 
+
+        # =========================================================
+        # STRUCTURAL CONSTRAINT: ORTHOGONALITY (KL-Equivalent)
+        # =========================================================
+        # Force Noise and Ripple proxy banks to live on opposite sides of the hypersphere.
+        proxy_sims = tf.matmul(P_ripple, P_noise, transpose_b=True)
+        ortho_penalty = tf.reduce_mean(tf.nn.relu(proxy_sims)) 
+
+        # =========================================================
+        # 1-TO-1 PAIRWISE PULL
+        # =========================================================
+        sp_pairwise = tf.reduce_sum(z_a * z_p, axis=1, keepdims=True)
+
+        # =========================================================
+        # RIPPLE DYNAMICS (Anchors & Positives)
+        # =========================================================
+        # PULL: Actively shape the Ripple Proxies (Gradient flows through P_ripple)
+        sp_a_proxy = tf.reduce_max(tf.matmul(z_a, P_ripple, transpose_b=True), axis=1, keepdims=True)
+        sp_p_proxy = tf.reduce_max(tf.matmul(z_p, P_ripple, transpose_b=True), axis=1, keepdims=True)
+        
+        sp_a = tf.concat([sp_a_proxy, sp_pairwise], axis=1)
+        sp_p = tf.concat([sp_p_proxy, sp_pairwise], axis=1)
+
+        # PUSH: Repel Noise Proxies and Batch Negatives
+        # *STOP-GRADIENT*: Ripples push away, but cannot physically distort the Noise Proxies
+        sn_a_proxy = tf.reduce_max(tf.matmul(z_a, tf.stop_gradient(P_noise), transpose_b=True), axis=1, keepdims=True)
+        sn_p_proxy = tf.reduce_max(tf.matmul(z_p, tf.stop_gradient(P_noise), transpose_b=True), axis=1, keepdims=True)
+        
+        sn_a_batch = tf.matmul(z_a, z_n, transpose_b=True) 
+        sn_p_batch = tf.matmul(z_p, z_n, transpose_b=True) 
+        
+        sn_a = tf.concat([sn_a_proxy, sn_a_batch], axis=1)
+        sn_p = tf.concat([sn_p_proxy, sn_p_batch], axis=1)
+
+        # =========================================================
+        # NOISE DYNAMICS (Negatives)
+        # =========================================================
+        # PULL: Actively shape the Noise Proxies (Gradient flows through P_noise)
+        sp_n = tf.reduce_max(tf.matmul(z_n, P_noise, transpose_b=True), axis=1, keepdims=True) 
+
+        # PUSH: Repel Ripple Proxies
+        # *STOP-GRADIENT*: Noise pushes away, but cannot physically distort the Ripple Proxies
+        sn_n = tf.reduce_max(tf.matmul(z_n, tf.stop_gradient(P_ripple), transpose_b=True), axis=1, keepdims=True) 
+
+        # =========================================================
+        # DYNAMIC MARGINS & LOGSUMEXP
+        # =========================================================
+        O_p, O_n = 1.0 + m, -m
+        Delta_p, Delta_n = 1.0 - m, m
+
+        def get_logits(sp, sn):
+            alpha_p = tf.nn.relu(O_p - sp)
+            alpha_n = tf.nn.relu(sn - O_n)
+            logit_p = -gamma * alpha_p * (sp - Delta_p)
+            logit_n =  gamma * alpha_n * (sn - Delta_n)
+            return logit_p, logit_n
+
+        logit_a_p, logit_a_n = get_logits(sp_a, sn_a)
+        logit_p_p, logit_p_n = get_logits(sp_p, sn_p)
+        logit_n_p, logit_n_n = get_logits(sp_n, sn_n)
+
+        lse_a = tf.reduce_logsumexp(logit_a_p, axis=1) + tf.reduce_logsumexp(logit_a_n, axis=1)
+        lse_p = tf.reduce_logsumexp(logit_p_p, axis=1) + tf.reduce_logsumexp(logit_p_n, axis=1)
+        lse_n = tf.reduce_logsumexp(logit_n_p, axis=1) + tf.reduce_logsumexp(logit_n_n, axis=1)
+
+        metric_loss = tf.reduce_mean(tf.nn.softplus(lse_a) + tf.nn.softplus(lse_p) + tf.nn.softplus(lse_n))
+        
+        # Add the structural penalty 
+        return metric_loss + ortho_penalty
+
+    # =================================================================
+    # 2. MAIN EXECUTION LOOP
+    # =================================================================
     @tf.function
     def loss_fn(y_true, y_pred):
+        # 1. Split Tensors
         a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
         a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
 
@@ -4136,39 +4217,34 @@ def v4_loss_builder(params, model):
         n_lab = tf.cast(n_true[..., 0], tf.float32)
 
         # -------------------------------------------------------------
-        # A: EVENT-LEVEL METRIC LOSS (UN-RAMPED / FULLY ACTIVE)
+        # A: EVENT-LEVEL PROXY-CIRCLE LOSS
         # -------------------------------------------------------------
         m_val     = tf.cast(params.get('CIRCLE_m', 0.35), tf.float32)
         gamma_val = tf.cast(params.get('CIRCLE_gamma', 32.0), tf.float32)
-        L_circle  = event_level_circle_loss(a_emb, p_emb, n_emb, m=m_val, gamma=gamma_val)
-
-        # -------------------------------------------------------------
-        # B: MASKED FOCAL LOSS
-        # -------------------------------------------------------------
-        gamma_focal = tf.cast(params.get('FOCAL_GAMMA', 2.0), tf.float32)
         
-        # We apply standard BinaryFocalCrossentropy. 
-        # (Note: Keras BinaryFocal automatically applies the alpha balancing internally 
-        # but we also explicitly weight the Anchors/Positives vs Negatives below to be safe)
-        focal_obj = tf.keras.losses.BinaryFocalCrossentropy(
-            gamma=gamma_focal, from_logits=True, reduction=tf.keras.losses.Reduction.NONE
+        L_metric = proxy_circle_loss_constrained(
+            a_emb, p_emb, n_emb, model.proxy_vectors, m=m_val, gamma=gamma_val
         )
-        
-        raw_cls_a = tf.squeeze(focal_obj(tf.expand_dims(a_lab, -1), tf.expand_dims(a_logit, -1)))
-        raw_cls_p = tf.squeeze(focal_obj(tf.expand_dims(p_lab, -1), tf.expand_dims(p_logit, -1)))
-        raw_cls_n = tf.squeeze(focal_obj(tf.expand_dims(n_lab, -1), tf.expand_dims(n_logit, -1)))
 
+        # -------------------------------------------------------------
+        # B: MASKED STANDARD BCE (Smooth Temporal Probabilities)
+        # -------------------------------------------------------------
+        raw_cls_a = tf.squeeze(tf.nn.sigmoid_cross_entropy_with_logits(labels=a_lab, logits=a_logit))
+        raw_cls_p = tf.squeeze(tf.nn.sigmoid_cross_entropy_with_logits(labels=p_lab, logits=p_logit))
+        raw_cls_n = tf.squeeze(tf.nn.sigmoid_cross_entropy_with_logits(labels=n_lab, logits=n_logit))
+
+        # Apply Ignore Mask (Protects the 15ms pre-onset gradient)
         cls_a = tf.reduce_mean(raw_cls_a * get_preonset_ignore_mask(a_lab))
         cls_p = tf.reduce_mean(raw_cls_p * get_preonset_ignore_mask(p_lab))
         cls_n = tf.reduce_mean(raw_cls_n * get_preonset_ignore_mask(n_lab))
 
         # -------------------------------------------------------------
-        # C: NEGATIVE CLASSIFICATION RAMP
+        # C: NEGATIVE RAMP & CLASS BALANCE
         # -------------------------------------------------------------
         it = tf.cast(model.optimizer.iterations, tf.float32)
         total_steps = tf.cast(params.get('ESTIMATED_STEPS_PER_EPOCH', 1000) * params.get('NO_EPOCHS', 100), tf.float32)
         
-        neg_cycles = 0.5 # Locked from V3
+        neg_cycles = 0.5 
         delay = 0.05 * total_steps
         dur = tf.maximum((0.40 * total_steps) * neg_cycles, 1.0)
         ramp_val = _ramp(it, delay, dur)
@@ -4177,20 +4253,18 @@ def v4_loss_builder(params, model):
         w_neg_tgt = tf.cast(params.get('LOSS_NEGATIVES', 16.0), tf.float32)
         loss_fp_weight = neg_min + ramp_val * tf.maximum(0.0, w_neg_tgt - neg_min)
 
-        # -------------------------------------------------------------
-        # D: THE FOCAL ALPHA (CLASS BALANCE) & FINAL SUM
-        # -------------------------------------------------------------
-        focal_alpha = tf.cast(params.get('FOCAL_ALPHA', 0.5), tf.float32)
+        bce_alpha = tf.cast(params.get('BCE_ALPHA', 0.5), tf.float32)
         
-        # Classification Sum: Alpha applies to Positives, Ramp applies to Negatives
-        classification_loss = (focal_alpha * cls_a) + (focal_alpha * cls_p) + (loss_fp_weight * cls_n)
+        # Classification Sum: Constant alpha on positives, massive scaling ramp on background noise
+        classification_loss = (bce_alpha * cls_a) + (bce_alpha * cls_p) + (loss_fp_weight * cls_n)
 
-        # Ratio Trick protects classification from exploding metric gradients
-        ratio = tf.stop_gradient(L_circle / (classification_loss + 1e-6))
-        ratio = tf.clip_by_value(ratio, 0.1, 10.0)
-
-        circle_weight = tf.cast(params.get('LOSS_Pairwise', 1.0), tf.float32)
-        total = classification_loss + (circle_weight * ratio * L_circle)
+        # -------------------------------------------------------------
+        # D: DIRECT ADDITION 
+        # -------------------------------------------------------------
+        metric_weight = tf.cast(params.get('LOSS_Pairwise', 1.0), tf.float32)
+        
+        # Total Loss Pipeline
+        total = classification_loss + (metric_weight * L_metric)
 
         return total
 

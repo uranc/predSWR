@@ -1899,7 +1899,7 @@ elif mode == 'embedding':
         weight_file = f"{study_dir}/max.weights.h5"
         # weight_file = f"{study_dir}/robust.weights.h5"
         print(f"Loading weights from: {weight_file}")
-        # params['EMBEDDING_DIM'] = 96
+        # params['EMBEDDING_DIM'] = 32
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         model.load_weights(weight_file)
     elif model_name == 'RippleNet':
@@ -2017,7 +2017,7 @@ elif mode == 'embedding':
     nBatch, nTimepoints, nChans = ripples.shape
     window_length = 44  # e.g., 44
     n_windows = nTimepoints - window_length + 1
-    outputs = np.zeros((nBatch, n_windows, 34))  # Fill ... with your model output dim
+    outputs = np.zeros((nBatch, n_windows, params['EMBEDDING_DIM']+2))  # Fill ... with your model output dim
 
     for t in range(n_windows):
         # Shape: [nBatch, window_length, nChans]

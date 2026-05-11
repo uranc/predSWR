@@ -1711,7 +1711,7 @@ def objective_proxy(trial, model_name, tag, logger):
     batch_size = 256
     params['BATCH_SIZE'] = batch_size
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 500
+    params['NO_EPOCHS'] = 600
     params['TYPE_MODEL'] = 'Base'
 
     # Architecture Selection
@@ -1757,14 +1757,11 @@ def objective_proxy(trial, model_name, tag, logger):
     # --- B. Classification Head & Regularization ---
     params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 24.0, step=3.0)
     params['LABEL_SMOOTHING'] = 0.0#trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
-    params['LOSS_TV']         = 0.005#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
+    params['LOSS_TV']         = 0.00#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
     params['PATCH_FILTERS'] = 24#trial.suggest_categorical('PATCH_FILTERS', [0, 8, 16, 24])
     
-    # focal
-    params['FOCAL_GAMMA'] = trial.suggest_float('FOCAL_GAMMA', 1.5, 4.0, step=0.5)
-    params['FOCAL_ALPHA'] = trial.suggest_float('FOCAL_ALPHA', 0.1, 0.6, step=0.1)
-
-    # Dropout (Categorical)
+    # 3. Classification Tension
+    params['BCE_ALPHA']      = trial.suggest_float('BCE_ALPHA', 0.3, 0.7, step=0.1)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
     params['DROP_RATE']       = 0.2#drop_lib[trial.suggest_int('DROP_RATE', 1, 1)]
     # params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, len(drop_lib)-1)]
@@ -1817,7 +1814,7 @@ def objective_proxy(trial, model_name, tag, logger):
     elif params['NO_TIMEPOINTS'] == 384:dil_lib = [8,7,6,6,6]
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_FILTERS'] = 32
-    params['EMBEDDING_DIM'] = 32 #params['NO_FILTERS']
+    params['EMBEDDING_DIM'] = 64 #params['NO_FILTERS']
 
     # Set Loss Name (Strict)
     params['TYPE_LOSS'] += tag
@@ -2138,7 +2135,7 @@ def objective_proxy_finetune(trial, model_name, tag, logger):
     })
 
     # =====================  FIXED RIDGE / CONSTANTS  =====================
-    params['TYPE_LOSS'] = 'ProxyPhase1'
+    params['TYPE_LOSS'] = 'ProxyCircleV4'
     params['HYPER_MONO'] = 0 
 
     # TCN Configuration
