@@ -42,7 +42,11 @@ def loadChunk(fid, nChannels, channels, nSamples, precision):
 
     # fromstring to read the data as int16
     # reshape to give it the appropiate shape (nSamples x nChannels)
-    data = np.fromstring(data, dtype=np.int16).reshape(nSamples, len(channels))
+    try:
+        data = np.fromstring(data, dtype=np.int16).reshape(nSamples, len(channels))
+    except:
+        data = np.frombuffer(data, dtype=np.int16).reshape(nSamples, len(channels))
+    
     data = data[:, channels]
 
     return data

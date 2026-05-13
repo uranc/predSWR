@@ -1711,7 +1711,7 @@ def objective_proxy(trial, model_name, tag, logger):
     batch_size = 256
     params['BATCH_SIZE'] = batch_size
     params['SRATE'] = 2500
-    params['NO_EPOCHS'] = 600
+    params['NO_EPOCHS'] = 500
     params['TYPE_MODEL'] = 'Base'
 
     # Architecture Selection
@@ -1761,7 +1761,7 @@ def objective_proxy(trial, model_name, tag, logger):
     params['PATCH_FILTERS'] = 24#trial.suggest_categorical('PATCH_FILTERS', [0, 8, 16, 24])
     
     # 3. Classification Tension
-    params['BCE_ALPHA']      = trial.suggest_float('BCE_ALPHA', 0.3, 0.7, step=0.1)
+    params['BCE_ALPHA']      = trial.suggest_float('BCE_ALPHA', 0.3, 0.9, step=0.1)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
     params['DROP_RATE']       = 0.2#drop_lib[trial.suggest_int('DROP_RATE', 1, 1)]
     # params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, len(drop_lib)-1)]
@@ -1947,9 +1947,9 @@ def objective_proxy(trial, model_name, tag, logger):
     callbacks = [
         cb.EarlyStopping(monitor='val_sample_pr_auc', patience=80, mode='max', verbose=1, restore_best_weights=True),        
         cb.TensorBoard(log_dir=f"{study_dir}/", write_graph=True, write_images=True, update_freq='epoch'),
-        cb.ModelCheckpoint(f"{study_dir}/mcc.weights.h5", monitor="val_sample_max_mcc", mode="max", save_best_only=True, save_weights_only=True, verbose=1),
-        cb.ModelCheckpoint(f"{study_dir}/max.weights.h5", monitor='val_sample_max_f1', save_best_only=True, save_weights_only=True, mode='max', verbose=1),
-        cb.ModelCheckpoint(f"{study_dir}/event.weights.h5", monitor='val_sample_pr_auc', save_best_only=True, save_weights_only=True, mode='max', verbose=1),
+        cb.ModelCheckpoint(f"{study_dir}/mcc.weights.tf", monitor="val_sample_max_mcc", mode="max", save_best_only=True, save_weights_only=True, verbose=1),
+        cb.ModelCheckpoint(f"{study_dir}/max.weights.tf", monitor='val_sample_max_f1', save_best_only=True, save_weights_only=True, mode='max', verbose=1),
+        cb.ModelCheckpoint(f"{study_dir}/event.weights.tf", monitor='val_sample_pr_auc', save_best_only=True, save_weights_only=True, mode='max', verbose=1),
     ]
 
     history = model.fit(

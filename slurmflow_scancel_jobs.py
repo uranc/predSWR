@@ -7,7 +7,7 @@ import time
 import copy 
 
 
-for ijob in range(31885761, 31885761+60):
+for ijob in range(32066650, 32066650+80):
     subprocess.call(['scancel', str(ijob)])
     print(ijob)
         

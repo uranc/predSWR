@@ -531,32 +531,18 @@ elif mode == 'predict':
                 trial_info = json.load(f)
                 pretrained_params.update(trial_info['parameters'])
 
-            # Check which weight file is most recent
+            # Find the most recent weights file among event, max, mcc
             event_weights = f"{pretrained_dir}/event.weights.h5"
             max_weights = f"{pretrained_dir}/max.weights.h5"
             mcc_weights = f"{pretrained_dir}/mcc.weights.h5"
 
-            
-            if os.path.exists(event_weights) and os.path.exists(max_weights):
-                # Both files exist, select the most recently modified one
-                event_mtime = os.path.getmtime(event_weights)
-                max_mtime = os.path.getmtime(max_weights)
-                mcc_mtime = os.path.getmtime(mcc_weights)
-
-                if event_mtime > max_mtime:
-                    weight_file = event_weights
-                    print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
-                else:
-                    weight_file = max_weights
-                    print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
-            elif os.path.exists(event_weights):
-                weight_file = event_weights
-                print("Using event.weights.h5 (max.weights.h5 not found)")
-            elif os.path.exists(max_weights):
-                weight_file = max_weights
-                print("Using max.weights.h5 (event.weights.h5 not found)")
-            else:
-                raise ValueError(f"Neither event.weights.h5 nor max.weights.h5 found in {pretrained_dir}")
+            candidates = []
+            for f in [event_weights, max_weights, mcc_weights]:
+                if os.path.exists(f):
+                    candidates.append((os.path.getmtime(f), f))
+            if not candidates:
+                raise ValueError(f"No weights (.h5) found in {pretrained_dir}")
+            weight_file = max(candidates, key=lambda x: x[0])[1]
             print(f"Loading weights from: {weight_file}")
 
             pretrained_params["WEIGHT_FILE"] = weight_file
@@ -577,53 +563,29 @@ elif mode == 'predict':
         from model.model_fn import CSDLayer
         from tcn import TCN
         from tensorflow.keras.models import load_model
+        # Find the latest available weights file (.h5 or .tf) among event, max, mcc
+        def find_latest_weights(study_dir, tag):
+            base_files = [
+            ("event", "EvF1"),
+            ("max", "MaxF1"),
+            ("mcc", "MCC"),
+            ]
+            candidates = []
+            for base, tag_suffix in base_files:
+            for ext in [".h5", ".tf"]:
+                fpath = os.path.join(study_dir, f"{base}.weights{ext}")
+                if os.path.exists(fpath):
+                mtime = os.path.getmtime(fpath)
+                candidates.append((mtime, fpath, tag_suffix))
+            if not candidates:
+            raise ValueError(f"No weights (.h5 or .tf) found in {study_dir}")
+            # Pick the most recent
+            mtime, weight_file, tag_suffix = max(candidates, key=lambda x: x[0])
+            print(f"Using {os.path.basename(weight_file)} (modified at {time.ctime(mtime)})")
+            tag += tag_suffix
+            return weight_file, tag
 
-        # Check which weight file is most recent
-        event_weights = f"{study_dir}/event.weights.h5"
-        max_weights = f"{study_dir}/max.weights.h5"
-        mcc_weights = f"{study_dir}/mcc.weights.h5"
-        # max_weights = event_weights
-        # mcc_weights = event_weights
-
-        # event_weights = f"{study_dir}/event.finetune.weights.h5"
-        # max_weights = f"{study_dir}/max.finetune.weights.h5"
-        if os.path.exists(event_weights) and os.path.exists(max_weights):
-            # Both files exist, select the most recently modified one
-            event_mtime = os.path.getmtime(event_weights)
-            max_mtime = os.path.getmtime(max_weights)
-            
-            if os.path.exists(mcc_weights):
-                print('MCC weights also found')
-                mcc_mtime = os.path.getmtime(mcc_weights)
-                if (mcc_mtime > event_mtime) and (mcc_mtime > max_mtime):
-                    weight_file = mcc_weights
-                    tag += 'MCC'
-                    print(f"Using mcc.weights.h5 (more recent, modified at {time.ctime(mcc_mtime)})")
-                elif event_mtime > max_mtime:
-                    weight_file = event_weights
-                    tag += 'EvF1'
-                    print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
-                else:
-                    weight_file = max_weights
-                    tag += 'MaxF1'
-                    print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
-            else:
-                if event_mtime > max_mtime:
-                    weight_file = event_weights
-                    print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
-                else:
-                    weight_file = max_weights
-                    print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
-        elif os.path.exists(event_weights):
-            weight_file = event_weights
-            tag += 'EvF1'
-            print("Using event.weights.h5 (max.weights.h5 not found)")
-        elif os.path.exists(max_weights):
-            weight_file = max_weights
-            tag += 'MaxF1'
-            print("Using max.weights.h5 (event.weights.h5 not found)")
-        else:
-            raise ValueError(f"Neither event.weights.h5 nor max.weights.h5 found in {study_dir}")
+        weight_file, tag = find_latest_weights(study_dir, tag)
         # weight_file = max_weights
         # pdb.set_trace()
         print(f"Loading weights from: {weight_file}")
@@ -1100,32 +1062,29 @@ elif mode == 'fine_tune':
         from tensorflow.keras.models import load_model
         # Load weights
         params['mode'] = 'predict'
+        # Find the latest available weights file (.h5 or .tf) among event, max, mcc
+        def find_latest_weights(study_dir, tag):
+            base_files = [
+            ("event", "EvF1"),
+            ("max", "MaxF1"),
+            ("mcc", "MCC"),
+            ]
+            candidates = []
+            for base, tag_suffix in base_files:
+            for ext in [".h5", ".tf"]:
+                fpath = os.path.join(study_dir, f"{base}.weights{ext}")
+                if os.path.exists(fpath):
+                mtime = os.path.getmtime(fpath)
+                candidates.append((mtime, fpath, tag_suffix))
+            if not candidates:
+            raise ValueError(f"No weights (.h5 or .tf) found in {study_dir}")
+            # Pick the most recent
+            mtime, weight_file, tag_suffix = max(candidates, key=lambda x: x[0])
+            print(f"Using {os.path.basename(weight_file)} (modified at {time.ctime(mtime)})")
+            tag += tag_suffix
+            return weight_file, tag
 
-        # Check which weight file is most recent
-        event_weights = f"{study_dir}/event.weights.h5"
-        max_weights = f"{study_dir}/max.weights.h5"
-
-        if os.path.exists(event_weights) and os.path.exists(max_weights):
-            # Both files exist, select the most recently modified one
-            event_mtime = os.path.getmtime(event_weights)
-            max_mtime = os.path.getmtime(max_weights)
-
-            if event_mtime > max_mtime:
-                weight_file = event_weights
-                print(f"Using event.weights.h5 (more recent, modified at {time.ctime(event_mtime)})")
-            else:
-                weight_file = max_weights
-                print(f"Using max.weights.h5 (more recent, modified at {time.ctime(max_mtime)})")
-        elif os.path.exists(event_weights):
-            weight_file = event_weights
-            tag += 'EvF1'
-            print("Using event.weights.h5 (max.weights.h5 not found)")
-        elif os.path.exists(max_weights):
-            weight_file = max_weights
-            tag += 'MaxF1'
-            print("Using max.weights.h5 (event.weights.h5 not found)")
-        else:
-            raise ValueError(f"Neither event.weights.h5 nor max.weights.h5 found in {study_dir}")
+        weight_file, tag = find_latest_weights(study_dir, tag)
         print(f"Loading weights from: {weight_file}")
         params['WEIGHT_FILE'] = weight_file
         if 'CADOnly' in params['TYPE_ARCH']:
@@ -1896,10 +1855,36 @@ elif mode == 'embedding':
         from tensorflow.keras.models import load_model
         # Load weights
         params['mode'] = mode
-        weight_file = f"{study_dir}/max.weights.h5"
-        # weight_file = f"{study_dir}/robust.weights.h5"
+        # Try .h5 first, then .tf if not found
+        def find_latest_weights(study_dir, tag):
+            base_files = [
+            ("event", "EvF1"),
+            ("max", "MaxF1"),
+            ("mcc", "MCC"),
+            ]
+            candidates = []
+            for base, tag_suffix in base_files:
+            for ext in [".h5", ".tf"]:
+                fpath = os.path.join(study_dir, f"{base}.weights{ext}")
+                if os.path.exists(fpath):
+                mtime = os.path.getmtime(fpath)
+                candidates.append((mtime, fpath, tag_suffix))
+            if not candidates:
+            raise ValueError(f"No weights (.h5 or .tf) found in {study_dir}")
+            # Pick the most recent
+            mtime, weight_file, tag_suffix = max(candidates, key=lambda x: x[0])
+            print(f"Using {os.path.basename(weight_file)} (modified at {time.ctime(mtime)})")
+            tag += tag_suffix
+            return weight_file, tag
+
+        weight_file, tag = find_latest_weights(study_dir, tag)
+        # weight_file = max_weights
+        # pdb.set_trace()
         print(f"Loading weights from: {weight_file}")
+    
         # params['EMBEDDING_DIM'] = 32
+        if 'EMBEDDING_DIM' not in params:
+            params['EMBEDDING_DIM'] = 32
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         model.load_weights(weight_file)
     elif model_name == 'RippleNet':
@@ -1981,23 +1966,31 @@ elif mode == 'embedding':
         print(params['TYPE_ARCH'])
 
     # get sampling rate # little dangerous assumes 4 digits
-    pro_data = np.load('/cs/projects/OWVinckSWR/Dataset/TopologicalData/ripple_data.pkl', allow_pickle=True)['ripples']
-
-    if model_name.startswith('Tune'):
-        if 'Samp1250' in params['NAME']:
-            pro_data = np.array([decimate(pro_data[:,k], 2) for k in range(pro_data.shape[1])])
-        # elif 'Samp2500' in params['NAME']:
-        #     pro_data = np.transpose(pro_data, [1,0])
-        # else:
-        #     pro_data = np.transpose(pro_data, [1,0])
+    flag_numpy = True
+    if flag_numpy:
+        swrs = np.load('/cs/projects/OWVinckSWR/DL/ripmap/results/curated_SWRs_8ch.npy')
+        eibs = np.load('/cs/projects/OWVinckSWR/DL/ripmap/results/curated_EIBs_8ch.npy')
+        ripples = np.concatenate((swrs, eibs), axis=0)
+        print(swrs.shape, eibs.shape, ripples.shape)
+    
     else:
-        if 'Samp1250' in model_name:
-            pro_data = np.array([decimate(pro_data[:,k], 2) for k in range(pro_data.shape[1])])
-        elif 'Samp2500' in model_name:
-            pro_data = np.transpose(pro_data, [1,0])
+        pro_data = np.load('/cs/projects/OWVinckSWR/Dataset/TopologicalData/ripple_data.pkl', allow_pickle=True)['ripples']
+
+        if model_name.startswith('Tune'):
+            if 'Samp1250' in params['NAME']:
+                pro_data = np.array([decimate(pro_data[:,k], 2) for k in range(pro_data.shape[1])])
+            # elif 'Samp2500' in params['NAME']:
+            #     pro_data = np.transpose(pro_data, [1,0])
+            # else:
+            #     pro_data = np.transpose(pro_data, [1,0])
         else:
-            pro_data = np.transpose(pro_data, [1,0])
-    ripples = np.tile(np.expand_dims(pro_data, axis=-1), (1,1,8))
+            if 'Samp1250' in model_name:
+                pro_data = np.array([decimate(pro_data[:,k], 2) for k in range(pro_data.shape[1])])
+            elif 'Samp2500' in model_name:
+                pro_data = np.transpose(pro_data, [1,0])
+            else:
+                pro_data = np.transpose(pro_data, [1,0])
+        ripples = np.tile(np.expand_dims(pro_data, axis=-1), (1,1,8))
 
 
     params["BATCH_SIZE"] = 512*4
@@ -2024,12 +2017,17 @@ elif mode == 'embedding':
         window = ripples[:, t:t+window_length, :]
         pred = model.predict(window, batch_size=params["BATCH_SIZE"], verbose=0)
         if pred.ndim == 3 and pred.shape[1] == 1:
-            pred = np.squeeze(pred, axis=1)  # Remove singleton dimension               
+            pred = np.squeeze(pred, axis=1)  # Remove singleton dimension
+        else:
+            pred = np.squeeze(pred[:, -1, :])  # Take last time step if multiple
         outputs[:, t, :] = pred  # Adjust indexing if pred shape differs
     tmp_act = outputs
     ####
     # pdb.set_trace()
-    np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/activations/{0}_act{1}.npy'.format(model_name, 'TCN'), tmp_act)
+    if flag_numpy:
+        np.save('/cs/projects/OWVinckSWR/DL/predSWR/EIBTest/{0}_act{1}.npy'.format(model_name, 'TCN'), tmp_act)
+    else:
+        np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/activations/{0}_act{1}.npy'.format(model_name, 'TCN'), tmp_act)
     # save activations
     # for il in range(len(tmp_act)):
     #     np.save('/mnt/hpc/projects/OWVinckSWR/DL/predSWR/activations/{0}_act{1}.npy'.format(model_name, il), tmp_act[il])
