@@ -564,28 +564,55 @@ elif mode == 'predict':
         from tcn import TCN
         from tensorflow.keras.models import load_model
         # Find the latest available weights file (.h5 or .tf) among event, max, mcc
+        # Try .h5 first, then .tf if not found
         def find_latest_weights(study_dir, tag):
+            import time
+            import os
+            
             base_files = [
-            ("event", "EvF1"),
-            ("max", "MaxF1"),
-            ("mcc", "MCC"),
+                ("event", "EvF1"),
+                ("max", "MaxF1"),
+                ("mcc", "MCC"),
             ]
+            
             candidates = []
+            
+            # 1. Collect ALL existing weight files
             for base, tag_suffix in base_files:
-            for ext in [".h5", ".tf"]:
-                fpath = os.path.join(study_dir, f"{base}.weights{ext}")
-                if os.path.exists(fpath):
-                mtime = os.path.getmtime(fpath)
-                candidates.append((mtime, fpath, tag_suffix))
+                # We check all possible naming styles (Legacy H5 and Native Checkpoints)
+                possible_paths = [
+                    os.path.join(study_dir, f"{base}.weights.h5"),     # Legacy V3 style
+                    os.path.join(study_dir, f"{base}_weights.index"),  # New V4 Native style
+                    os.path.join(study_dir, f"{base}.weights.index"),  # Fallback
+                    os.path.join(study_dir, f"{base}.weights.tf.index") # Fallback
+                ]
+                
+                for fpath in possible_paths:
+                    if os.path.exists(fpath):
+                        mtime = os.path.getmtime(fpath)
+                        candidates.append((mtime, fpath, tag_suffix))
+            
+            # 2. Check if we found absolutely anything
             if not candidates:
-            raise ValueError(f"No weights (.h5 or .tf) found in {study_dir}")
-            # Pick the most recent
+                raise ValueError(f"No weights (.h5 or native .index) found in {study_dir}")
+            
+            # 3. Pick the absolute most recent file
             mtime, weight_file, tag_suffix = max(candidates, key=lambda x: x[0])
-            print(f"Using {os.path.basename(weight_file)} (modified at {time.ctime(mtime)})")
+            print(f"Auto-selected {os.path.basename(weight_file)} (modified at {time.ctime(mtime)})")
+            
             tag += tag_suffix
+            
+            # 4. THE MAGIC FIX: If it's a native checkpoint, strip '.index' to create the perfect prefix!
+            if weight_file.endswith('.index'):
+                weight_file = weight_file.replace('.index', '')
+                
             return weight_file, tag
 
+        # ==========================================
+        # Execution
+        # ==========================================
         weight_file, tag = find_latest_weights(study_dir, tag)
+        
         # weight_file = max_weights
         # pdb.set_trace()
         print(f"Loading weights from: {weight_file}")
@@ -600,7 +627,7 @@ elif mode == 'predict':
             params["WEIGHT_FILE"] = weight_file
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
         try:
-            model.load_weights(weight_file)
+            model.load_weights(weight_file, by_name=False).expect_partial()
             print('Loaded weights successfully')
         except:
             from tcn import TCN
@@ -1063,6 +1090,7 @@ elif mode == 'fine_tune':
         # Load weights
         params['mode'] = 'predict'
         # Find the latest available weights file (.h5 or .tf) among event, max, mcc
+
         def find_latest_weights(study_dir, tag):
             base_files = [
             ("event", "EvF1"),
@@ -1071,17 +1099,17 @@ elif mode == 'fine_tune':
             ]
             candidates = []
             for base, tag_suffix in base_files:
-            for ext in [".h5", ".tf"]:
-                fpath = os.path.join(study_dir, f"{base}.weights{ext}")
-                if os.path.exists(fpath):
-                mtime = os.path.getmtime(fpath)
-                candidates.append((mtime, fpath, tag_suffix))
-            if not candidates:
-            raise ValueError(f"No weights (.h5 or .tf) found in {study_dir}")
-            # Pick the most recent
-            mtime, weight_file, tag_suffix = max(candidates, key=lambda x: x[0])
-            print(f"Using {os.path.basename(weight_file)} (modified at {time.ctime(mtime)})")
-            tag += tag_suffix
+                for ext in [".h5", ".keras"]:
+                    fpath = os.path.join(study_dir, f"{base}.weights{ext}")
+                    if os.path.exists(fpath):
+                        mtime = os.path.getmtime(fpath)
+                        candidates.append((mtime, fpath, tag_suffix))
+                if not candidates:
+                    raise ValueError(f"No weights (.h5 or .keras) found in {study_dir}")
+                # Pick the most recent
+                mtime, weight_file, tag_suffix = max(candidates, key=lambda x: x[0])
+                print(f"Using {os.path.basename(weight_file)} (modified at {time.ctime(mtime)})")
+                tag += tag_suffix
             return weight_file, tag
 
         weight_file, tag = find_latest_weights(study_dir, tag)
@@ -1857,26 +1885,49 @@ elif mode == 'embedding':
         params['mode'] = mode
         # Try .h5 first, then .tf if not found
         def find_latest_weights(study_dir, tag):
+            import time
+            import os
+            
             base_files = [
-            ("event", "EvF1"),
-            ("max", "MaxF1"),
-            ("mcc", "MCC"),
+                ("event", "EvF1"),
+                ("max", "MaxF1"),
+                ("mcc", "MCC"),
             ]
+            
             candidates = []
+            
+            # 1. Collect ALL existing weight files
             for base, tag_suffix in base_files:
-            for ext in [".h5", ".tf"]:
-                fpath = os.path.join(study_dir, f"{base}.weights{ext}")
-                if os.path.exists(fpath):
-                mtime = os.path.getmtime(fpath)
-                candidates.append((mtime, fpath, tag_suffix))
+                # We check all possible naming styles (Legacy H5 and Native Checkpoints)
+                possible_paths = [
+                    os.path.join(study_dir, f"{base}.weights.h5"),     # Legacy V3 style
+                    os.path.join(study_dir, f"{base}_weights.keras"),  # New V4 Native style
+                ]
+                
+                for fpath in possible_paths:
+                    if os.path.exists(fpath):
+                        mtime = os.path.getmtime(fpath)
+                        candidates.append((mtime, fpath, tag_suffix))
+            
+            # 2. Check if we found absolutely anything
             if not candidates:
-            raise ValueError(f"No weights (.h5 or .tf) found in {study_dir}")
-            # Pick the most recent
+                raise ValueError(f"No weights (.h5 or native .index) found in {study_dir}")
+            
+            # 3. Pick the absolute most recent file
             mtime, weight_file, tag_suffix = max(candidates, key=lambda x: x[0])
-            print(f"Using {os.path.basename(weight_file)} (modified at {time.ctime(mtime)})")
+            print(f"Auto-selected {os.path.basename(weight_file)} (modified at {time.ctime(mtime)})")
+            
             tag += tag_suffix
+            
+            # 4. THE MAGIC FIX: If it's a native checkpoint, strip '.index' to create the perfect prefix!
+            if weight_file.endswith('.index'):
+                weight_file = weight_file.replace('.index', '')
+                
             return weight_file, tag
 
+        # ==========================================
+        # Execution
+        # ==========================================
         weight_file, tag = find_latest_weights(study_dir, tag)
         # weight_file = max_weights
         # pdb.set_trace()

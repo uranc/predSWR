@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=blackwell_tune
 #SBATCH --partition=GPUblackwell
-#SBATCH --gres=mps:4
+#SBATCH --gres=mps:2
 #SBATCH --time=01-23:59:00
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=cem.uran@esi-frankfurt.de

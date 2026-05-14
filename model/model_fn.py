@@ -5,7 +5,7 @@ from tensorflow.keras.layers import (Input, Lambda, Concatenate, Multiply, Activ
     Conv1D, Dense, Add, LayerNormalization, DepthwiseConv1D, DepthwiseConv2D, ZeroPadding2D)
 from tensorflow.keras.layers import MultiHeadAttention
 from tensorflow.keras.initializers import GlorotUniform, Orthogonal, Constant
-from tensorflow_addons.layers import WeightNormalization
+# from tensorflow_addons.layers import WeightNormalization
 from tensorflow.keras.regularizers import l1, l2
 from tensorflow.keras import backend as K
 from tensorflow.keras import layers
@@ -1435,7 +1435,7 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         ]    
 
         # Compile with V4 Loss
-        loss_fn = v4_loss_builder(params, model)
+        loss_fn = v5_loss_builder(params, model)
 
         model.compile(
             optimizer=this_optimizer,
@@ -4267,6 +4267,119 @@ def v4_loss_builder(params, model):
         total = classification_loss + (metric_weight * L_metric)
 
         return total
+
+    return loss_fn
+
+def v5_loss_builder(params, model):
+    import math
+    import tensorflow as tf
+    
+    # =================================================================
+    # 1. CORE HELPERS
+    # =================================================================
+    def _ramp(step, delay, dur):
+        step = tf.cast(step, tf.float32)
+        delay = tf.cast(delay, tf.float32)
+        dur = tf.maximum(tf.cast(dur, tf.float32), 1.0)
+        x = tf.clip_by_value((step - delay) / dur, 0.0, 1.0)
+        return 0.5 - 0.5 * tf.cos(tf.constant(math.pi, tf.float32) * x)
+
+    def get_preonset_ignore_mask(y_true_bt, pre_onset_ms=15.0, srate=2500):
+        k_samples = int((pre_onset_ms / 1000.0) * srate)
+        if k_samples <= 0: return tf.ones_like(y_true_bt, dtype=tf.float32)
+        y_rev = tf.reverse(y_true_bt, axis=[1])
+        y_rev_exp = tf.expand_dims(y_rev, axis=-1) 
+        pool = tf.nn.max_pool1d(y_rev_exp, ksize=k_samples, strides=1, padding='SAME')
+        future_events = tf.reverse(tf.squeeze(pool, axis=-1), axis=[1])
+        pre_onset_mask = tf.logical_and(future_events >= 0.5, y_true_bt < 0.5)
+        return tf.where(pre_onset_mask, 0.0, 1.0)
+
+    # =================================================================
+    # 2. SOTA EUCLIDEAN METRIC SUITE
+    # =================================================================
+    def euclidean_metric_suite(z_a, z_p, z_n, proxies, params):
+        # 1. Euclidean Proxy Loss (Global Stability)
+        # Minimizes ||z - P_class||^2. P_noise = proxies[0], P_ripple = proxies[1]
+        P_noise, P_ripple = proxies[0], proxies[1]
+        
+        # Pull to respective class centers
+        l_prox_a = tf.reduce_sum(tf.square(z_a - tf.reduce_mean(P_ripple, 0)), axis=1)
+        l_prox_p = tf.reduce_sum(tf.square(z_p - tf.reduce_mean(P_ripple, 0)), axis=1)
+        l_prox_n = tf.reduce_sum(tf.square(z_n - tf.reduce_mean(P_noise, 0)), axis=1)
+        L_proxy = tf.reduce_mean(l_prox_a + l_prox_p + l_prox_n)
+
+        # 2. Euclidean Lifted Structure (Local Hard-Mining)
+        def get_dist_mat(A, B):
+            rA = tf.reduce_sum(tf.square(A), 1, keepdims=True)
+            rB = tf.reduce_sum(tf.square(B), 1, keepdims=True)
+            return rA + tf.transpose(rB) - 2 * tf.matmul(A, B, transpose_b=True)
+
+        S_ap = tf.reduce_sum(tf.square(z_a - z_p), 1, keepdims=True)
+        S_an = get_dist_mat(z_a, z_n)
+        S_pn = get_dist_mat(z_p, z_n)
+
+        margin = tf.cast(params.get('LIFTED_MARGIN', 1.0), tf.float32)
+        lse_neg = tf.reduce_logsumexp(tf.concat([margin - S_an, margin - S_pn], 1), 1, keepdims=True)
+        L_lifted = tf.reduce_mean(0.5 * tf.square(tf.nn.relu(S_ap + lse_neg)))
+
+        return L_proxy, L_lifted
+
+    # =================================================================
+    # 3. MAIN EXECUTION LOOP
+    # =================================================================
+    @tf.function
+    def loss_fn(y_true, y_pred):
+        a_out, p_out, n_out = tf.split(y_pred, 3, axis=0)
+        a_true, p_true, n_true = tf.split(y_true, 3, axis=0)
+
+        logit_idx = getattr(model, '_cls_logit_index', 0)
+        emb_idx = getattr(model, '_emb_start_index', 2)
+
+        a_logit, p_logit, n_logit = a_out[..., logit_idx], p_out[..., logit_idx], n_out[..., logit_idx]
+        a_emb, p_emb, n_emb = a_out[..., emb_idx:], p_out[..., emb_idx:], n_out[..., emb_idx:]
+        a_lab, p_lab, n_lab = tf.cast(a_true[..., 0], tf.float32), tf.cast(p_true[..., 0], tf.float32), tf.cast(n_true[..., 0], tf.float32)
+
+        # -------------------------------------------------------------
+        # A: THE SILENCER (Disregard 15ms Pre-Onset)
+        # -------------------------------------------------------------
+        mask_a, mask_p, mask_n = get_preonset_ignore_mask(a_lab), get_preonset_ignore_mask(p_lab), get_preonset_ignore_mask(n_lab)
+        metric_mask = tf.expand_dims(tf.reduce_min(mask_a * mask_p, axis=1), -1)
+
+        # -------------------------------------------------------------
+        # B: TEMPORAL CONTINUITY (Robustness Task)
+        # -------------------------------------------------------------
+        # Penalizes embeddings that jump randomly between timepoints
+        w_temp = tf.cast(params.get('LOSS_TEMPORAL', 0.1), tf.float32)
+        diff_a = a_emb[:, 1:, :] - a_emb[:, :-1, :]
+        L_temp = tf.reduce_mean(tf.square(diff_a))
+
+        # -------------------------------------------------------------
+        # C: METRIC LOSS (Proxies + Lifted)
+        # -------------------------------------------------------------
+        z_a, z_p, z_n = tf.reduce_mean(a_emb, 1), tf.reduce_mean(p_emb, 1), tf.reduce_mean(n_emb, 1)
+        
+        L_proxy, L_lifted = euclidean_metric_suite(z_a, z_p, z_n, model.proxy_vectors, params)
+        
+        w_pairwise = tf.cast(params.get('LOSS_Pairwise', 1.0), tf.float32)
+        w_proxy = tf.cast(params.get('LOSS_PROXY', 1.0), tf.float32)
+        L_metric = (w_proxy * L_proxy) + (w_pairwise * L_lifted)
+
+        # -------------------------------------------------------------
+        # D: CLASSIFICATION (Asymmetric BCE)
+        # -------------------------------------------------------------
+        it = tf.cast(model.optimizer.iterations, tf.float32)
+        total_steps = tf.cast(params.get('ESTIMATED_STEPS_PER_EPOCH', 1000) * params.get('NO_EPOCHS', 100), tf.float32)
+        ramp = _ramp(it, 0.05 * total_steps, 0.40 * total_steps)
+        w_neg = tf.cast(params.get('LOSS_NEGATIVES_MIN', 4.0), tf.float32) + ramp * (tf.cast(params.get('LOSS_NEGATIVES', 24.0), tf.float32) - tf.cast(params.get('LOSS_NEGATIVES_MIN', 4.0), tf.float32))
+        alpha = tf.cast(params.get('BCE_ALPHA', 0.5), tf.float32)
+
+        cls_a = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(a_lab, a_logit) * mask_a)
+        cls_p = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(p_lab, p_logit) * mask_p)
+        cls_n = tf.reduce_mean(tf.nn.sigmoid_cross_entropy_with_logits(n_lab, n_logit) * mask_n)
+        L_cls = (alpha * cls_a) + (alpha * cls_p) + (w_neg * cls_n)
+
+        # TOTAL V5 SOTA
+        return L_cls + tf.reduce_mean(L_metric * metric_mask) + (w_temp * L_temp)
 
     return loss_fn
 

@@ -1745,14 +1745,18 @@ def objective_proxy(trial, model_name, tag, logger):
     # ============================================================
     
     # --- A. Metric Learning (The Core) ---
-    params['LOSS_Pairwise'] = trial.suggest_float('LOSS_Pairwise', 1.0, 3.0)
-    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.20, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 12, 32, step=4)
+    params['LOSS_Pairwise'] = trial.suggest_float('LOSS_Pairwise', 1.0, 4.0)
+    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.50, log=True)
+    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 16, 32, step=4)
     params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 48.0, step=8.0)
     params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.2, 1.8, step=0.2)
+    params['LIFTED_MARGIN'] = trial.suggest_float('LIFTED_MARGIN', 0.2, 1.8, step=0.2)
+    params['LOSS_TEMPORAL'] = trial.suggest_float('LOSS_TEMPORAL', 0.01, 0.2, log=True)
+    params['NTUPLE_ALPHA'] = trial.suggest_float('NTUPLE_ALPHA', 4.0, 12.0, step=2.0)
     params['LOSS_DECORR']    = 0.0#trial.suggest_float('LOSS_DECORR', 0.0, 0.0, log=False)
-    params['CIRCLE_m']      = trial.suggest_float('CIRCLE_m', 0.35, 0.45)
-    params['CIRCLE_gamma']  = trial.suggest_int('CIRCLE_gamma', 32, 64)
+    # params['CIRCLE_m']      = trial.suggest_float('CIRCLE_m', 0.35, 0.45)
+    # params['CIRCLE_gamma']  = trial.suggest_int('CIRCLE_gamma', 32, 64)
+    
     
     # --- B. Classification Head & Regularization ---
     params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 24.0, step=3.0)
@@ -1763,11 +1767,11 @@ def objective_proxy(trial, model_name, tag, logger):
     # 3. Classification Tension
     params['BCE_ALPHA']      = trial.suggest_float('BCE_ALPHA', 0.3, 0.9, step=0.1)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
-    params['DROP_RATE']       = 0.2#drop_lib[trial.suggest_int('DROP_RATE', 1, 1)]
+    params['DROP_RATE']       = 0.0#2#drop_lib[trial.suggest_int('DROP_RATE', 1, 1)]
     # params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, len(drop_lib)-1)]
 
     # --- C. Constants / Fixed ---
-    params['BCE_POS_ALPHA'] = 1.0
+    # params['BCE_POS_ALPHA'] = 1.0
     params['LEARNING_RATE'] = 2e-4#trial.suggest_float('LEARNING_RATE', 1e-4, 4e-4, log=True)
     
     params['USE_StopGrad'] = 0.0#int(trial.suggest_int('USE_StopGrad', 0, 0)) == 1
@@ -1814,7 +1818,7 @@ def objective_proxy(trial, model_name, tag, logger):
     elif params['NO_TIMEPOINTS'] == 384:dil_lib = [8,7,6,6,6]
     params['NO_DILATIONS'] = dil_lib[params['NO_KERNELS']-2]
     # params['NO_FILTERS'] = 32
-    params['EMBEDDING_DIM'] = 64 #params['NO_FILTERS']
+    params['EMBEDDING_DIM'] = 128 #params['NO_FILTERS']
 
     # Set Loss Name (Strict)
     params['TYPE_LOSS'] += tag
@@ -1947,9 +1951,9 @@ def objective_proxy(trial, model_name, tag, logger):
     callbacks = [
         cb.EarlyStopping(monitor='val_sample_pr_auc', patience=80, mode='max', verbose=1, restore_best_weights=True),        
         cb.TensorBoard(log_dir=f"{study_dir}/", write_graph=True, write_images=True, update_freq='epoch'),
-        cb.ModelCheckpoint(f"{study_dir}/mcc.weights.tf", monitor="val_sample_max_mcc", mode="max", save_best_only=True, save_weights_only=True, verbose=1),
-        cb.ModelCheckpoint(f"{study_dir}/max.weights.tf", monitor='val_sample_max_f1', save_best_only=True, save_weights_only=True, mode='max', verbose=1),
-        cb.ModelCheckpoint(f"{study_dir}/event.weights.tf", monitor='val_sample_pr_auc', save_best_only=True, save_weights_only=True, mode='max', verbose=1),
+        cb.ModelCheckpoint(f"{study_dir}/mcc.weights.keras", monitor="val_sample_max_mcc", mode="max", save_best_only=True, save_weights_only=True, verbose=1),
+        cb.ModelCheckpoint(f"{study_dir}/max.weights.keras", monitor='val_sample_max_f1', save_best_only=True, save_weights_only=True, mode='max', verbose=1),
+        cb.ModelCheckpoint(f"{study_dir}/event.weights.keras", monitor='val_sample_pr_auc', save_best_only=True, save_weights_only=True, mode='max', verbose=1),
     ]
 
     history = model.fit(
