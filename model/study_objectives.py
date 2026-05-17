@@ -1745,34 +1745,37 @@ def objective_proxy(trial, model_name, tag, logger):
     # ============================================================
     
     # --- A. Metric Learning (The Core) ---
-    params['LOSS_Pairwise'] = trial.suggest_float('LOSS_Pairwise', 1.0, 4.0)
-    params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.50, log=True)
-    params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 16, 32, step=4)
-    params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 48.0, step=8.0)
-    params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.2, 1.8, step=0.2)
-    params['LIFTED_MARGIN'] = trial.suggest_float('LIFTED_MARGIN', 0.2, 1.8, step=0.2)
-    params['LOSS_TEMPORAL'] = trial.suggest_float('LOSS_TEMPORAL', 0.01, 0.2, log=True)
-    params['NTUPLE_ALPHA'] = trial.suggest_float('NTUPLE_ALPHA', 4.0, 12.0, step=2.0)
-    params['LOSS_DECORR']    = 0.0#trial.suggest_float('LOSS_DECORR', 0.0, 0.0, log=False)
+    params['LOSS_Pairwise'] = trial.suggest_float('LOSS_Pairwise', 0.5, 4.0)
+    # params['LOSS_PROXY']     = trial.suggest_float('LOSS_PROXY', 0.05, 0.50, log=True)
+    # params['NUM_SUBCENTERS'] = trial.suggest_int('NUM_SUBCENTERS', 16, 32, step=4)
+    # params['PROXY_ALPHA']    = trial.suggest_float('PROXY_ALPHA', 16.0, 48.0, step=8.0)
+    # params['PROXY_MARGIN']   = trial.suggest_float('PROXY_MARGIN', 0.2, 1.8, step=0.2)
+    # params['LIFTED_MARGIN'] = trial.suggest_float('LIFTED_MARGIN', 0.2, 1.8, step=0.2)
+    # params['LOSS_TEMPORAL'] = trial.suggest_float('LOSS_TEMPORAL', 0.01, 0.2, log=True)
+    # params['NTUPLE_ALPHA'] = trial.suggest_float('NTUPLE_ALPHA', 4.0, 12.0, step=2.0)
+    # params['LOSS_DECORR']    = 0.0#trial.suggest_float('LOSS_DECORR', 0.0, 0.0, log=False)
     # params['CIRCLE_m']      = trial.suggest_float('CIRCLE_m', 0.35, 0.45)
     # params['CIRCLE_gamma']  = trial.suggest_int('CIRCLE_gamma', 32, 64)
-    
+    params['LOSS_SUPCON']   = trial.suggest_float('LOSS_SUPCON', 0.1, 1.5)        # Weight for SupCon (Global Pull)
+    params['NTUPLE_ALPHA']  = trial.suggest_float('NTUPLE_ALPHA', 8.0, 24.0)      # Angular repulsion strength
+    params['HARD_NEG_K']    = trial.suggest_int('HARD_NEG_K', 8, 48, step=8)      # Boundary thickness (Top K negatives)
+    params['SUPCON_TEMP']   = 0.1 # Fixed standard SOTA temperature
     
     # --- B. Classification Head & Regularization ---
-    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 12.0, 24.0, step=3.0)
+    params['LOSS_NEGATIVES']  = trial.suggest_float('LOSS_NEGATIVES', 8.0, 32.0, step=4.0)
     params['LABEL_SMOOTHING'] = 0.0#trial.suggest_float('LABEL_SMOOTHING', 0.0, 0.0)
     params['LOSS_TV']         = 0.00#trial.suggest_float('LOSS_TV', 0.0, 0.0, log=True)
     params['PATCH_FILTERS'] = 24#trial.suggest_categorical('PATCH_FILTERS', [0, 8, 16, 24])
     
     # 3. Classification Tension
-    params['BCE_ALPHA']      = trial.suggest_float('BCE_ALPHA', 0.3, 0.9, step=0.1)
+    params['BCE_ALPHA']      = trial.suggest_float('BCE_ALPHA', 0.2, 0.9, step=0.1)
     drop_lib = [0.1, 0.2, 0.3, 0.4]
     params['DROP_RATE']       = 0.0#2#drop_lib[trial.suggest_int('DROP_RATE', 1, 1)]
     # params['DROP_RATE']       = drop_lib[trial.suggest_int('DROP_RATE', 0, len(drop_lib)-1)]
 
     # --- C. Constants / Fixed ---
     # params['BCE_POS_ALPHA'] = 1.0
-    params['LEARNING_RATE'] = 2e-4#trial.suggest_float('LEARNING_RATE', 1e-4, 4e-4, log=True)
+    params['LEARNING_RATE'] = trial.suggest_float('LEARNING_RATE', 1e-4, 1e-2, log=True)
     
     params['USE_StopGrad'] = 0.0#int(trial.suggest_int('USE_StopGrad', 0, 0)) == 1
     if params['USE_StopGrad']:
@@ -2032,7 +2035,7 @@ def objective_proxy(trial, model_name, tag, logger):
         # raise optuna.TrialPruned("Bug signature at selected epoch.")
         return 0.0, 6000.0
 
-    return (float(lat_sel)+(float(mcc_sel)+float(prauc_sel))/2), float(fpmin_sel)
+    return float(prauc_sel), float(fpmin_sel)
     # return float(prauc_sel), float(fpmin_sel)
 
 def objective_proxy_finetune(trial, model_name, tag, logger):

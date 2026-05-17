@@ -582,9 +582,7 @@ elif mode == 'predict':
                 # We check all possible naming styles (Legacy H5 and Native Checkpoints)
                 possible_paths = [
                     os.path.join(study_dir, f"{base}.weights.h5"),     # Legacy V3 style
-                    os.path.join(study_dir, f"{base}_weights.index"),  # New V4 Native style
-                    os.path.join(study_dir, f"{base}.weights.index"),  # Fallback
-                    os.path.join(study_dir, f"{base}.weights.tf.index") # Fallback
+                    os.path.join(study_dir, f"{base}.weights.keras"),  # New V4 Native style
                 ]
                 
                 for fpath in possible_paths:
@@ -594,17 +592,13 @@ elif mode == 'predict':
             
             # 2. Check if we found absolutely anything
             if not candidates:
-                raise ValueError(f"No weights (.h5 or native .index) found in {study_dir}")
+                raise ValueError(f"No weights (.h5 or native .keras) found in {study_dir}")
             
             # 3. Pick the absolute most recent file
             mtime, weight_file, tag_suffix = max(candidates, key=lambda x: x[0])
             print(f"Auto-selected {os.path.basename(weight_file)} (modified at {time.ctime(mtime)})")
             
             tag += tag_suffix
-            
-            # 4. THE MAGIC FIX: If it's a native checkpoint, strip '.index' to create the perfect prefix!
-            if weight_file.endswith('.index'):
-                weight_file = weight_file.replace('.index', '')
                 
             return weight_file, tag
 
@@ -626,28 +620,67 @@ elif mode == 'predict':
         else:
             params["WEIGHT_FILE"] = weight_file
             model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-        try:
-            model.load_weights(weight_file, by_name=False).expect_partial()
+        try: 
+            model.load_weights(weight_file, by_name=True)
+            # pdb.set_trace()
             print('Loaded weights successfully')
         except:
-            from tcn import TCN
-            from tensorflow.keras.regularizers import L1
-            from model.model_fn import WarmStableCool, mixed_latent_loss, MultiScaleCausalGate
-            from model.model_fn import SampleMaxF1, SampleMaxMCC, SamplePRAUC, LatencyScore, FPperMinMetric
-            with tf.keras.utils.custom_object_scope({'TCN': TCN, 
-                                                    'L1': L1,
-                                                    'WarmStableCool': WarmStableCool,
-                                                    'loss_fn': 'mse',
-                                                    'SampleMaxF1': SampleMaxF1,
-                                                    'SampleMaxMCC': SampleMaxMCC, 
-                                                    'SamplePRAUC': SamplePRAUC,
-                                                    'LatencyScore': LatencyScore,
-                                                    'FPperMinMetric': FPperMinMetric,
-                                                    'MultiScaleCausalGate': MultiScaleCausalGate
-                                                    }):
-                trained_model = load_model(weight_file, compile=False)
-                trained_model.save_weights(weight_file[:-2]+'weightsOnly.h5')
-                model.load_weights(weight_file[:-2]+'weightsOnly.h5')
+            def smart_weight_inject(model, weight_file):
+                """
+                Bypasses Keras's topological/alphabetical bugs caused by transitioning 
+                from a 3-input Triplet training graph to a 1-input Inference graph.
+                """
+                import h5py
+                import tensorflow as tf
+                print(f"Bypassing Keras wrappers. Smart-injecting weights from {weight_file}...")
+                
+                injected_count = 0
+                with h5py.File(weight_file, 'r') as f:
+                    # 1. Extract all raw arrays from the HDF5 file
+                    file_weights = {}
+                    def extract_arrays(name, node):
+                        if isinstance(node, h5py.Dataset):
+                            file_weights[name] = node[...]
+                    f.visititems(extract_arrays)
+                    
+                    # 2. Iterate through the actual prediction model variables
+                    for var in model.variables:
+                        # Extract the functional core of the name (e.g., 'conv1D_0/kernel')
+                        # This ignores the 'tcn_triplet/' or 'model_1/' wrappers Keras adds
+                        core_name = var.name.split(':')[0].split('/')[-2:]
+                        core_suffix = "/".join(core_name)
+                        
+                        # 3. Search for a matching suffix in the file that ALSO matches the shape
+                        for file_name, file_array in file_weights.items():
+                            if core_suffix in file_name and var.shape == file_array.shape:
+                                var.assign(file_array)
+                                injected_count += 1
+                                break
+                                
+                print(f"Successfully injected {injected_count} out of {len(model.variables)} variables.")
+            dummy_input = tf.zeros((1, params['NO_TIMEPOINTS'], params['NO_CHANNELS']))
+            _ = model(dummy_input)
+
+            # 3. Use the SOTA Injector to load the weights
+            smart_weight_inject(model, weight_file)            
+            # from tcn import TCN
+            # from tensorflow.keras.regularizers import L1
+            # from model.model_fn import WarmStableCool, mixed_latent_loss, MultiScaleCausalGate
+            # from model.model_fn import SampleMaxF1, SampleMaxMCC, SamplePRAUC, LatencyScore, FPperMinMetric
+            # with tf.keras.utils.custom_object_scope({'TCN': TCN, 
+            #                                         'L1': L1,
+            #                                         'WarmStableCool': WarmStableCool,
+            #                                         'loss_fn': 'mse',
+            #                                         'SampleMaxF1': SampleMaxF1,
+            #                                         'SampleMaxMCC': SampleMaxMCC, 
+            #                                         'SamplePRAUC': SamplePRAUC,
+            #                                         'LatencyScore': LatencyScore,
+            #                                         'FPperMinMetric': FPperMinMetric,
+            #                                         'MultiScaleCausalGate': MultiScaleCausalGate
+            #                                         }):
+            #     trained_model = load_model(weight_file, compile=False)
+            #     trained_model.save_weights(weight_file[:-2]+'weightsOnly.h5')
+            #     model.load_weights(weight_file[:-2]+'weightsOnly.h5')
     elif model_name == 'RippleNet':
         import sys, pickle, keras, h5py
         # load info on best model (path, threhsold settings)
@@ -1901,7 +1934,7 @@ elif mode == 'embedding':
                 # We check all possible naming styles (Legacy H5 and Native Checkpoints)
                 possible_paths = [
                     os.path.join(study_dir, f"{base}.weights.h5"),     # Legacy V3 style
-                    os.path.join(study_dir, f"{base}_weights.keras"),  # New V4 Native style
+                    os.path.join(study_dir, f"{base}.weights.keras"),  # New V4 Native style
                 ]
                 
                 for fpath in possible_paths:
@@ -1911,7 +1944,7 @@ elif mode == 'embedding':
             
             # 2. Check if we found absolutely anything
             if not candidates:
-                raise ValueError(f"No weights (.h5 or native .index) found in {study_dir}")
+                raise ValueError(f"No weights (.h5 or native .keras) found in {study_dir}")
             
             # 3. Pick the absolute most recent file
             mtime, weight_file, tag_suffix = max(candidates, key=lambda x: x[0])
@@ -1919,10 +1952,6 @@ elif mode == 'embedding':
             
             tag += tag_suffix
             
-            # 4. THE MAGIC FIX: If it's a native checkpoint, strip '.index' to create the perfect prefix!
-            if weight_file.endswith('.index'):
-                weight_file = weight_file.replace('.index', '')
-                
             return weight_file, tag
 
         # ==========================================
@@ -1937,7 +1966,47 @@ elif mode == 'embedding':
         if 'EMBEDDING_DIM' not in params:
             params['EMBEDDING_DIM'] = 32
         model = build_DBI_TCN(params["NO_TIMEPOINTS"], params=params)
-        model.load_weights(weight_file)
+        try:
+            model.load_weights(weight_file)
+        except:
+            def smart_weight_inject(model, weight_file):
+                """
+                Bypasses Keras's topological/alphabetical bugs caused by transitioning 
+                from a 3-input Triplet training graph to a 1-input Inference graph.
+                """
+                import h5py
+                import tensorflow as tf
+                print(f"Bypassing Keras wrappers. Smart-injecting weights from {weight_file}...")
+                
+                injected_count = 0
+                with h5py.File(weight_file, 'r') as f:
+                    # 1. Extract all raw arrays from the HDF5 file
+                    file_weights = {}
+                    def extract_arrays(name, node):
+                        if isinstance(node, h5py.Dataset):
+                            file_weights[name] = node[...]
+                    f.visititems(extract_arrays)
+                    
+                    # 2. Iterate through the actual prediction model variables
+                    for var in model.variables:
+                        # Extract the functional core of the name (e.g., 'conv1D_0/kernel')
+                        # This ignores the 'tcn_triplet/' or 'model_1/' wrappers Keras adds
+                        core_name = var.name.split(':')[0].split('/')[-2:]
+                        core_suffix = "/".join(core_name)
+                        
+                        # 3. Search for a matching suffix in the file that ALSO matches the shape
+                        for file_name, file_array in file_weights.items():
+                            if core_suffix in file_name and var.shape == file_array.shape:
+                                var.assign(file_array)
+                                injected_count += 1
+                                break
+                                
+                print(f"Successfully injected {injected_count} out of {len(model.variables)} variables.")
+            dummy_input = tf.zeros((1, params['NO_TIMEPOINTS'], params['NO_CHANNELS']))
+            _ = model(dummy_input)
+
+            # 3. Use the SOTA Injector to load the weights
+            smart_weight_inject(model, weight_file)      
     elif model_name == 'RippleNet':
         import sys, pickle, keras, h5py
         sys.path.insert(0, '/cs/projects/OWVinckSWR/DL/RippleNet/')
