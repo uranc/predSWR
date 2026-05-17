@@ -1394,24 +1394,24 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         )
 
         
-        # =================================================================
-        # CRITICAL FIX: PRE-INITIALIZE PROXY VECTORS FOR TRAINING
-        # =================================================================
-        if 'Proxy' in params.get('TYPE_LOSS', ''):
-            print("Initializing Proxy Vectors for Training...")
-            n_classes = int(params.get('NUM_CLASSES', 2))
+        # # =================================================================
+        # # CRITICAL FIX: PRE-INITIALIZE PROXY VECTORS FOR TRAINING
+        # # =================================================================
+        # if 'Proxy' in params.get('TYPE_LOSS', ''):
+        #     print("Initializing Proxy Vectors for Training...")
+        #     n_classes = int(params.get('NUM_CLASSES', 2))
             
-            # This MUST pull dynamically from Optuna params!
-            n_subcenters = int(params.get('NUM_SUBCENTERS', 16)) 
-            emb_dim = int(params.get('EMBEDDING_DIM', 64))
+        #     # This MUST pull dynamically from Optuna params!
+        #     n_subcenters = int(params.get('NUM_SUBCENTERS', 16)) 
+        #     emb_dim = int(params.get('EMBEDDING_DIM', 64))
             
-            if not hasattr(model, 'proxy_vectors'):
-                model.proxy_vectors = model.add_weight(
-                    name='proxy_vectors',
-                    shape=(n_classes, n_subcenters, emb_dim),
-                    initializer='he_normal',
-                    trainable=True
-                )
+        #     if not hasattr(model, 'proxy_vectors'):
+        #         model.proxy_vectors = model.add_weight(
+        #             name='proxy_vectors',
+        #             shape=(n_classes, n_subcenters, emb_dim),
+        #             initializer='he_normal',
+        #             trainable=True
+        #         )
         # =================================================================
 
         model._is_classification_only = True
@@ -1565,24 +1565,24 @@ def build_DBI_TCN_TripletOnly(input_timepoints, input_chans=8, params=None):
         # =================================================================
         # We must add the variable to the model graph NOW so load_weights 
         # has a "slot" to put the saved proxy data into.
-        if 'Proxy' in params.get('TYPE_LOSS', ''):
-            print("Initializing Proxy Vectors for Weight Loading...")
+        # if 'Proxy' in params.get('TYPE_LOSS', ''):
+        #     print("Initializing Proxy Vectors for Weight Loading...")
             
-            # 1. Get Dimensions (Must match training params exactly!)
-            n_classes = int(params.get('NUM_CLASSES', 2))
-            n_subcenters = int(params.get('NUM_SUBCENTERS', 3)) 
+        #     # 1. Get Dimensions (Must match training params exactly!)
+        #     n_classes = int(params.get('NUM_CLASSES', 2))
+        #     n_subcenters = int(params.get('NUM_SUBCENTERS', 3)) 
             
-            # Critical: Use NO_FILTERS if EMBEDDING_DIM is missing/mismatched
-            emb_dim = int(params.get('EMBEDDING_DIM', 64))
+        #     # Critical: Use NO_FILTERS if EMBEDDING_DIM is missing/mismatched
+        #     emb_dim = int(params.get('EMBEDDING_DIM', 64))
             
-            # 2. Inject Variable
-            if not hasattr(model, 'proxy_vectors'):
-                model.proxy_vectors = model.add_weight(
-                    name='proxy_vectors',
-                    shape=(n_classes, n_subcenters, emb_dim),
-                    initializer='he_normal',
-                    trainable=True
-                )
+        #     # 2. Inject Variable
+        #     if not hasattr(model, 'proxy_vectors'):
+        #         model.proxy_vectors = model.add_weight(
+        #             name='proxy_vectors',
+        #             shape=(n_classes, n_subcenters, emb_dim),
+        #             initializer='he_normal',
+        #             trainable=True
+        #         )
         # =================================================================
 
         # Metrics - only applied to anchor output for metric tracking
@@ -4383,12 +4383,10 @@ def v5_loss_builder(params, model):
 
     return loss_fn
 
+
 def v6_hybrid_loss_builder(params, model):
     import tensorflow as tf
 
-    # =================================================================
-    # 1. THE 15ms GHOST MASK (Protects Latency)
-    # =================================================================
     def get_preonset_ignore_mask(y_true_bt, pre_onset_ms=15.0, srate=2500):
         k_samples = int((pre_onset_ms / 1000.0) * srate)
         if k_samples <= 0: return tf.ones_like(y_true_bt, dtype=tf.float32)
@@ -4399,17 +4397,9 @@ def v6_hybrid_loss_builder(params, model):
         pre_onset_mask = tf.logical_and(future_events >= 0.5, y_true_bt < 0.5)
         return tf.where(pre_onset_mask, 0.0, 1.0)
 
-    # =================================================================
-    # 2. SUPCON (Global Clustering of ALL Anchors/Positives)
-    # =================================================================
     def supervised_contrastive_loss(z_all, labels_all, temperature=0.1):
-        """
-        Pulls all ripples in the batch together.
-        z_all: [3*Batch, Dim], labels_all: [3*Batch]
-        """
+        # Normalize and compute full batch similarity
         logits = tf.matmul(z_all, z_all, transpose_b=True) / temperature
-        
-        # Binary mask: 1 if both are ripples, 0 otherwise
         labels_all = tf.cast(labels_all, tf.float32)
         mask = tf.matmul(tf.expand_dims(labels_all, -1), tf.expand_dims(labels_all, 0))
         
@@ -4419,14 +4409,8 @@ def v6_hybrid_loss_builder(params, model):
         
         exp_logits = tf.exp(logits) * (1.0 - tf.eye(batch_size))
         log_prob = logits - tf.math.log(tf.reduce_sum(exp_logits, axis=1, keepdims=True) + 1e-9)
-        
-        # Mean log-likelihood over positive pairs
-        mean_log_prob_pos = tf.reduce_sum(mask * log_prob, axis=1) / (tf.reduce_sum(mask, axis=1) + 1e-9)
-        return -mean_log_prob_pos
+        return -tf.reduce_sum(mask * log_prob, axis=1) / (tf.reduce_sum(mask, axis=1) + 1e-9)
 
-    # =================================================================
-    # 3. MAIN EXECUTION LOOP
-    # =================================================================
     @tf.function(jit_compile=True)
     def loss_fn(y_true, y_pred):
         # 1. Unpack Triplets
@@ -4447,45 +4431,36 @@ def v6_hybrid_loss_builder(params, model):
         mask_a, mask_p, mask_n = get_preonset_ignore_mask(a_lab), get_preonset_ignore_mask(p_lab), get_preonset_ignore_mask(n_lab)
         metric_mask = tf.expand_dims(tf.reduce_min(mask_a * mask_p, axis=1), -1)
 
-        # Normalize Embeddings
         z_a = tf.math.l2_normalize(tf.reduce_mean(a_emb, 1), 1)
         z_p = tf.math.l2_normalize(tf.reduce_mean(p_emb, 1), 1)
         z_n = tf.math.l2_normalize(tf.reduce_mean(n_emb, 1), 1)
 
         # -------------------------------------------------------------
-        # A. SUPCON LOSS (Global Pull)
+        # A. SUPCON LOSS (Global Cluster)
         # -------------------------------------------------------------
         z_all = tf.concat([z_a, z_p, z_n], axis=0)
-        
-        # 1 if the window contains a ripple, 0 if noise
-        lab_all = tf.concat([
-            tf.reduce_max(a_lab, axis=1), 
-            tf.reduce_max(p_lab, axis=1), 
-            tf.reduce_max(n_lab, axis=1)
-        ], axis=0)
+        lab_all = tf.concat([tf.reduce_max(a_lab, axis=1), tf.reduce_max(p_lab, axis=1), tf.reduce_max(n_lab, axis=1)], axis=0)
         
         t_val = tf.cast(params.get('SUPCON_TEMP', 0.1), tf.float32)
         L_supcon_raw = supervised_contrastive_loss(z_all, lab_all, temperature=t_val)
         
-        # Split back to mask the Anchor/Positive section
-        L_supcon_a = L_supcon_raw[:tf.shape(z_a)[0]]
-        L_supcon = tf.reduce_mean(L_supcon_a * tf.squeeze(metric_mask))
+        # Apply mask only to Anchors to protect latency predictions
+        L_supcon = tf.reduce_mean(L_supcon_raw[:tf.shape(z_a)[0]] * tf.squeeze(metric_mask))
 
         # -------------------------------------------------------------
-        # B. MPN-TUPLE WITH EXPLICIT HARD NEGATIVE MINING (Local Push)
+        # B. MPN-TUPLE WITH EXPLICIT HARD NEGATIVE MINING
         # -------------------------------------------------------------
         alpha = tf.cast(params.get('NTUPLE_ALPHA', 12.0), tf.float32)
-        k_hard = tf.cast(params.get('HARD_NEG_K', 16), tf.int32) # How many hard negatives to mine
+        k_hard = tf.cast(params.get('HARD_NEG_K', 16), tf.int32) 
 
-        S_ap = tf.reduce_sum(z_a * z_p, axis=1, keepdims=True) # Anchor-Positive similarity
-        S_an = tf.matmul(z_a, z_n, transpose_b=True)           # Anchor-Negative similarity
-        S_pn = tf.matmul(z_p, z_n, transpose_b=True)           # Positive-Negative similarity
+        S_ap = tf.reduce_sum(z_a * z_p, axis=1, keepdims=True)
+        S_an = tf.matmul(z_a, z_n, transpose_b=True)           
+        S_pn = tf.matmul(z_p, z_n, transpose_b=True)           
 
-        # EXPLICIT HARD MINING: Select only the top K highest similarities
+        # Mine the Top-K hardest negatives per anchor
         hard_S_an, _ = tf.math.top_k(S_an, k=k_hard)
         hard_S_pn, _ = tf.math.top_k(S_pn, k=k_hard)
 
-        # N-Tuple formulation applied ONLY to the hardest K negatives
         lse_hard_an = tf.reduce_logsumexp(alpha * hard_S_an, axis=1, keepdims=True)
         lse_hard_pn = tf.reduce_logsumexp(alpha * hard_S_pn, axis=1, keepdims=True)
 
@@ -4504,15 +4479,14 @@ def v6_hybrid_loss_builder(params, model):
 
         L_cls = (bce_alpha * cls_a) + (bce_alpha * cls_p) + (w_neg * cls_n)
 
-        # -------------------------------------------------------------
-        # TOTAL V6 LOSS
-        # -------------------------------------------------------------
+        # Total
         w_supcon = tf.cast(params.get('LOSS_SUPCON', 0.5), tf.float32)
         w_mpn = tf.cast(params.get('LOSS_Pairwise', 1.0), tf.float32)
 
         return L_cls + (w_supcon * L_supcon) + (w_mpn * L_mpn)
 
     return loss_fn
+
 
 def mixed_hybrid_loss_proxy_v1_finetune(horizon=0, loss_weight=1, params=None, model=None, this_op=None):
     # =================================================================

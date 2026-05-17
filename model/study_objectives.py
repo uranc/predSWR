@@ -1808,7 +1808,7 @@ def objective_proxy(trial, model_name, tag, logger):
     })
 
     # =====================  FIXED RIDGE / CONSTANTS  =====================
-    params['TYPE_LOSS'] = 'ProxyPhase1Gap'
+    params['TYPE_LOSS'] = 'MPNSupCon'
     params['HYPER_MONO'] = 0 
 
     # TCN Configuration
@@ -2035,7 +2035,8 @@ def objective_proxy(trial, model_name, tag, logger):
         # raise optuna.TrialPruned("Bug signature at selected epoch.")
         return 0.0, 6000.0
 
-    return float(prauc_sel), float(fpmin_sel)
+    mixed_score = (float(prauc_sel) * 0.4) + (float(lat_sel) * 0.6)
+    return mixed_score, float(fpmin_sel)
     # return float(prauc_sel), float(fpmin_sel)
 
 def objective_proxy_finetune(trial, model_name, tag, logger):
